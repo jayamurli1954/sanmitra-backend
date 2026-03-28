@@ -879,10 +879,16 @@
                 const data = await response.json();
 
                 if (response.ok) {
-                    const casesText = data.cases.map((c, i) =>
-                        `Case ${i + 1}:\n${c.content || JSON.stringify(c)}`
-                    ).join('\n\n---\n\n');
-                    showResponse('case-response', casesText);
+                    const cases = Array.isArray(data?.cases) ? data.cases : [];
+                    if (cases.length === 0) {
+                        showResponse('case-response', 'No matching cases found for your query. Try broader keywords, remove year filter, or change the court filter.');
+                    } else {
+                        const casesText = cases.map((c, i) => {
+                            const content = c?.content || c?.summary || c?.title || JSON.stringify(c);
+                            return `Case ${i + 1}:\n${content}`;
+                        }).join('\n\n---\n\n');
+                        showResponse('case-response', casesText);
+                    }
                 } else {
                     showResponse('case-response', data.detail || 'An error occurred', true);
                 }
@@ -959,3 +965,4 @@
                 }
             }
         }
+

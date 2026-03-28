@@ -2,12 +2,16 @@ from datetime import datetime
 from email.utils import parsedate_to_datetime
 from html import unescape
 import re
+import textwrap
+from urllib.parse import quote_plus, urlparse
 import xml.etree.ElementTree as ET
 
 import httpx
 from io import BytesIO
 from typing import Any
-from urllib.parse import quote_plus, urlparse
+
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
@@ -136,6 +140,46 @@ async def _collect_docs(docs_collection, query_filter: dict[str, Any], limit: in
         items.append(doc)
     return items
 
+
+
+def _render_text_as_pdf(text: str) -> BytesIO:
+    buffer = BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=A4)
+    page_width, page_height = A4
+
+    left_margin = 50
+    right_margin = 50
+    top_margin = 50
+    bottom_margin = 50
+    line_height = 14
+
+    usable_width = max(200, int(page_width - left_margin - right_margin))
+    approx_char_width = 6.2
+    wrap_width = max(40, int(usable_width / approx_char_width))
+
+    y = page_height - top_margin
+    pdf.setFont("Helvetica", 11)
+
+    lines = (text or "").splitlines() or [""]
+    for raw_line in lines:
+        wrapped_lines = textwrap.wrap(
+            raw_line,
+            width=wrap_width,
+            break_long_words=False,
+            replace_whitespace=False,
+        ) if raw_line else [""]
+
+        for line in wrapped_lines:
+            if y < bottom_margin:
+                pdf.showPage()
+                pdf.setFont("Helvetica", 11)
+                y = page_height - top_margin
+            pdf.drawString(left_margin, y, line)
+            y -= line_height
+
+    pdf.save()
+    buffer.seek(0)
+    return buffer
 
 
 def _strip_html(value: str) -> str:
@@ -753,11 +797,11 @@ async def v2_template_render_pdf(payload: LegacyTemplateRenderRequest):
 
     draft = render_template_document(template=template, fields=payload.fields)
     rendered_document = draft["rendered_document"]
-    file_bytes = BytesIO(rendered_document.encode("utf-8"))
-    filename = f"{payload.template_id}.txt"
+    file_bytes = _render_text_as_pdf(rendered_document)
+    filename = f"{payload.template_id}.pdf"
     return StreamingResponse(
         file_bytes,
-        media_type="text/plain; charset=utf-8",
+        media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
@@ -869,7 +913,4 @@ async def create_professional_diary(
         "tags": doc["tags"],
         "created_at": doc["created_at"],
     }
-
-
-
 
