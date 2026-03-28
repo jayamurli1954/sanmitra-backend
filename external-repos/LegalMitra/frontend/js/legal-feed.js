@@ -257,8 +257,8 @@
             }
 
             await Promise.all([
-                loadMajorCases(true),
-                loadLegalNews(true)
+                loadMajorCases(false),
+                loadLegalNews(false)
             ]);
         } catch (error) {
             console.error('Error refreshing cases and news:', error);
@@ -297,4 +297,5 @@
     window.refreshCasesAndNews = refreshCasesAndNews;
     window.initCasesAndNews = initCasesAndNews;
 })(window);
+
 
