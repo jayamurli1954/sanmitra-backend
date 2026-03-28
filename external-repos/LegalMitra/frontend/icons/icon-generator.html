@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>LegalMitra Icon Generator</title>
+</head>
+<body>
+    <h1>LegalMitra Icon Generator</h1>
+    <p>Right-click on each canvas and "Save image as..." with the specified filename</p>
+
+    <script>
+        const sizes = [72, 96, 128, 144, 152, 192, 384, 512];
+
+        sizes.forEach(size => {
+            const canvas = document.createElement('canvas');
+            canvas.width = size;
+            canvas.height = size;
+            const ctx = canvas.getContext('2d');
+
+            // Gradient background
+            const gradient = ctx.createLinearGradient(0, 0, size, size);
+            gradient.addColorStop(0, '#667eea');
+            gradient.addColorStop(1, '#764ba2');
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, size, size);
+
+            // Add text
+            ctx.fillStyle = 'white';
+            ctx.font = `bold ${size * 0.3}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('LM', size / 2, size / 2);
+
+            // Add to page
+            const container = document.createElement('div');
+            container.style.marginBottom = '20px';
+
+            const label = document.createElement('p');
+            label.textContent = `icon-${size}x${size}.png`;
+            label.style.fontWeight = 'bold';
+
+            container.appendChild(label);
+            container.appendChild(canvas);
+            document.body.appendChild(container);
+        });
+    </script>
+</body>
+</html>

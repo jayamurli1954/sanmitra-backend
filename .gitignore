@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Virtual envs
+.venv/
+venv/
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Local env
+.env
+
+# Logs/temp
+logs/
+tmp/
+
+# Databases/local runtime
+.pgdata/
+
+# Node
+node_modules/
+dist/
+build/
+.out/
+.next/
+
+# Misc
+*.log

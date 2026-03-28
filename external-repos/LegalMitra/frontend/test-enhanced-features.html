@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Enhanced Features - LegalMitra</title>
+    <script src="config.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 20px;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .header {
+            background: white;
+            padding: 30px;
+            border-radius: 15px;
+            text-align: center;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+
+        .header h1 {
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+
+        .test-section {
+            background: white;
+            padding: 30px;
+            border-radius: 15px;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+
+        .test-section h2 {
+            color: #667eea;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 3px solid #667eea;
+        }
+
+        textarea {
+            width: 100%;
+            padding: 15px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-size: 16px;
+            font-family: inherit;
+            resize: vertical;
+            min-height: 100px;
+            margin-bottom: 15px;
+        }
+
+        textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+        }
+
+        button {
+            padding: 15px 30px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        .result-box {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            border-left: 5px solid #667eea;
+            margin-top: 20px;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            max-height: 600px;
+            overflow-y: auto;
+        }
+
+        .result-box h3 {
+            color: #667eea;
+            margin-bottom: 15px;
+        }
+
+        .loading {
+            text-align: center;
+            color: #667eea;
+            font-weight: bold;
+            padding: 20px;
+        }
+
+        .error {
+            background: #fee;
+            border-left-color: #f44336;
+            color: #c62828;
+        }
+
+        .success {
+            background: #e8f5e9;
+            border-left-color: #4caf50;
+        }
+
+        .info-box {
+            background: #e3f2fd;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            border-left: 5px solid #2196f3;
+        }
+
+        .cost-badge {
+            display: inline-block;
+            padding: 5px 15px;
+            background: #4caf50;
+            color: white;
+            border-radius: 20px;
+            font-weight: bold;
+            margin: 5px;
+        }
+
+        .tier-badge {
+            display: inline-block;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-weight: bold;
+            margin: 5px;
+        }
+
+        .tier-free { background: #4caf50; color: white; }
+        .tier-budget { background: #2196f3; color: white; }
+        .tier-balanced { background: #ff9800; color: white; }
+        .tier-premium { background: #9c27b0; color: white; }
+
+        .back-button {
+            background: linear-gradient(135deg, #56ab2f 0%, #a8e063 100%);
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🧪 Test Enhanced Features</h1>
+            <p>Test the new Smart Routing, Failover, and Disclaimer features</p>
+        </div>
+
+        <button class="back-button" onclick="window.location.href='index.html'">
+            ← Back to Legal Research
+        </button>
+
+        <!-- Test 1: Query Classification -->
+        <div class="test-section">
+            <h2>📊 Test 1: Query Classification</h2>
+            <div class="info-box">
+                This test shows how queries are classified into different tiers (free, budget, balanced, premium) to optimize costs.
+            </div>
+
+            <textarea id="classifyQuery" placeholder="Enter your legal query here...">What is Section 377 IPC?</textarea>
+
+            <button onclick="testClassification()">🔍 Classify Query</button>
+
+            <div id="classifyResult"></div>
+        </div>
+
+        <!-- Test 2: Enhanced Query Processing -->
+        <div class="test-section">
+            <h2>🚀 Test 2: Enhanced Query Processing</h2>
+            <div class="info-box">
+                This test processes your query with smart routing, automatic failover, and Bar Council-safe disclaimers.
+            </div>
+
+            <textarea id="enhancedQuery" placeholder="Enter your legal query here...">Explain what is bail?</textarea>
+
+            <div class="button-group">
+                <button onclick="testEnhancedQuery('research')">📚 Research Query</button>
+                <button onclick="testEnhancedQuery('drafting')">📝 Drafting Query</button>
+                <button onclick="testEnhancedQuery('case_search')">⚖️ Case Search Query</button>
+            </div>
+
+            <div id="enhancedResult"></div>
+        </div>
+
+        <!-- Test 3: Model Health -->
+        <div class="test-section">
+            <h2>🏥 Test 3: Model Health Check</h2>
+            <div class="info-box">
+                Check which AI models are currently available and healthy.
+            </div>
+
+            <button onclick="testModelHealth()">🔍 Check Model Health</button>
+
+            <div id="healthResult"></div>
+        </div>
+
+        <!-- Test 4: Cost Savings Report -->
+        <div class="test-section">
+            <h2>💰 Test 4: Cost Savings Report</h2>
+            <div class="info-box">
+                View potential cost savings from smart routing vs always using premium models.
+            </div>
+
+            <button onclick="testCostSavings()">📊 View Cost Savings</button>
+
+            <div id="savingsResult"></div>
+        </div>
+    </div>
+
+    <script>
+        // Test 1: Query Classification
+        async function testClassification() {
+            const query = document.getElementById('classifyQuery').value;
+            const resultDiv = document.getElementById('classifyResult');
+
+            resultDiv.innerHTML = '<div class="loading">🔄 Classifying query...</div>';
+
+            try {
+                const response = await fetch(`${CONFIG.API_BASE_URL}/classify-query`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({query: query})
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+                }
+
+                const data = await response.json();
+                const classification = data.classification;
+
+                resultDiv.innerHTML = `
+                    <div class="result-box success">
+                        <h3>✅ Classification Results</h3>
+                        <p><strong>Query Type:</strong> ${classification.query_type}</p>
+                        <p><strong>Complexity:</strong> ${classification.complexity}</p>
+                        <p><strong>Recommended Tier:</strong>
+                            <span class="tier-badge tier-${classification.recommended_model_tier}">
+                                ${classification.recommended_model_tier.toUpperCase()}
+                            </span>
+                        </p>
+                        <p><strong>Estimated Tokens:</strong> ${classification.estimated_tokens}</p>
+                        <p><strong>Rationale:</strong> ${classification.rationale}</p>
+                        <p><strong>Cost Savings:</strong> <span class="cost-badge">${classification.cost_savings}</span></p>
+
+                        <h3 style="margin-top: 20px;">💰 Cost Comparison</h3>
+                        <p><strong>Free Tier:</strong> ${data.cost_comparison.free_tier}</p>
+                        <p><strong>Budget Tier:</strong> ${data.cost_comparison.budget_tier}</p>
+                        <p><strong>Balanced Tier:</strong> ${data.cost_comparison.balanced_tier}</p>
+                        <p><strong>Premium Tier:</strong> ${data.cost_comparison.premium_tier}</p>
+                    </div>
+                `;
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <div class="result-box error">
+                        <h3>❌ Error</h3>
+                        <p>${error.message}</p>
+                        <p><strong>Tip:</strong> Make sure the backend is running at ${CONFIG.API_BASE_URL}</p>
+                    </div>
+                `;
+            }
+        }
+
+        // Test 2: Enhanced Query Processing
+        async function testEnhancedQuery(queryType) {
+            const query = document.getElementById('enhancedQuery').value;
+            const resultDiv = document.getElementById('enhancedResult');
+
+            resultDiv.innerHTML = '<div class="loading">🔄 Processing query with enhanced features...</div>';
+
+            try {
+                const response = await fetch(`${CONFIG.API_BASE_URL}/enhanced-query`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        query: query,
+                        query_type: queryType
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+                }
+
+                const data = await response.json();
+
+                resultDiv.innerHTML = `
+                    <div class="result-box success">
+                        <h3>✅ Enhanced Query Response</h3>
+
+                        <h4 style="margin-top: 20px;">📝 AI Response:</h4>
+                        <div style="background: white; padding: 15px; border-radius: 5px; margin-top: 10px;">
+                            ${data.response.replace(/\n/g, '<br>')}
+                        </div>
+
+                        <h4 style="margin-top: 20px;">🤖 Model Used:</h4>
+                        <p><strong>Provider:</strong> ${data.model_used.provider}</p>
+                        <p><strong>Model:</strong> ${data.model_used.description}</p>
+                        <p><strong>Tier:</strong>
+                            <span class="tier-badge tier-${data.model_used.tier}">
+                                ${data.model_used.tier.toUpperCase()}
+                            </span>
+                        </p>
+                        <p><strong>Cost per 1M tokens:</strong> ₹${data.model_used.cost_per_1m.toFixed(2)}</p>
+
+                        <h4 style="margin-top: 20px;">💰 Cost Estimate:</h4>
+                        <p><span class="cost-badge">₹${data.cost_estimate.toFixed(4)}</span> for this query</p>
+
+                        <h4 style="margin-top: 20px;">📊 Classification:</h4>
+                        <p><strong>Type:</strong> ${data.classification.query_type}</p>
+                        <p><strong>Complexity:</strong> ${data.classification.complexity}</p>
+                        <p><strong>Savings:</strong> ${data.classification.cost_savings}</p>
+
+                        <h4 style="margin-top: 20px;">🔄 Failover Info:</h4>
+                        <p><strong>Success:</strong> ${data.failover_info.success ? '✅ Yes' : '❌ No'}</p>
+                        <p><strong>Attempts:</strong> ${data.failover_info.attempts}</p>
+                        <p><strong>Models Tried:</strong> ${data.failover_info.models_tried.join(', ')}</p>
+
+                        <h4 style="margin-top: 20px;">⚖️ Safety:</h4>
+                        <p><strong>Disclaimers Added:</strong> ${data.safety.disclaimers_added.join(', ')}</p>
+                    </div>
+                `;
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <div class="result-box error">
+                        <h3>❌ Error</h3>
+                        <p>${error.message}</p>
+                        <p><strong>Tip:</strong> Make sure the backend is running and all required API keys are set in .env</p>
+                    </div>
+                `;
+            }
+        }
+
+        // Test 3: Model Health Check
+        async function testModelHealth() {
+            const resultDiv = document.getElementById('healthResult');
+
+            resultDiv.innerHTML = '<div class="loading">🔄 Checking model health...</div>';
+
+            try {
+                const response = await fetch(`${CONFIG.API_BASE_URL}/model-health`);
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+                }
+
+                const data = await response.json();
+
+                let healthHTML = '<div class="result-box success"><h3>✅ Model Health Status</h3>';
+
+                for (const [tier, models] of Object.entries(data.health)) {
+                    healthHTML += `<h4 style="margin-top: 20px;">🎯 ${tier.replace('_', ' ').toUpperCase()}</h4>`;
+
+                    for (const model of models) {
+                        const statusIcon = model.status === 'healthy' ? '✅' : '⚠️';
+                        healthHTML += `
+                            <div style="background: white; padding: 10px; margin: 10px 0; border-radius: 5px;">
+                                <p><strong>${statusIcon} ${model.provider}/${model.model}</strong></p>
+                                <p>Status: ${model.status}</p>
+                                <p>Failures: ${model.failures || 0}</p>
+                                ${model.last_success ? `<p>Last Success: ${model.last_success}</p>` : ''}
+                            </div>
+                        `;
+                    }
+                }
+
+                healthHTML += `<p style="margin-top: 20px;"><strong>Timestamp:</strong> ${data.timestamp}</p></div>`;
+                resultDiv.innerHTML = healthHTML;
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <div class="result-box error">
+                        <h3>❌ Error</h3>
+                        <p>${error.message}</p>
+                    </div>
+                `;
+            }
+        }
+
+        // Test 4: Cost Savings Report
+        async function testCostSavings() {
+            const resultDiv = document.getElementById('savingsResult');
+
+            resultDiv.innerHTML = '<div class="loading">🔄 Generating cost savings report...</div>';
+
+            try {
+                const response = await fetch(`${CONFIG.API_BASE_URL}/cost-savings-report`);
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+                }
+
+                const data = await response.json();
+
+                let savingsHTML = `
+                    <div class="result-box success">
+                        <h3>💰 ${data.overview.title}</h3>
+                        <p style="font-size: 18px; margin-bottom: 20px;">${data.overview.description}</p>
+
+                        <h4>📊 Example Savings:</h4>
+                `;
+
+                for (const example of data.examples) {
+                    savingsHTML += `
+                        <div style="background: white; padding: 15px; margin: 10px 0; border-radius: 5px;">
+                            <h5 style="color: #667eea;">${example.query_type}</h5>
+                            <p><strong>Without Routing:</strong> ${example.without_routing.model} - ${example.without_routing.cost}</p>
+                            <p><strong>With Routing:</strong> ${example.with_routing.model} - ${example.with_routing.cost}</p>
+                            <p><strong>Savings:</strong> <span class="cost-badge">${example.savings}</span></p>
+                        </div>
+                    `;
+                }
+
+                savingsHTML += `
+                        <h4 style="margin-top: 20px;">📈 Monthly Projection (1000 queries):</h4>
+                        <div style="background: white; padding: 15px; margin: 10px 0; border-radius: 5px;">
+                            <p><strong>Without Smart Routing:</strong> ${data.monthly_projection.without_routing}</p>
+                            <p><strong>With Smart Routing:</strong> ${data.monthly_projection.with_routing}</p>
+                            <p><strong>Estimated Savings:</strong> <span class="cost-badge">${data.monthly_projection.estimated_savings}</span></p>
+                        </div>
+                    </div>
+                `;
+
+                resultDiv.innerHTML = savingsHTML;
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <div class="result-box error">
+                        <h3>❌ Error</h3>
+                        <p>${error.message}</p>
+                    </div>
+                `;
+            }
+        }
+    </script>
+</body>
+</html>

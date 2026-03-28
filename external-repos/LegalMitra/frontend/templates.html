@@ -1,0 +1,738 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document Templates - LegalMitra</title>
+
+    <!-- PWA Meta Tags -->
+    <meta name="description" content="Professional document templates for CA and Corporate work">
+    <meta name="theme-color" content="#667eea">
+    <link rel="manifest" href="/manifest.json">
+    <link rel="icon" type="image/png" href="/icons/icon-192x192.png">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            overflow: hidden;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            display: flex;
+            justify-align: space-between;
+            align-items: center;
+        }
+
+        .header h1 {
+            font-size: 2em;
+        }
+
+        .header .subtitle {
+            margin-top: 5px;
+            opacity: 0.9;
+        }
+
+        .back-btn {
+            background: rgba(255,255,255,0.2);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-left: auto;
+        }
+
+        .back-btn:hover {
+            background: rgba(255,255,255,0.3);
+        }
+
+        .main-content {
+            display: grid;
+            grid-template-columns: 300px 1fr;
+            min-height: 600px;
+        }
+
+        .sidebar {
+            background: #f8f9fa;
+            border-right: 1px solid #e0e0e0;
+            padding: 20px;
+        }
+
+        .category-item {
+            padding: 15px;
+            margin-bottom: 10px;
+            background: white;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            border-left: 4px solid transparent;
+        }
+
+        .category-item:hover {
+            transform: translateX(5px);
+            border-left-color: #667eea;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        .category-item.active {
+            background: #667eea;
+            color: white;
+            border-left-color: #764ba2;
+        }
+
+        .category-name {
+            font-weight: bold;
+            margin-bottom: 3px;
+        }
+
+        .category-count {
+            font-size: 0.85em;
+            opacity: 0.7;
+        }
+
+        .content-area {
+            padding: 30px;
+        }
+
+        .search-box {
+            margin-bottom: 25px;
+        }
+
+        .search-box input {
+            width: 100%;
+            padding: 12px 20px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 1em;
+        }
+
+        .search-box input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .templates-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+            gap: 20px;
+        }
+
+        .template-card {
+            background: white;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            padding: 20px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .template-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.2);
+            border-color: #667eea;
+        }
+
+        .template-title {
+            font-size: 1.2em;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 8px;
+        }
+
+        .template-description {
+            color: #666;
+            font-size: 0.9em;
+            margin-bottom: 12px;
+            line-height: 1.4;
+        }
+
+        .template-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-bottom: 12px;
+        }
+
+        .tag {
+            background: #f0f4ff;
+            color: #667eea;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 0.75em;
+            font-weight: 500;
+        }
+
+        .template-for {
+            font-size: 0.8em;
+            color: #888;
+        }
+
+        /* Modal Styles */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.7);
+            z-index: 1000;
+            overflow-y: auto;
+        }
+
+        .modal-content {
+            background: white;
+            max-width: 900px;
+            margin: 50px auto;
+            border-radius: 15px;
+            padding: 30px;
+            position: relative;
+        }
+
+        .modal-close {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            font-size: 30px;
+            cursor: pointer;
+            color: #999;
+        }
+
+        .modal-close:hover {
+            color: #333;
+        }
+
+        .modal-header {
+            margin-bottom: 25px;
+        }
+
+        .modal-header h2 {
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            font-weight: bold;
+            margin-bottom: 8px;
+            color: #333;
+        }
+
+        .form-group input,
+        .form-group select,
+        .form-group textarea {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #e0e0e0;
+            border-radius: 6px;
+            font-size: 1em;
+        }
+
+        .form-group textarea {
+            min-height: 80px;
+            font-family: inherit;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus,
+        .form-group textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .required {
+            color: red;
+        }
+
+        .help-text {
+            font-size: 0.85em;
+            color: #888;
+            margin-top: 4px;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 15px;
+            margin-top: 30px;
+        }
+
+        .btn {
+            padding: 12px 30px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1em;
+            cursor: pointer;
+            font-weight: bold;
+            transition: all 0.3s ease;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.3);
+        }
+
+        .btn-secondary {
+            background: #e0e0e0;
+            color: #333;
+        }
+
+        .btn-secondary:hover {
+            background: #d0d0d0;
+        }
+
+        .output-section {
+            display: none;
+            margin-top: 30px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+
+        .output-section h3 {
+            margin-bottom: 15px;
+            color: #667eea;
+        }
+
+        .output-document {
+            background: white;
+            padding: 30px;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            white-space: pre-wrap;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            line-height: 1.6;
+            max-height: 600px;
+            overflow-y: auto;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .enhancement-toggle {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .enhancement-toggle input[type="checkbox"] {
+            width: auto;
+        }
+
+        .ai-badge {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 3px 8px;
+            border-radius: 8px;
+            font-size: 0.7em;
+            font-weight: bold;
+            margin-left: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div>
+                <h1>📄 Document Templates</h1>
+                <div class="subtitle">Professional templates for CA & Corporate work</div>
+            </div>
+            <button class="back-btn" onclick="window.location.href='index.html'">
+                ← Back to LegalMitra
+            </button>
+        </div>
+
+        <div class="main-content">
+            <div class="sidebar">
+                <h3 style="margin-bottom: 15px;">Categories</h3>
+                <div id="categories-list">
+                    <div class="loading">
+                        <div class="spinner"></div>
+                        <p style="margin-top: 10px;">Loading...</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="content-area">
+                <div class="search-box">
+                    <input type="text" id="search-input" placeholder="🔍 Search templates..." onkeyup="searchTemplates()">
+                </div>
+
+                <div id="templates-display">
+                    <div class="loading">
+                        <div class="spinner"></div>
+                        <p style="margin-top: 10px;">Loading templates...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Template Fill Modal -->
+    <div id="templateModal" class="modal">
+        <div class="modal-content">
+            <span class="modal-close" onclick="closeModal()">&times;</span>
+            <div class="modal-header">
+                <h2 id="modal-template-name"></h2>
+                <p id="modal-template-description"></p>
+            </div>
+
+            <div class="enhancement-toggle">
+                <input type="checkbox" id="ai-enhance" checked>
+                <label for="ai-enhance">AI Enhancement <span class="ai-badge">AI</span></label>
+                <span class="help-text">(Recommended: AI will make the document professional and comprehensive)</span>
+            </div>
+
+            <form id="template-form">
+                <!-- Fields will be dynamically added here -->
+            </form>
+
+            <div class="button-group">
+                <button type="button" class="btn btn-primary" onclick="generateDocument()">
+                    Generate Document
+                </button>
+                <button type="button" class="btn btn-secondary" onclick="closeModal()">
+                    Cancel
+                </button>
+            </div>
+
+            <div class="output-section" id="output-section">
+                <h3>Generated Document:</h3>
+                <div class="output-document" id="output-document"></div>
+                <div class="button-group">
+                    <button type="button" class="btn btn-primary" onclick="downloadDocument()">
+                        📥 Download
+                    </button>
+                    <button type="button" class="btn btn-secondary" onclick="copyToClipboard()">
+                        📋 Copy to Clipboard
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="config.js"></script>
+    <script>
+        let allTemplates = [];
+        let currentCategory = 'all';
+        let currentTemplateId = null;
+        let generatedDocument = '';
+
+        function showStartupError(message) {
+            document.getElementById('categories-list').innerHTML = `<p style="color: red;">${message}</p>`;
+            document.getElementById('templates-display').innerHTML = `<p style="color: red;">${message}</p>`;
+        }
+
+        function isFileProtocol() {
+            return window.location.protocol === 'file:';
+        }
+
+        async function loadCategories() {
+            if (isFileProtocol()) {
+                showStartupError('This page needs to be opened via http://localhost (not file://) so the API can load.');
+                return;
+            }
+
+            try {
+                // Use summary endpoint to get categories with counts
+                const response = await fetch(`${CONFIG.API_BASE_URL}/templates/summary`);
+                if (!response.ok) {
+                    throw new Error(`Failed to load categories (${response.status})`);
+                }
+                const data = await response.json();
+                const categories = data.categories || {};
+                const templatesPerCategory = data.templates_per_category || {};
+                const totalTemplates = typeof data.total_templates === 'number' ? data.total_templates : null;
+
+                let html = '';
+                const totalLabel = totalTemplates !== null ? `${totalTemplates} templates` : 'All templates';
+                html += `<div class="category-item ${currentCategory === 'all' ? 'active' : ''}" onclick="selectCategory('all')">
+                    <div class="category-name">All Templates</div>
+                    <div class="category-count">${totalLabel}</div>
+                </div>`;
+
+                for (const [catId, catInfo] of Object.entries(categories)) {
+                    const count = templatesPerCategory[catId];
+                    const countLabel = typeof count === 'number' ? `${count} templates` : 'Templates';
+                    html += `
+                        <div class="category-item ${currentCategory === catId ? 'active' : ''}" onclick="selectCategory('${catId}')">
+                            <div class="category-name">${catInfo.name}</div>
+                            <div class="category-count">${countLabel}</div>
+                        </div>
+                    `;
+                }
+
+                document.getElementById('categories-list').innerHTML = html;
+                loadTemplates();
+            } catch (error) {
+                console.error('Error loading categories:', error);
+                document.getElementById('categories-list').innerHTML = '<p style="color: red;">Error loading categories: ' + error.message + '</p>';
+            }
+        }
+
+        async function loadTemplates() {
+            try {
+                document.getElementById('templates-display').innerHTML = '<div class="loading"><div class="spinner"></div><p>Loading templates...</p></div>';
+                
+                if (currentCategory === 'all') {
+                    allTemplates = [];
+                    const categoriesResponse = await fetch(`${CONFIG.API_BASE_URL}/templates/categories`);
+                    if (!categoriesResponse.ok) {
+                        throw new Error(`Failed to load categories (${categoriesResponse.status})`);
+                    }
+                    const categoriesData = await categoriesResponse.json();
+                    // Handle both formats: {categories: {...}} or just {...}
+                    const categories = categoriesData.categories || categoriesData;
+
+                    // Load templates from all categories
+                    for (const catId of Object.keys(categories)) {
+                        try {
+                            const catResponse = await fetch(`${CONFIG.API_BASE_URL}/templates/category/${catId}`);
+                            if (!catResponse.ok) {
+                                console.warn(`Failed to load category ${catId}: ${catResponse.status}`);
+                                continue;
+                            }
+                            const catData = await catResponse.json();
+                            if (catData.templates && Array.isArray(catData.templates)) {
+                                allTemplates.push(...catData.templates);
+                            }
+                        } catch (catError) {
+                            console.warn(`Error loading category ${catId}:`, catError);
+                            // Continue with other categories
+                        }
+                    }
+                } else {
+                    // Load templates from specific category
+                    const response = await fetch(`${CONFIG.API_BASE_URL}/templates/category/${currentCategory}`);
+                    if (!response.ok) {
+                        throw new Error(`Failed to load templates (${response.status})`);
+                    }
+                    const templatesData = await response.json();
+                    allTemplates = templatesData.templates || [];
+                }
+
+                displayTemplates(allTemplates || []);
+            } catch (error) {
+                console.error('Error loading templates:', error);
+                document.getElementById('templates-display').innerHTML = '<p style="color: red;">Error loading templates: ' + error.message + '</p>';
+            }
+        }
+
+        function displayTemplates(templates) {
+            if (!templates || templates.length === 0) {
+                document.getElementById('templates-display').innerHTML = '<p>No templates found</p>';
+                return;
+            }
+
+            let html = '<div class="templates-grid">';
+            templates.forEach(template => {
+                // Escape template name and description to prevent XSS
+                const templateName = (template.name || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+                const templateDesc = (template.description || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+                const templateId = (template.id || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+                const tags = Array.isArray(template.tags) ? template.tags : [];
+                const applicableFor = Array.isArray(template.applicable_for) ? template.applicable_for : [];
+                
+                html += `
+                    <div class="template-card" onclick="openTemplate('${templateId}')">
+                        <div class="template-title">
+                            ${templateName}
+                            ${template.ai_enhanced ? '<span class="ai-badge">AI</span>' : ''}
+                        </div>
+                        <div class="template-description">${templateDesc}</div>
+                        <div class="template-tags">
+                            ${tags.map(tag => `<span class="tag">${tag}</span>`).join('')}
+                        </div>
+                        <div class="template-for">
+                            For: ${applicableFor.join(', ')}
+                        </div>
+                    </div>
+                `;
+            });
+            html += '</div>';
+
+            document.getElementById('templates-display').innerHTML = html;
+        }
+
+        function selectCategory(categoryId) {
+            currentCategory = categoryId;
+            loadCategories();
+        }
+
+        function searchTemplates() {
+            const query = document.getElementById('search-input').value.toLowerCase();
+            if (query.length === 0) {
+                displayTemplates(allTemplates);
+                return;
+            }
+
+            const filtered = allTemplates.filter(t =>
+                t.name.toLowerCase().includes(query) ||
+                t.description.toLowerCase().includes(query) ||
+                t.tags.some(tag => tag.toLowerCase().includes(query))
+            );
+
+            displayTemplates(filtered);
+        }
+
+        async function openTemplate(templateId) {
+            try {
+                const response = await fetch(`${CONFIG.API_BASE_URL}/templates/${templateId}`);
+                const template = await response.json();
+
+                currentTemplateId = templateId;
+
+                document.getElementById('modal-template-name').textContent = template.name;
+                document.getElementById('modal-template-description').textContent = template.description;
+
+                // Build form
+                let formHtml = '';
+                template.fields.forEach(field => {
+                    formHtml += `<div class="form-group">`;
+                    formHtml += `<label>${field.label} ${field.required ? '<span class="required">*</span>' : ''}</label>`;
+
+                    if (field.type === 'text' || field.type === 'number' || field.type === 'date') {
+                        formHtml += `<input type="${field.type}" id="field_${field.name}" name="${field.name}" ${field.required ? 'required' : ''} placeholder="${field.placeholder || ''}">`;
+                    } else if (field.type === 'dropdown') {
+                        formHtml += `<select id="field_${field.name}" name="${field.name}" ${field.required ? 'required' : ''}>`;
+                        formHtml += `<option value="">Select...</option>`;
+                        field.options.forEach(opt => {
+                            formHtml += `<option value="${opt}">${opt}</option>`;
+                        });
+                        formHtml += `</select>`;
+                    } else if (field.type === 'multiline') {
+                        formHtml += `<textarea id="field_${field.name}" name="${field.name}" ${field.required ? 'required' : ''} placeholder="${field.placeholder || ''}"></textarea>`;
+                    }
+
+                    if (field.help_text) {
+                        formHtml += `<div class="help-text">${field.help_text}</div>`;
+                    }
+
+                    formHtml += `</div>`;
+                });
+
+                document.getElementById('template-form').innerHTML = formHtml;
+                document.getElementById('output-section').style.display = 'none';
+                document.getElementById('templateModal').style.display = 'block';
+
+            } catch (error) {
+                console.error('Error loading template:', error);
+                alert('Error loading template');
+            }
+        }
+
+        function closeModal() {
+            document.getElementById('templateModal').style.display = 'none';
+        }
+
+        async function generateDocument() {
+            const form = document.getElementById('template-form');
+            const formData = new FormData(form);
+            const fieldValues = {};
+
+            for (const [key, value] of formData.entries()) {
+                fieldValues[key] = value;
+            }
+
+            const aiEnhance = document.getElementById('ai-enhance').checked;
+
+            try {
+                document.getElementById('output-section').innerHTML = '<div class="loading"><div class="spinner"></div><p>Generating document with AI...</p></div>';
+                document.getElementById('output-section').style.display = 'block';
+
+                const response = await fetch(`${CONFIG.API_BASE_URL}/templates/fill`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        template_id: currentTemplateId,
+                        field_values: fieldValues,
+                        ai_enhance: aiEnhance
+                    })
+                });
+
+                const result = await response.json();
+                generatedDocument = result.filled_document;
+
+                document.getElementById('output-section').innerHTML = `
+                    <h3>Generated Document:</h3>
+                    <div class="output-document" id="output-document">${generatedDocument}</div>
+                    <div class="button-group">
+                        <button type="button" class="btn btn-primary" onclick="downloadDocument()">📥 Download</button>
+                        <button type="button" class="btn btn-secondary" onclick="copyToClipboard()">📋 Copy</button>
+                    </div>
+                `;
+
+            } catch (error) {
+                console.error('Error generating document:', error);
+                alert('Error generating document');
+            }
+        }
+
+        function downloadDocument() {
+            const blob = new Blob([generatedDocument], {type: 'text/plain'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `document_${Date.now()}.txt`;
+            a.click();
+        }
+
+        function copyToClipboard() {
+            navigator.clipboard.writeText(generatedDocument);
+            alert('Document copied to clipboard!');
+        }
+
+        // Load on page ready
+        loadCategories();
+    </script>
+
+    <!-- PWA Support -->
+    <script src="pwa.js"></script>
+</body>
+</html>

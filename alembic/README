@@ -1,0 +1,7 @@
+﻿# Alembic migrations
+
+Run migrations:
+  alembic upgrade head
+
+Create a new migration after model changes:
+  alembic revision --autogenerate -m "message"

@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LegalMitra - Document Checklist</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; background: #f4f6fb; color: #1f2937; }
+    .top { background: linear-gradient(135deg, #d97706, #f59e0b); color: #fff; padding: 18px 24px; }
+    .top h1 { margin: 0; font-size: 1.5rem; }
+    .nav { margin-top: 10px; }
+    .nav a { color: #fff; text-decoration: none; margin-right: 14px; font-size: 0.95rem; }
+    .wrap { max-width: 980px; margin: 24px auto; padding: 0 16px; }
+    .card { background: #fff; border-radius: 10px; padding: 18px; box-shadow: 0 2px 10px rgba(0,0,0,0.08); }
+    label { display: block; font-weight: 600; margin: 12px 0 6px; }
+    select, textarea { width: 100%; padding: 10px; border: 1px solid #d1d5db; border-radius: 8px; box-sizing: border-box; }
+    textarea { min-height: 100px; }
+    .checklist { margin-top: 14px; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; }
+    .item { display: flex; align-items: flex-start; gap: 8px; margin: 8px 0; }
+    .item input { margin-top: 3px; }
+    .item span { line-height: 1.4; }
+    .meta { margin-top: 10px; font-weight: 600; }
+    .bar { height: 14px; background: #e5e7eb; border-radius: 999px; overflow: hidden; margin-top: 10px; }
+    .bar > div { height: 100%; width: 0%; background: #f59e0b; transition: width 0.2s ease; }
+    .actions { margin-top: 14px; display: flex; gap: 10px; flex-wrap: wrap; }
+    button { background: #b45309; color: #fff; border: 0; padding: 10px 12px; border-radius: 8px; cursor: pointer; font-weight: 600; }
+    .note { margin-top: 14px; padding: 10px; border-radius: 8px; background: #fff7ed; border: 1px solid #fed7aa; color: #92400e; font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+  <div class="top">
+    <h1>Document Checklist</h1>
+    <div class="nav">
+      <a href="index.html">Back to LegalMitra</a>
+      <a href="limitation-calculator.html">Limitation Calculator</a>
+      <a href="compliance-checker.html">Compliance Checker</a>
+    </div>
+  </div>
+  <div class="wrap">
+    <div class="card">
+      <label for="matterType">Matter Type</label>
+      <select id="matterType">
+        <option value="civil_suit">Civil Suit</option>
+        <option value="criminal_complaint">Criminal Complaint</option>
+        <option value="ni_138">NI Act Section 138 Matter</option>
+        <option value="consumer">Consumer Dispute</option>
+        <option value="family">Family Matter</option>
+      </select>
+
+      <div id="checklistBox" class="checklist"></div>
+      <div class="bar"><div id="barFill"></div></div>
+      <div id="score" class="meta">0 / 0 completed (0%)</div>
+
+      <label for="remarks">Case Notes (optional)</label>
+      <textarea id="remarks" placeholder="Add case-specific document notes, pending items, and follow-up details..."></textarea>
+
+      <div class="actions">
+        <button type="button" id="copyBtn">Copy Checklist Summary</button>
+        <button type="button" id="printBtn">Print</button>
+        <button type="button" id="resetBtn">Reset</button>
+      </div>
+
+      <div class="note">
+        General guidance only. The actual filing set depends on statute, court rules, and case facts. Validate with counsel and local procedural requirements.
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const templates = {
+      civil_suit: [
+        "Plaint and cause title draft",
+        "List of documents and annexures",
+        "Chronology of events",
+        "Court fee and valuation note",
+        "Vakalatnama and memo of appearance"
+      ],
+      criminal_complaint: [
+        "Complaint/petition draft with facts",
+        "Supporting evidence list",
+        "Witness list",
+        "Jurisdiction and maintainability note",
+        "Affidavit/verification documents"
+      ],
+      ni_138: [
+        "Cheque copy and bank return memo",
+        "Statutory demand notice copy",
+        "Proof of service/postal tracking",
+        "Cause-of-action date calculation note",
+        "Complaint draft under Sections 138/142 NI Act"
+      ],
+      consumer: [
+        "Consumer complaint draft",
+        "Invoice/bill and payment proofs",
+        "Deficiency notice/communication records",
+        "Relief and compensation computation",
+        "Affidavit and supporting exhibits index"
+      ],
+      family: [
+        "Petition/application draft",
+        "Marriage and identity proof documents",
+        "Income/assets disclosures",
+        "Child-related documents (if applicable)",
+        "Interim relief prayer and affidavit"
+      ]
+    };
+
+    const matterType = document.getElementById("matterType");
+    const checklistBox = document.getElementById("checklistBox");
+    const barFill = document.getElementById("barFill");
+    const score = document.getElementById("score");
+    const remarks = document.getElementById("remarks");
+
+    function refreshScore() {
+      const checks = Array.from(document.querySelectorAll(".doc-check"));
+      const total = checks.length;
+      const done = checks.filter(c => c.checked).length;
+      const pct = total ? Math.round((done / total) * 100) : 0;
+      barFill.style.width = pct + "%";
+      score.textContent = `${done} / ${total} completed (${pct}%)`;
+    }
+
+    function renderChecklist() {
+      const items = templates[matterType.value] || [];
+      checklistBox.innerHTML = items
+        .map((item, idx) => `
+          <label class="item">
+            <input type="checkbox" class="doc-check" data-index="${idx}" />
+            <span>${item}</span>
+          </label>
+        `)
+        .join("");
+      document.querySelectorAll(".doc-check").forEach(c => c.addEventListener("change", refreshScore));
+      refreshScore();
+    }
+
+    matterType.addEventListener("change", renderChecklist);
+
+    document.getElementById("resetBtn").addEventListener("click", () => {
+      renderChecklist();
+      remarks.value = "";
+    });
+
+    document.getElementById("printBtn").addEventListener("click", () => {
+      window.print();
+    });
+
+    document.getElementById("copyBtn").addEventListener("click", async () => {
+      const checks = Array.from(document.querySelectorAll(".doc-check"));
+      const items = templates[matterType.value] || [];
+      const checked = checks.map((c, i) => ({ done: c.checked, text: items[i] }));
+      const done = checked.filter(x => x.done).length;
+      const pending = checked.filter(x => !x.done).map(x => "- " + x.text);
+      const lines = [
+        `LegalMitra Document Checklist (${matterType.options[matterType.selectedIndex].text})`,
+        `Completed: ${done}/${checked.length}`
+      ];
+      if (pending.length) {
+        lines.push("Pending:");
+        lines.push(...pending);
+      }
+      if (remarks.value.trim()) {
+        lines.push("Notes:");
+        lines.push(remarks.value.trim());
+      }
+      try {
+        await navigator.clipboard.writeText(lines.join("\n"));
+        alert("Checklist summary copied.");
+      } catch {
+        alert("Could not copy automatically.");
+      }
+    });
+
+    renderChecklist();
+  </script>
+</body>
+</html>

@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LegalMitra - AI Legal Assistant</title>
+
+    <!-- PWA Meta Tags -->
+    <meta name="description" content="AI-powered Indian legal assistant for CA, Corporate, and Legal professionals">
+    <meta name="theme-color" content="#667eea">
+    <link rel="manifest" href="/manifest.json">
+    <link rel="icon" type="image/png" sizes="192x192" href="/icons/Icon_192.png">
+    <link rel="icon" type="image/png" sizes="512x512" href="/icons/Icon_512.png">
+    <link rel="apple-touch-icon" href="/icons/Icon_192.png">
+    <link rel="stylesheet" href="css/index-main.css?v=1.0.0">
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>⚖️ LegalMitra</h1>
+            <p>AI-Powered Legal Assistant for Indian Legal System</p>
+        </div>
+
+        <div class="content">
+            <div class="tabs">
+                <button class="tab active" onclick="switchTab('research')">Legal Research</button>
+                <button class="tab" onclick="switchTab('drafting')">Document Drafting</button>
+                <button class="tab" onclick="switchTab('case-search')">Case Search</button>
+                <button class="tab" onclick="switchTab('statute')">Statute Search</button>
+                <button class="tab" type="button" onclick="window.location.assign('diary.html')"
+                    style="border-bottom-color: #764ba2; color: #764ba2;">📚 Professional Diary</button>
+            </div>
+
+                        <!-- QUICK ACCESS - USER TOOLS -->
+            <div style="background: linear-gradient(135deg, #56ab2f 0%, #a8e063 100%); padding: 15px; text-align: center; margin-bottom: 20px; border-radius: 10px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);">
+                <div style="color: white; font-weight: bold; margin-bottom: 10px; font-size: 1.1em;">Quick Access Tools</div>
+                <div style="display: flex; justify-content: center; gap: 15px; flex-wrap: wrap;">
+                    <button id="template-marketplace-btn" type="button" onclick="window.location.assign('template-marketplace.html')" style="background: white; color: #2f7d24; padding: 12px 24px; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; font-size: 1em; box-shadow: 0 2px 4px rgba(0,0,0,0.2); transition: transform 0.2s;" onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">
+                        Template Marketplace
+                    </button>
+                    <button type="button" onclick="window.location.assign('limitation-calculator.html')" style="background: white; color: #2f7d24; padding: 12px 24px; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; font-size: 1em; box-shadow: 0 2px 4px rgba(0,0,0,0.2); transition: transform 0.2s;" onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">
+                        Limitation Calculator
+                    </button>
+                    <button type="button" onclick="window.location.assign('compliance-checker.html')" style="background: white; color: #2f7d24; padding: 12px 24px; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; font-size: 1em; box-shadow: 0 2px 4px rgba(0,0,0,0.2); transition: transform 0.2s;" onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">
+                        Compliance Checker
+                    </button>
+                    <button type="button" onclick="window.location.assign('document-checklist.html')" style="background: white; color: #2f7d24; padding: 12px 24px; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; font-size: 1em; box-shadow: 0 2px 4px rgba(0,0,0,0.2); transition: transform 0.2s;" onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">
+                        Document Checklist
+                    </button>
+                </div>
+            </div>
+
+            <!-- Legal Research Tab -->
+            <div id="research" class="tab-content active">
+                <div class="welcome-message" id="welcome-message">
+                    <h2>🙏 Namaste! I am your LegalMitra</h2>
+                    <p>Your AI-powered legal assistant for the Indian legal system. I'm here to help you with legal
+                        research, document drafting, case law searches, and statute lookups.</p>
+                    <p><strong>How can I assist you today?</strong></p>
+                    <button onclick="document.getElementById('welcome-message').style.display='none'"
+                        class="close-welcome">Got it!</button>
+                </div>
+
+                <div class="research-layout">
+                    <!-- Left Sidebar: Major Cases and Latest Legal News -->
+                    <div class="research-left">
+                        <!-- Major Cases Box -->
+                        <div class="info-box">
+                            <div
+                                style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; padding-bottom: 12px; border-bottom: 2px solid #667eea;">
+                                <h3 style="margin: 0; padding: 0; border: none;">⚖️ Recent Major Judgments<br><span
+                                        style="font-size: 0.7em; font-weight: normal; color: #666;">Supreme Court / High
+                                        Court</span></h3>
+                                <button id="refresh-cases-btn" class="refresh-btn" title="Refresh cases"
+                                    onclick="refreshCasesAndNews()"
+                                    style="background: #667eea; color: white; border: none; border-radius: 6px; padding: 8px 12px; cursor: pointer; font-size: 0.9em; transition: background 0.3s;">
+                                    🔄 Refresh
+                                </button>
+                            </div>
+                            <div id="major-cases-container">
+                                <div class="loading-box">
+                                    <div class="spinner"
+                                        style="width: 30px; height: 30px; border-width: 2px; margin: 0 auto 10px;">
+                                    </div>
+                                    Loading recent judgments...
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Latest Legal News Box -->
+                        <div class="info-box">
+                            <div
+                                style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; padding-bottom: 12px; border-bottom: 2px solid #667eea;">
+                                <h3 style="margin: 0; padding: 0; border: none;">📰 Latest Legal News</h3>
+                                <button id="refresh-news-btn" class="refresh-btn" title="Refresh news"
+                                    onclick="refreshCasesAndNews()"
+                                    style="background: #667eea; color: white; border: none; border-radius: 6px; padding: 8px 12px; cursor: pointer; font-size: 0.9em; transition: background 0.3s;">
+                                    🔄 Refresh
+                                </button>
+                            </div>
+                            <div id="legal-news-container">
+                                <div class="loading-box">
+                                    <div class="spinner"
+                                        style="width: 30px; height: 30px; border-width: 2px; margin: 0 auto 10px;">
+                                    </div>
+                                    Loading legal news...
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Right Side: Chat/Query Box -->
+                    <div class="research-right">
+                        <div class="info">
+                            <strong>💡 Tip:</strong> Ask any legal question about Indian laws, regulations, compliance,
+                            or case laws. Click on any case or news item above to learn more.
+                        </div>
+                        <div class="form-group">
+                            <label for="research-query">Your Legal Question:</label>
+                            <div style="position: relative;">
+                                <textarea id="research-query" placeholder="Enter your legal question here..."
+                                    style="padding-right: 100px;"></textarea>
+                                <input type="file" id="research-file-input"
+                                    accept=".pdf,.doc,.docx,.png,.jpeg,.jpg,.txt" style="display: none;"
+                                    onchange="handleFileSelect(event)">
+                                <button type="button" onclick="document.getElementById('research-file-input').click()"
+                                    style="position: absolute; right: 10px; bottom: 10px; background: #667eea; color: white; border: none; padding: 8px 12px; border-radius: 5px; cursor: pointer; font-size: 14px; z-index: 10;"
+                                    title="Upload Document/Image">📎 Upload</button>
+                            </div>
+                            <div id="file-preview-container"
+                                style="margin-top: 10px; display: none; padding: 10px; background: #f5f5f5; border-radius: 5px; border: 1px solid #ddd;">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="query-type">Query Type:</label>
+                            <select id="query-type">
+                                <option value="research">Research</option>
+                                <option value="opinion">Legal Opinion</option>
+                                <option value="case_prep">Case Preparation</option>
+                            </select>
+                        </div>
+                        <button onclick="performResearch()">🔍 Research</button>
+
+                        <!-- Recent Queries Section -->
+                        <div class="recent-queries-container" style="margin-top: 25px;">
+                            <h3 class="recent-queries-toggle" onclick="toggleRecentQueries()"
+                                style="cursor: pointer; color: #667eea; font-size: 1.1em; margin-bottom: 15px; padding: 10px; background: #f5f5f5; border-radius: 8px; display: flex; align-items: center; justify-content: space-between;">
+                                <span>📜 Recent Queries</span>
+                                <span id="toggle-icon" style="font-size: 0.9em;">▼</span>
+                            </h3>
+                            <div id="recent-queries-list" class="recent-queries-list"
+                                style="display: none; max-height: 300px; overflow-y: auto; border: 1px solid #e0e0e0; border-radius: 8px; padding: 10px; background: #fafafa;">
+                                <!-- Recent queries will be loaded here by JavaScript -->
+                            </div>
+                        </div>
+
+                        <!-- Response container - MUST be after Recent Queries -->
+                        <div id="research-response" style="margin-top: 25px; min-height: 50px;"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Document Drafting Tab -->
+            <div id="drafting" class="tab-content">
+                <div class="info">
+                    <strong>💡 Tip:</strong> Provide facts and details to draft legal documents like notices, petitions,
+                    or replies.
+                </div>
+                <div class="form-group">
+                    <label for="doc-type">Document Type:</label>
+                    <select id="doc-type">
+                        <option value="legal notice">Legal Notice</option>
+                        <option value="petition">Petition</option>
+                        <option value="reply">Reply to Notice</option>
+                        <option value="opinion">Legal Opinion</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="facts">Facts:</label>
+                    <textarea id="facts" placeholder="Describe the facts of the case..."></textarea>
+                </div>
+                <div class="form-group">
+                    <label for="parties">Parties (JSON format):</label>
+                    <textarea id="parties" placeholder='{"sender": "ABC Company", "recipient": "XYZ Ltd"}'></textarea>
+                </div>
+                <div class="form-group">
+                    <label for="grounds">Legal Grounds (one per line):</label>
+                    <textarea id="grounds" placeholder="Breach of contract&#10;Recovery of dues"></textarea>
+                </div>
+                <div class="form-group">
+                    <label for="prayer">Prayer/Relief Sought:</label>
+                    <textarea id="prayer" placeholder="Payment of Rs. 10 lakhs within 15 days"></textarea>
+                </div>
+                <div class="form-group">
+                    <label for="draft-amount-due">Amount Due (for notices):</label>
+                    <input type="text" id="draft-amount-due" placeholder="e.g., 125000">
+                </div>
+                <div class="form-group">
+                    <label for="draft-invoice-ref">Invoice/Reference No (for notices):</label>
+                    <input type="text" id="draft-invoice-ref" placeholder="e.g., INV-2025-126">
+                </div>
+                <div class="form-group">
+                    <label for="draft-due-date">Due Date (for notices):</label>
+                    <input type="date" id="draft-due-date">
+                </div>
+                <div class="form-group">
+                    <label for="draft-jurisdiction">Jurisdiction (City/Forum):</label>
+                    <input type="text" id="draft-jurisdiction" placeholder="e.g., Bengaluru">
+                </div>
+                <div class="form-group">
+                    <label for="draft-interest-rate">Interest Rate % (Optional):</label>
+                    <input type="number" id="draft-interest-rate" min="0" max="36" step="0.1" placeholder="e.g., 12">
+                </div>
+                <div class="form-group">
+                    <label for="draft-notice-period">Notice Period Days (Optional):</label>
+                    <input type="number" id="draft-notice-period" min="1" max="90" step="1" placeholder="e.g., 15">
+                </div>
+                <button onclick="draftDocument()">📝 Draft Document</button>
+                <div id="drafting-response"></div>
+            </div>
+
+            <!-- Case Search Tab -->
+            <div id="case-search" class="tab-content">
+                <div class="info">
+                    <strong>💡 Tip:</strong> Search for relevant case laws by topic, court, or year.
+                </div>
+                <div class="form-group">
+                    <label for="case-query">Search Query:</label>
+                    <textarea id="case-query" placeholder="e.g., arbitration clause interpretation"></textarea>
+                </div>
+                <div class="form-group">
+                    <label for="court">Court (Optional):</label>
+                    <input type="text" id="court" placeholder="Supreme Court, High Court, etc.">
+                </div>
+                <div class="form-group">
+                    <label for="year">Year (Optional):</label>
+                    <input type="text" id="year" placeholder="2023">
+                </div>
+                <button onclick="searchCases()">🔎 Search Cases</button>
+                <div id="case-response"></div>
+            </div>
+
+            <!-- Statute Search Tab -->
+            <div id="statute" class="tab-content">
+                <div class="info">
+                    <strong>💡 Tip:</strong> Search for specific acts and sections of Indian laws.
+                </div>
+                <div class="form-group">
+                    <label for="act-name">Act Name:</label>
+                    <input type="text" id="act-name" placeholder="e.g., CGST Act 2017">
+                </div>
+                <div class="form-group">
+                    <label for="section">Section Number (Optional):</label>
+                    <input type="text" id="section" placeholder="e.g., 16">
+                </div>
+                <button onclick="searchStatute()">📚 Search Statute</button>
+                <div id="statute-response"></div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="footer">
+            <div class="footer-links">
+                <a href="#" class="footer-link" onclick="openModal('disclaimer'); return false;">Disclaimer</a>
+                <a href="#" class="footer-link" onclick="openModal('privacy'); return false;">Privacy Policy</a>
+                <a href="#" class="footer-link" onclick="openModal('terms'); return false;">Terms of Use</a>
+                <a href="#" class="footer-link" onclick="openModal('about'); return false;">About</a>
+                <a href="#" class="footer-link" onclick="openModal('contact'); return false;">Contact</a>
+            </div>
+            <div class="footer-copyright">
+                <p>&copy; 2025 LegalMitra. All rights reserved. | AI-Powered Legal Assistant for Indian Legal System</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modals -->
+    <!-- Disclaimer Modal -->
+    <div id="disclaimer-modal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeModal('disclaimer')">&times;</span>
+            <h2>Disclaimer</h2>
+            <iframe src="legal/disclaimer.html" title="Disclaimer" class="legal-policy-frame"></iframe>
+        </div>
+    </div>
+
+    <!-- Privacy Policy Modal -->
+    <div id="privacy-modal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeModal('privacy')">&times;</span>
+            <h2>Privacy Policy</h2>
+            <iframe src="legal/privacy.html" title="Privacy Policy" class="legal-policy-frame"></iframe>
+        </div>
+    </div>
+
+    <!-- Terms of Use Modal -->
+    <div id="terms-modal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeModal('terms')">&times;</span>
+            <h2>Terms of Use</h2>
+            <iframe src="legal/terms.html" title="Terms of Use" class="legal-policy-frame"></iframe>
+        </div>
+    </div>
+
+
+
+    <!-- About Modal -->
+    <div id="about-modal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeModal('about')">&times;</span>
+            <h2>About LegalMitra</h2>
+            <div>
+                <h3>What is LegalMitra?</h3>
+                <p>LegalMitra is an AI-powered legal assistant designed specifically for the Indian legal system. It
+                    helps practicing advocates, legal professionals, and individuals navigate complex Indian laws,
+                    regulations, and legal procedures with ease.</p>
+
+                <h3>Key Features</h3>
+                <ul>
+                    <li><strong>Legal Research:</strong> Get comprehensive answers to legal questions about Indian laws,
+                        regulations, and compliance requirements</li>
+                    <li><strong>Document Drafting:</strong> Generate legal documents including notices, petitions,
+                        replies, and legal opinions</li>
+                    <li><strong>Case Law Search:</strong> Search and retrieve relevant case laws by topic, court, or
+                        year</li>
+                    <li><strong>Statute Search:</strong> Find and understand specific sections of Indian Acts and
+                        regulations</li>
+                </ul>
+
+                <h3>Legal Knowledge Base</h3>
+                <p>LegalMitra is built with comprehensive knowledge of:</p>
+                <ul>
+                    <li>150+ Indian Acts and regulations</li>
+                    <li>15+ Industry-specific compliance requirements</li>
+                    <li>25+ Regulatory bodies and their guidelines</li>
+                    <li>Key Supreme Court and High Court precedents</li>
+                </ul>
+
+                <h3>AI Technology</h3>
+                <p>LegalMitra leverages advanced AI models including:</p>
+                <ul>
+                    <li>Anthropic Claude (Claude Sonnet 4)</li>
+                    <li>Google Gemini</li>
+                    <li>Grok (xAI)</li>
+                </ul>
+                <p>These models are fine-tuned to understand Indian legal terminology, procedures, and context.</p>
+
+                <h3>Privacy and Security</h3>
+                <p>LegalMitra prioritizes your privacy. The application runs locally on your device, and your API keys
+                    are stored securely in your local environment. We do not store or transmit your legal queries to our
+                    servers.</p>
+
+                <h3>For Advocates and Legal Professionals</h3>
+                <p>LegalMitra is designed to assist legal professionals by:</p>
+                <ul>
+                    <li>Accelerating legal research and case preparation</li>
+                    <li>Ensuring compliance with current laws and regulations</li>
+                    <li>Providing quick access to relevant case laws and precedents</li>
+                    <li>Drafting standardized legal documents efficiently</li>
+                </ul>
+
+                <h3>Disclaimer</h3>
+                <p>LegalMitra is a tool to assist legal professionals and is not a substitute for professional legal
+                    judgment. Always verify information and consult with qualified legal experts for critical matters.
+                </p>
+
+                <h3>Version</h3>
+                <p>LegalMitra v1.0 - Powered by Advanced AI Technology</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Contact Modal -->
+    <div id="contact-modal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeModal('contact')">&times;</span>
+            <h2>Contact Us</h2>
+            <div>
+                <h3>Get in Touch</h3>
+                <p>We'd love to hear from you! Whether you have questions, feedback, or need support, we're here to
+                    help.</p>
+
+                <h3>Support</h3>
+                <p>For technical support, troubleshooting, or questions about using LegalMitra:</p>
+                <ul>
+                    <li>Check the documentation files in your LegalMitra folder</li>
+                    <li>Review the README.md file for setup instructions</li>
+                    <li>Check troubleshooting guides for common issues</li>
+                </ul>
+
+                <h3>Feedback and Suggestions</h3>
+                <p>Your feedback helps us improve LegalMitra. If you have suggestions for:</p>
+                <ul>
+                    <li>New features or improvements</li>
+                    <li>Additional legal acts or regulations to include</li>
+                    <li>UI/UX enhancements</li>
+                    <li>Bug reports or issues</li>
+                </ul>
+                <p>Please note that LegalMitra is currently a local application. For feedback or contributions, you can
+                    modify the codebase directly or contact the development team if contact information is available.
+                </p>
+
+                <h3>Technical Information</h3>
+                <p><strong>Application Type:</strong> Desktop Application (Local)</p>
+                <p><strong>Backend:</strong> FastAPI (Python)</p>
+                <p><strong>Frontend:</strong> HTML/JavaScript</p>
+                <p><strong>AI Providers:</strong> Anthropic Claude, Google Gemini, Grok (xAI)</p>
+                <p><strong>Default Port:</strong> 8888</p>
+
+                <h3>Important Notes</h3>
+                <ul>
+                    <li>LegalMitra runs locally on your machine - no data is sent to external servers except to AI
+                        service providers (via your API keys)</li>
+                    <li>Keep your API keys secure and never share them publicly</li>
+                    <li>For legal advice, always consult with qualified legal professionals</li>
+                    <li>LegalMitra is a research and drafting tool, not a replacement for legal counsel</li>
+                </ul>
+
+                <h3>Documentation</h3>
+                <p>For detailed information, please refer to:</p>
+                <ul>
+                    <li>README.md - Project overview and setup</li>
+                    <li>HOW_TO_USE.md - Usage instructions</li>
+                    <li>QUICK_START.txt - Quick setup guide</li>
+                    <li>Various troubleshooting guides for specific issues</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <script src="config.js?v=1.2.0"></script>
+    <script src="js/index-main.js?v=1.0.0"></script>
+    <!-- Article Viewer Modal -->
+    <div id="article-modal" class="article-modal">
+        <div class="article-modal-content">
+            <div class="article-modal-header">
+                <h2 id="article-title" class="article-modal-title">Article Title</h2>
+                <span class="article-close" onclick="closeArticleModal()">&times;</span>
+            </div>
+            <div class="article-meta"
+                style="margin-bottom: 20px; color: #666; font-size: 0.9em; display: flex; justify-content: space-between; border-bottom: 1px solid #eee; padding-bottom: 10px;">
+                <span id="article-source" style="font-weight: bold; color: #667eea;">Source</span>
+                <span id="article-date">Date</span>
+            </div>
+            <div id="article-body" class="article-body" style="white-space: pre-wrap;">
+                <!-- Content will be injected here -->
+            </div>
+            <div style="text-align: center; margin-top: 30px;">
+                <a id="article-link" href="#" target="_blank" class="article-back-btn"
+                    style="text-decoration: none; display: inline-block;">Read Full Article on Source Website</a>
+                <p style="font-size: 0.8em; color: #999; margin-top: 10px;">(External Link - Opens in new tab)</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- PWA Support -->
+    <script src="js/legal-feed.js?v=1.0.0"></script>
+    <script src="pwa.js"></script>
+
+</body>
+
+</html>
+
+

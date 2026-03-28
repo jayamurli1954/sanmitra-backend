@@ -1,0 +1,125 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LegalMitra - Compliance Checker</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; background: #f4f6fb; color: #1f2937; }
+    .top { background: linear-gradient(135deg, #16a34a, #22c55e); color: #fff; padding: 18px 24px; }
+    .top h1 { margin: 0; font-size: 1.5rem; }
+    .nav { margin-top: 10px; }
+    .nav a { color: #fff; text-decoration: none; margin-right: 14px; font-size: 0.95rem; }
+    .wrap { max-width: 980px; margin: 24px auto; padding: 0 16px; }
+    .card { background: #fff; border-radius: 10px; padding: 18px; box-shadow: 0 2px 10px rgba(0,0,0,0.08); }
+    .section { border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; margin-top: 14px; }
+    .section h3 { margin: 0 0 10px; font-size: 1rem; }
+    label { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
+    .bar { height: 14px; background: #e5e7eb; border-radius: 999px; overflow: hidden; margin-top: 10px; }
+    .bar > div { height: 100%; width: 0%; background: #22c55e; transition: width 0.2s ease; }
+    .meta { margin-top: 10px; font-weight: 600; }
+    .actions { margin-top: 14px; display: flex; gap: 10px; flex-wrap: wrap; }
+    button { background: #2563eb; color: white; border: 0; padding: 10px 12px; border-radius: 8px; cursor: pointer; font-weight: 600; }
+    .note { margin-top: 14px; padding: 10px; border-radius: 8px; background: #fff7ed; border: 1px solid #fed7aa; color: #92400e; font-size: 0.9rem; }
+    textarea { width: 100%; min-height: 100px; margin-top: 10px; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; box-sizing: border-box; }
+  </style>
+</head>
+<body>
+  <div class="top">
+    <h1>Compliance Checker</h1>
+    <div class="nav">
+      <a href="index.html">Back to LegalMitra</a>
+      <a href="limitation-calculator.html">Limitation Calculator</a>
+      <a href="document-checklist.html">Document Checklist</a>
+    </div>
+  </div>
+  <div class="wrap">
+    <div class="card">
+      <div class="section">
+        <h3>Client Onboarding & KYC</h3>
+        <label><input type="checkbox" class="ck" /> Identity proof collected and verified</label>
+        <label><input type="checkbox" class="ck" /> Address proof collected</label>
+        <label><input type="checkbox" class="ck" /> Engagement letter signed</label>
+      </div>
+
+      <div class="section">
+        <h3>Case File Readiness</h3>
+        <label><input type="checkbox" class="ck" /> Cause-of-action chronology prepared</label>
+        <label><input type="checkbox" class="ck" /> Supporting documents indexed</label>
+        <label><input type="checkbox" class="ck" /> Limitation check recorded</label>
+      </div>
+
+      <div class="section">
+        <h3>Court Filing & Process</h3>
+        <label><input type="checkbox" class="ck" /> Correct forum/jurisdiction validated</label>
+        <label><input type="checkbox" class="ck" /> Court fee/stamp requirements checked</label>
+        <label><input type="checkbox" class="ck" /> Vakalatnama and affidavits prepared</label>
+      </div>
+
+      <div class="section">
+        <h3>Data Protection & Records</h3>
+        <label><input type="checkbox" class="ck" /> Sensitive files access-controlled</label>
+        <label><input type="checkbox" class="ck" /> Backup and retention policy followed</label>
+        <label><input type="checkbox" class="ck" /> Client communications documented</label>
+      </div>
+
+      <div class="bar"><div id="barFill"></div></div>
+      <div id="score" class="meta">0 / 12 completed (0%)</div>
+
+      <textarea id="remarks" placeholder="Optional remarks for internal compliance notes..."></textarea>
+
+      <div class="actions">
+        <button type="button" id="copyBtn">Copy Compliance Summary</button>
+        <button type="button" id="resetBtn">Reset</button>
+      </div>
+
+      <div class="note">
+        General guidance only. Customize this checklist based on actual law-firm SOPs, bar council rules, client contracts, and court-specific practice directions.
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const checks = Array.from(document.querySelectorAll('.ck'));
+    const barFill = document.getElementById('barFill');
+    const score = document.getElementById('score');
+
+    function refreshScore() {
+      const total = checks.length;
+      const done = checks.filter(c => c.checked).length;
+      const pct = Math.round((done / total) * 100);
+      barFill.style.width = pct + '%';
+      score.textContent = `${done} / ${total} completed (${pct}%)`;
+    }
+
+    checks.forEach(c => c.addEventListener('change', refreshScore));
+
+    document.getElementById('resetBtn').addEventListener('click', () => {
+      checks.forEach(c => c.checked = false);
+      document.getElementById('remarks').value = '';
+      refreshScore();
+    });
+
+    document.getElementById('copyBtn').addEventListener('click', async () => {
+      const done = checks.filter(c => c.checked).length;
+      const total = checks.length;
+      const remarks = document.getElementById('remarks').value.trim();
+      const lines = [
+        'LegalMitra Compliance Checker Summary',
+        `Completed: ${done}/${total}`,
+        `Pending: ${total - done}`,
+      ];
+      if (remarks) lines.push(`Remarks: ${remarks}`);
+      const text = lines.join('\n');
+      try {
+        await navigator.clipboard.writeText(text);
+        alert('Compliance summary copied.');
+      } catch {
+        alert('Could not copy automatically.');
+      }
+    });
+
+    refreshScore();
+  </script>
+</body>
+</html>

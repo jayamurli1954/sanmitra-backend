@@ -1,0 +1,55 @@
+services:
+  - type: web
+    name: sanmitra-backend-staging
+    runtime: python
+    plan: starter
+    region: oregon
+    branch: main
+    rootDir: .
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: ENVIRONMENT
+        value: staging
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: MONGODB_URI
+        sync: false
+      - key: MONGO_DB_NAME
+        sync: false
+      - key: POSTGRES_URI
+        sync: false
+      - key: PG_AUTO_CREATE_TABLES
+        value: "false"
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_ALGORITHM
+        value: HS256
+      - key: ACCESS_TOKEN_EXPIRE_MINUTES
+        value: "60"
+      - key: REFRESH_TOKEN_EXPIRE_DAYS
+        value: "7"
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: DEFAULT_APP_KEY
+        value: legalmitra
+      - key: ALLOWED_APP_KEYS
+        value: mandirmitra,gruhamitra,mitrabooks,legalmitra,investmitra
+      - key: GOOGLE_OAUTH_CLIENT_IDS
+        sync: false
+      - key: SUPER_ADMIN_BOOTSTRAP
+        value: "false"
+      - key: RAG_EMBEDDING_PROVIDER
+        value: hash
+      - key: LEGAL_HYBRID_AI_FALLBACK_ENABLED
+        value: "true"
+      - key: RAG_AUTO_SYNC_ENABLED
+        value: "true"
+      - key: LEGAL_SYNC_WORKER_ENABLED
+        value: "true"
+      - key: LEGAL_SYNC_WORKER_POLL_SECONDS
+        value: "60"
+      - key: LEGAL_SYNC_WORKER_BATCH_SIZE
+        value: "5"

@@ -1,0 +1,52 @@
+name: render-deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Deploy target"
+        required: true
+        default: "staging"
+        type: choice
+        options:
+          - staging
+          - production
+
+concurrency:
+  group: render-deploy-${{ github.event.inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  deploy-staging:
+    if: ${{ github.event.inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: staging
+
+    steps:
+      - name: Validate Staging Deploy Hook
+        run: |
+          if [ -z "${{ secrets.RENDER_STAGING_DEPLOY_HOOK }}" ]; then
+            echo "RENDER_STAGING_DEPLOY_HOOK is not configured"
+            exit 1
+          fi
+
+      - name: Trigger Render Staging Deploy
+        run: |
+          curl -fsS -X POST "${{ secrets.RENDER_STAGING_DEPLOY_HOOK }}"
+
+  deploy-production:
+    if: ${{ github.event.inputs.target == 'production' }}
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Validate Production Deploy Hook
+        run: |
+          if [ -z "${{ secrets.RENDER_PRODUCTION_DEPLOY_HOOK }}" ]; then
+            echo "RENDER_PRODUCTION_DEPLOY_HOOK is not configured"
+            exit 1
+          fi
+
+      - name: Trigger Render Production Deploy
+        run: |
+          curl -fsS -X POST "${{ secrets.RENDER_PRODUCTION_DEPLOY_HOOK }}"

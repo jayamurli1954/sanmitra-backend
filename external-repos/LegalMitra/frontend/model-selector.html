@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Model Selector - LegalMitra</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 20px;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+
+        h1 {
+            color: #667eea;
+            margin-bottom: 10px;
+            text-align: center;
+        }
+
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+        }
+
+        .tier-section {
+            margin-bottom: 30px;
+        }
+
+        .tier-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 15px;
+            padding: 10px;
+            border-radius: 8px;
+        }
+
+        .tier-header.premium {
+            background: linear-gradient(135deg, #ffd700 0%, #ffed4e 100%);
+        }
+
+        .tier-header.balanced {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .tier-header.budget {
+            background: linear-gradient(135deg, #56ab2f 0%, #a8e063 100%);
+        }
+
+        .tier-header.free {
+            background: linear-gradient(135deg, #00C853 0%, #69F0AE 100%);
+            color: white;
+            font-weight: bold;
+            border: 3px solid #00E676;
+            animation: glow-green 2s ease-in-out infinite;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+
+        @keyframes glow-green {
+            0%, 100% { box-shadow: 0 0 15px rgba(0, 200, 83, 0.6); }
+            50% { box-shadow: 0 0 30px rgba(0, 230, 118, 0.9); }
+        }
+
+        .tier-header h2 {
+            font-size: 1.3em;
+        }
+
+        .model-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 15px;
+        }
+
+        .model-card {
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            padding: 20px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+        }
+
+        .model-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            border-color: #667eea;
+        }
+
+        .model-card.selected {
+            border-color: #667eea;
+            background: #f0f4ff;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.2);
+        }
+
+        .model-name {
+            font-size: 1.2em;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 8px;
+        }
+
+        .model-id {
+            font-size: 0.85em;
+            color: #888;
+            font-family: monospace;
+            margin-bottom: 10px;
+        }
+
+        .model-cost {
+            font-size: 1.1em;
+            color: #667eea;
+            font-weight: bold;
+            margin-bottom: 8px;
+        }
+
+        .model-context {
+            font-size: 0.9em;
+            color: #666;
+            margin-bottom: 8px;
+        }
+
+        .model-best-for {
+            font-size: 0.9em;
+            color: #555;
+            background: #f5f5f5;
+            padding: 8px;
+            border-radius: 5px;
+            margin-top: 10px;
+        }
+
+        .selected-badge {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: #667eea;
+            color: white;
+            padding: 5px 10px;
+            border-radius: 15px;
+            font-size: 0.8em;
+            font-weight: bold;
+        }
+
+        .action-buttons {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 2px solid #e0e0e0;
+        }
+
+        .btn {
+            padding: 12px 30px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1em;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-weight: bold;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.3);
+        }
+
+        .btn-secondary {
+            background: #e0e0e0;
+            color: #333;
+        }
+
+        .btn-secondary:hover {
+            background: #d0d0d0;
+        }
+
+        .current-selection {
+            background: #f0f4ff;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border-left: 4px solid #667eea;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 50px;
+            color: #667eea;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🤖 AI Model Selector</h1>
+        <p class="subtitle">Choose the best AI model for your legal work based on quality and cost</p>
+
+        <div class="current-selection" id="current-selection">
+            <strong>Current Model:</strong> <span id="current-model-display">Loading...</span>
+        </div>
+
+        <div id="model-content">
+            <div class="loading">
+                <div class="spinner"></div>
+                <p>Loading available models...</p>
+            </div>
+        </div>
+
+        <div class="action-buttons">
+            <button class="btn btn-secondary" onclick="window.location.href='index.html'">
+                ← Back to LegalMitra
+            </button>
+            <button class="btn btn-primary" id="save-btn" onclick="saveSelection()" disabled>
+                Save & Apply Model
+            </button>
+        </div>
+    </div>
+
+    <script src="config.js"></script>
+    <script>
+        let selectedModel = null;
+        let models = [];
+
+        async function loadModels() {
+            try {
+                const response = await fetch(`${CONFIG.API_BASE_URL}/models/recommended`);
+                if (!response.ok) throw new Error('Failed to load models');
+
+                models = await response.json();
+                renderModels();
+            } catch (error) {
+                console.error('Error loading models:', error);
+                document.getElementById('model-content').innerHTML = `
+                    <div style="text-align: center; padding: 50px; color: #d32f2f;">
+                        <h3>Error Loading Models</h3>
+                        <p>${error.message}</p>
+                        <p>Make sure OpenRouter API key is set in backend/.env</p>
+                    </div>
+                `;
+            }
+        }
+
+        function renderModels() {
+            const tiers = {
+                budget: { name: '💎 Budget Tier - Ultra Cheap!', desc: 'Lowest cost models ($0.075-$0.50 per 1M tokens)', models: [] },
+                balanced: { name: '⚖️ Balanced Tier', desc: 'Good Quality, Lower Cost', models: [] },
+                premium: { name: '⭐ Premium Tier', desc: 'Best Quality for Complex Legal Analysis', models: [] }
+            };
+
+            models.forEach(model => {
+                if (tiers[model.tier]) {
+                    tiers[model.tier].models.push(model);
+                }
+            });
+
+            let html = '';
+            for (const [tier, data] of Object.entries(tiers)) {
+                if (data.models.length === 0) continue;
+
+                html += `
+                    <div class="tier-section">
+                        <div class="tier-header ${tier}">
+                            <h2>${data.name}</h2>
+                            <span>— ${data.desc}</span>
+                        </div>
+                        <div class="model-grid">
+                `;
+
+                data.models.forEach(model => {
+                    html += `
+                        <div class="model-card" onclick="selectModel('${model.id}')" data-model-id="${model.id}">
+                            <div class="model-name">${model.name}</div>
+                            <div class="model-id">${model.id}</div>
+                            <div class="model-cost">💰 ${model.cost_per_1m_tokens} / 1M tokens</div>
+                            <div class="model-context">📄 Context: ${model.context_length}</div>
+                            <div class="model-best-for">
+                                <strong>Best for:</strong> ${model.best_for}
+                            </div>
+                        </div>
+                    `;
+                });
+
+                html += `
+                        </div>
+                    </div>
+                `;
+            }
+
+            document.getElementById('model-content').innerHTML = html;
+            loadCurrentModel();
+        }
+
+        function selectModel(modelId) {
+            selectedModel = modelId;
+
+            // Update UI
+            document.querySelectorAll('.model-card').forEach(card => {
+                card.classList.remove('selected');
+                const badge = card.querySelector('.selected-badge');
+                if (badge) badge.remove();
+            });
+
+            const selectedCard = document.querySelector(`[data-model-id="${modelId}"]`);
+            if (selectedCard) {
+                selectedCard.classList.add('selected');
+                selectedCard.innerHTML += '<div class="selected-badge">✓ Selected</div>';
+            }
+
+            document.getElementById('save-btn').disabled = false;
+
+            const model = models.find(m => m.id === modelId);
+            if (model) {
+                document.getElementById('current-model-display').innerHTML = `
+                    <strong>${model.name}</strong> (${model.id}) — ${model.cost_per_1m_tokens}
+                `;
+            }
+        }
+
+        function loadCurrentModel() {
+            // Load from localStorage or default
+            const saved = localStorage.getItem('openrouter_model');
+            if (saved) {
+                selectedModel = saved;
+                selectModel(saved);
+            } else {
+                // Default to Claude 3.5 Sonnet
+                selectModel('anthropic/claude-3.5-sonnet');
+            }
+        }
+
+        function saveSelection() {
+            if (!selectedModel) {
+                alert('Please select a model first');
+                return;
+            }
+
+            // Save to localStorage
+            localStorage.setItem('openrouter_model', selectedModel);
+
+            const model = models.find(m => m.id === selectedModel);
+            alert(`Model saved: ${model.name}\n\nThis model will be used for all AI requests in LegalMitra.\n\nNote: You also need to update OPENROUTER_MODEL in backend/.env file.`);
+
+            // Redirect back to main app
+            setTimeout(() => {
+                window.location.href = 'index.html';
+            }, 1000);
+        }
+
+        // Load models on page load
+        loadModels();
+    </script>
+</body>
+</html>
