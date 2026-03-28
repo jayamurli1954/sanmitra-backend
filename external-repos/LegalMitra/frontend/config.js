@@ -3,7 +3,7 @@
 
 const isLocalHost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
 const runtimeApiBaseUrl = (window.__SANMITRA_API_BASE_URL__ || localStorage.getItem('SANMITRA_API_BASE_URL') || '').trim();
-const defaultProdApiBaseUrl = 'https://sanmitra-backend-staging.onrender.com/api/v1';
+const defaultProdApiBaseUrl = 'https://sanmitra-backend-staging-sg.onrender.com/api/v1';
 
 const CONFIG = {
     // Backend API base URL
@@ -69,3 +69,4 @@ if (typeof window !== 'undefined') {
     window.CONFIG = CONFIG;
     patchFetchWithAppKey();
 }
+

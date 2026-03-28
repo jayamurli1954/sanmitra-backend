@@ -37,6 +37,16 @@
         return `<p>${esc(value || '')}</p>`;
     }
 
+    async function fetchWithTimeout(url, options = {}, timeoutMs = 12000) {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+            return await fetch(url, { ...options, signal: controller.signal });
+        } finally {
+            clearTimeout(timeoutId);
+        }
+    }
+
     async function loadMajorCases(forceWeb = false) {
         const container = document.getElementById('major-cases-container');
         if (!container) {
@@ -50,7 +60,10 @@
         try {
             const base = apiBaseUrl();
             const url = forceWeb ? `${base}/major-cases?force_web=true` : `${base}/major-cases`;
-            const response = await fetch(url);
+            let response = await fetchWithTimeout(url, {}, forceWeb ? 12000 : 8000);
+            if (!response.ok && forceWeb) {
+                response = await fetchWithTimeout(`${base}/major-cases`, {}, 8000);
+            }
             if (!response.ok) {
                 throw new Error('Failed to fetch cases');
             }
@@ -110,7 +123,10 @@
         try {
             const base = apiBaseUrl();
             const url = forceWeb ? `${base}/legal-news?force_web=true` : `${base}/legal-news`;
-            const response = await fetch(url);
+            let response = await fetchWithTimeout(url, {}, forceWeb ? 12000 : 8000);
+            if (!response.ok && forceWeb) {
+                response = await fetchWithTimeout(`${base}/legal-news`, {}, 8000);
+            }
             if (!response.ok) {
                 throw new Error('Failed to fetch news');
             }
@@ -281,3 +297,4 @@
     window.refreshCasesAndNews = refreshCasesAndNews;
     window.initCasesAndNews = initCasesAndNews;
 })(window);
+
