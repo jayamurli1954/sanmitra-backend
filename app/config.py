@@ -36,6 +36,21 @@ class Settings:
         for client_id in os.getenv("GOOGLE_OAUTH_CLIENT_IDS", "").split(",")
         if client_id.strip()
     ]
+    AUTH_PUBLIC_BASE_URL = os.getenv("AUTH_PUBLIC_BASE_URL", "").strip()
+    AUTH_ACTIVATION_TOKEN_TTL_MINUTES = int(os.getenv("AUTH_ACTIVATION_TOKEN_TTL_MINUTES", "60"))
+    AUTH_RESET_TOKEN_TTL_MINUTES = int(os.getenv("AUTH_RESET_TOKEN_TTL_MINUTES", "30"))
+    AUTH_EMAIL_DEBUG_RETURN_LINK = os.getenv(
+        "AUTH_EMAIL_DEBUG_RETURN_LINK",
+        "true" if ENVIRONMENT != "production" else "false",
+    ).lower() in {"1", "true", "yes", "on"}
+    SMTP_HOST = os.getenv("SMTP_HOST", "").strip()
+    SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+    SMTP_USERNAME = os.getenv("SMTP_USERNAME", "").strip()
+    SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "").strip()
+    SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "true").lower() in {"1", "true", "yes", "on"}
+    SMTP_USE_SSL = os.getenv("SMTP_USE_SSL", "false").lower() in {"1", "true", "yes", "on"}
+    SMTP_FROM_EMAIL = os.getenv("SMTP_FROM_EMAIL", "no-reply@sanmitra.local").strip()
+    SMTP_FROM_NAME = os.getenv("SMTP_FROM_NAME", "SanMitra").strip()
 
     # Mobile OTP login settings
     MOBILE_OTP_ENABLED = os.getenv("MOBILE_OTP_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
@@ -119,4 +134,3 @@ class Settings:
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
-
