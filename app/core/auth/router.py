@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException
+﻿from fastapi import APIRouter, Depends, HTTPException
+from app.config import get_settings
 
 from app.core.auth.dependencies import get_current_user
 from app.core.auth.schemas import (
@@ -124,3 +125,13 @@ async def refresh(payload: RefreshRequest, app_key: str = Depends(inject_app_key
 async def logout(payload: LogoutRequest):
     await logout_refresh_token(payload.refresh_token)
     return {"status": "ok"}
+
+@router.get("/google-config")
+async def google_config():
+    settings = get_settings()
+    client_ids = [cid.strip() for cid in settings.GOOGLE_OAUTH_CLIENT_IDS if cid.strip()]
+    return {
+        "enabled": bool(client_ids),
+        "client_id": client_ids[0] if client_ids else "",
+    }
+
