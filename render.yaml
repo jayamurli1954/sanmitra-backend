@@ -1,7 +1,7 @@
 services:
   - type: web
     name: sanmitra-backend-staging
-    env: python
+    runtime: python
     plan: starter
     region: oregon
     branch: main

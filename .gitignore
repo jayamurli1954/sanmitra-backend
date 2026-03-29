@@ -1,36 +1,40 @@
-# Python
-__pycache__/
-*.py[cod]
-*.pyo
-*.pyd
-.pytest_cache/
-
-# Virtual envs
+# Python virtual envs
 .venv/
 venv/
 
-# OS/editor
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Python cache / tooling
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Coverage
+.coverage
+htmlcov/
+
+# OS / editor
 .DS_Store
-Thumbs.db
 .vscode/
 .idea/
 
-# Local env
-.env
-
-# Logs/temp
+# Runtime data / local artifacts
 logs/
 tmp/
-
-# Databases/local runtime
+data/
 .pgdata/
-
-# Node
-node_modules/
-dist/
-build/
-.out/
-.next/
-
-# Misc
 *.log
+
+# Frontend artifacts
+node_modules/
+npm-debug.log*
+
+# Nested legacy repos (managed independently)
+external-repos/

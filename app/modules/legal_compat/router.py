@@ -24,6 +24,14 @@ from app.modules.legal_compat.service import build_hybrid_legal_response, list_s
 from app.modules.legal_compat.template_catalog import get_template_library
 from app.modules.legal_compat.template_drafting import render_guided_document_draft, render_template_document
 from app.modules.legal_compat.sync_worker import run_legal_sync_once
+from app.modules.legal_compat.official_form_bank import (
+    OfficialFormValidationError,
+    get_official_form,
+    get_official_form_upload_guidelines,
+    list_official_forms,
+    register_official_form,
+    render_official_form_pdf,
+)
 from app.modules.rag.schemas import RagLegalFilter, RagQueryRequest
 from app.modules.rag.service import query_knowledge
 
@@ -54,6 +62,10 @@ class LegacyTemplateRenderRequest(BaseModel):
     fields: dict[str, Any] = Field(default_factory=dict)
     format: str = Field(default="text", max_length=20)
 
+
+
+class OfficialFormRenderRequest(BaseModel):
+    fields: dict[str, Any] = Field(default_factory=dict)
 
 def _resolve_compat_tenant_id(x_tenant_id: str | None) -> str:
     tenant_id = (x_tenant_id or "").strip()
@@ -345,6 +357,96 @@ async def _fetch_web_legal_news(limit: int = 10) -> list[dict[str, Any]]:
 
 
 _STATIC_TEMPLATE_LIBRARY: list[dict[str, Any]] = get_template_library()
+_OFFICIAL_TEMPLATE_PREFIX = "official_form::"
+
+
+def _is_official_template_id(template_id: str) -> bool:
+    return (template_id or "").startswith(_OFFICIAL_TEMPLATE_PREFIX)
+
+
+def _extract_official_form_id(template_id: str) -> str:
+    if not _is_official_template_id(template_id):
+        return ""
+    return template_id.split("::", 1)[1].strip()
+
+
+def _to_field_id(label: str) -> str:
+    field_id = re.sub(r"[^a-z0-9]+", "_", (label or "").lower()).strip("_")
+    return field_id[:64]
+
+
+def _official_item_fields(item: dict[str, Any]) -> list[dict[str, Any]]:
+    labels = [str(x).strip() for x in (item.get("suggested_labels") or []) if str(x).strip()]
+    fields: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    for label in labels[:50]:
+        field_id = _to_field_id(label)
+        if not field_id or field_id in seen:
+            continue
+        seen.add(field_id)
+        fields.append(
+            {
+                "id": field_id,
+                "label": label,
+                "required": False,
+                "type": "text",
+                "placeholder": "",
+            }
+        )
+
+    fallback = [
+        ("legal_name", "Legal Name"),
+        ("pan_or_id", "PAN / Identity Number"),
+        ("mobile_number", "Mobile Number"),
+        ("email_address", "Email Address"),
+        ("principal_address", "Principal Address"),
+        ("remarks", "Remarks"),
+    ]
+    for field_id, label in fallback:
+        if field_id in seen:
+            continue
+        fields.append(
+            {
+                "id": field_id,
+                "label": label,
+                "required": False,
+                "type": "text",
+                "placeholder": "",
+            }
+        )
+
+    return fields[:60]
+
+
+def _official_item_to_template(item: dict[str, Any]) -> dict[str, Any]:
+    form_id = str(item.get("form_id") or "")
+    department = str(item.get("department") or "Official")
+    purpose = str(item.get("purpose") or "")
+    form_code = str(item.get("form_code") or "")
+    summary_parts = [part for part in [purpose, form_code] if part]
+    summary = " | ".join(summary_parts) if summary_parts else "Official form"
+
+    return {
+        "template_id": f"{_OFFICIAL_TEMPLATE_PREFIX}{form_id}",
+        "name": str(item.get("form_name") or form_id),
+        "description": summary,
+        "category": "official_form",
+        "is_premium": False,
+        "tags": ["official", department],
+        "act": [],
+        "court": [],
+        "fields": _official_item_fields(item),
+        "official_form": {
+            "form_id": form_id,
+            "department": department,
+            "purpose": purpose,
+            "form_code": form_code,
+            "has_embedded_fields": bool(item.get("has_embedded_fields", False)),
+            "embedded_field_count": int(item.get("embedded_field_count") or 0),
+            "page_count": int(item.get("page_count") or 0),
+        },
+    }
 
 
 def _template_categories(templates: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -721,7 +823,13 @@ async def review_document(
 
 
 @router.get("/v2/templates")
-async def v2_templates():
+async def v2_templates(
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = _resolve_compat_tenant_id(x_tenant_id)
+    app_key = _resolve_compat_app_key(x_app_key)
+
     templates = [
         {
             "template_id": t["template_id"],
@@ -735,32 +843,137 @@ async def v2_templates():
         }
         for t in _STATIC_TEMPLATE_LIBRARY
     ]
+
+    try:
+        official_items = await list_official_forms(
+            tenant_id=tenant_id,
+            app_key=app_key,
+            limit=120,
+        )
+    except Exception:
+        official_items = []
+
+    for item in official_items:
+        templates.append(_official_item_to_template(item))
+
     return {"total": len(templates), "templates": templates, "items": templates}
 
-
 @router.get("/v2/templates/categories")
-async def v2_template_categories():
-    return {"categories": _template_categories(_STATIC_TEMPLATE_LIBRARY)}
+async def v2_template_categories(
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = _resolve_compat_tenant_id(x_tenant_id)
+    app_key = _resolve_compat_app_key(x_app_key)
 
+    categories = _template_categories(_STATIC_TEMPLATE_LIBRARY)
+    counts = {str(item.get("name") or ""): int(item.get("count") or 0) for item in categories}
+
+    try:
+        official_items = await list_official_forms(tenant_id=tenant_id, app_key=app_key, limit=500)
+    except Exception:
+        official_items = []
+
+    if official_items:
+        counts["official_form"] = counts.get("official_form", 0) + len(official_items)
+
+    normalized = [{"name": name, "count": count} for name, count in counts.items()]
+    normalized.sort(key=lambda x: x["name"])
+    return {"categories": normalized}
 
 @router.get("/v2/templates/{template_id}")
-async def v2_template_detail(template_id: str):
+async def v2_template_detail(
+    template_id: str,
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = _resolve_compat_tenant_id(x_tenant_id)
+    app_key = _resolve_compat_app_key(x_app_key)
+
+    if _is_official_template_id(template_id):
+        form_id = _extract_official_form_id(template_id)
+        item = await get_official_form(tenant_id=tenant_id, app_key=app_key, form_id=form_id)
+        if not item:
+            raise HTTPException(status_code=404, detail="Template not found")
+        return _official_item_to_template(item)
+
     template = _find_template(template_id)
     if not template:
         raise HTTPException(status_code=404, detail="Template not found")
     return template
 
-
 @router.get("/v2/templates/{template_id}/fields")
-async def v2_template_fields(template_id: str):
+async def v2_template_fields(
+    template_id: str,
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = _resolve_compat_tenant_id(x_tenant_id)
+    app_key = _resolve_compat_app_key(x_app_key)
+
+    if _is_official_template_id(template_id):
+        form_id = _extract_official_form_id(template_id)
+        item = await get_official_form(tenant_id=tenant_id, app_key=app_key, form_id=form_id)
+        if not item:
+            raise HTTPException(status_code=404, detail="Template not found")
+        return {"fields": _official_item_fields(item)}
+
     template = _find_template(template_id)
     if not template:
         raise HTTPException(status_code=404, detail="Template not found")
     return {"fields": template.get("fields", [])}
 
-
 @router.post("/v2/templates/render")
-async def v2_template_render(payload: LegacyTemplateRenderRequest):
+async def v2_template_render(
+    payload: LegacyTemplateRenderRequest,
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = _resolve_compat_tenant_id(x_tenant_id)
+    app_key = _resolve_compat_app_key(x_app_key)
+
+    if _is_official_template_id(payload.template_id):
+        form_id = _extract_official_form_id(payload.template_id)
+        item = await get_official_form(tenant_id=tenant_id, app_key=app_key, form_id=form_id)
+        if not item:
+            raise HTTPException(status_code=404, detail="Template not found")
+
+        lines = [
+            f"OFFICIAL FORM PREVIEW: {item.get('form_name')}",
+            f"Department: {item.get('department')}",
+            f"Purpose: {item.get('purpose')}",
+            "",
+            "Submitted values:",
+        ]
+        for key, value in (payload.fields or {}).items():
+            lines.append(f"- {key}: {value}")
+        if not payload.fields:
+            lines.append("- (No values submitted yet)")
+
+        return {
+            "rendered_document": "\n".join(lines),
+            "draft_status": "ready_for_pdf_render",
+            "validation": {
+                "citations": {
+                    "total_citations": 0,
+                    "valid_citations": 0,
+                    "accuracy_score": 100,
+                    "invalid_citations": [],
+                },
+                "foreign_law": {"has_foreign_law": False},
+                "risky_language": {"has_risky_language": False},
+                "firmness_score": 100,
+                "missing_required_fields": [],
+                "unresolved_placeholders": [],
+                "follow_up_questions": [],
+                "recommended_clauses": [],
+                "official_form": {
+                    "form_id": form_id,
+                    "render_pdf_endpoint": f"/api/v1/v2/official-forms/{form_id}/render-pdf",
+                },
+            },
+        }
+
     template = _find_template(payload.template_id)
     if not template:
         raise HTTPException(status_code=404, detail="Template not found")
@@ -788,9 +1001,33 @@ async def v2_template_render(payload: LegacyTemplateRenderRequest):
         },
     }
 
-
 @router.post("/v2/templates/render-pdf")
-async def v2_template_render_pdf(payload: LegacyTemplateRenderRequest):
+async def v2_template_render_pdf(
+    payload: LegacyTemplateRenderRequest,
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = _resolve_compat_tenant_id(x_tenant_id)
+    app_key = _resolve_compat_app_key(x_app_key)
+
+    if _is_official_template_id(payload.template_id):
+        form_id = _extract_official_form_id(payload.template_id)
+        file_bytes = await render_official_form_pdf(
+            tenant_id=tenant_id,
+            app_key=app_key,
+            form_id=form_id,
+            fields=payload.fields,
+        )
+        if not file_bytes:
+            raise HTTPException(status_code=404, detail="Template not found")
+
+        filename = f"{form_id}_official_filled.pdf"
+        return StreamingResponse(
+            file_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
     template = _find_template(payload.template_id)
     if not template:
         raise HTTPException(status_code=404, detail="Template not found")
@@ -799,6 +1036,116 @@ async def v2_template_render_pdf(payload: LegacyTemplateRenderRequest):
     rendered_document = draft["rendered_document"]
     file_bytes = _render_text_as_pdf(rendered_document)
     filename = f"{payload.template_id}.pdf"
+    return StreamingResponse(
+        file_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/v2/official-forms/upload-guidelines")
+async def v2_official_forms_upload_guidelines():
+    return get_official_form_upload_guidelines()
+
+@router.post("/v2/official-forms/upload")
+async def v2_official_forms_upload(
+    file: UploadFile = File(...),
+    form_name: str = Form(...),
+    purpose: str = Form(...),
+    department: str = Form(...),
+    form_code: str | None = Form(default=None),
+    description: str | None = Form(default=None),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = _resolve_compat_tenant_id(x_tenant_id)
+    app_key = _resolve_compat_app_key(x_app_key)
+
+    payload = await file.read()
+    if not payload:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty")
+
+    try:
+        item = await register_official_form(
+            tenant_id=tenant_id,
+            app_key=app_key,
+            file_name=file.filename or "uploaded.pdf",
+            content_type=file.content_type,
+            payload=payload,
+            form_name=form_name,
+            purpose=purpose,
+            department=department,
+            form_code=form_code,
+            description=description,
+        )
+    except OfficialFormValidationError as exc:
+        raise HTTPException(status_code=400, detail=exc.as_detail()) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Failed to register official form: {str(exc)}") from exc
+
+    return {"item": item, "upload_guidelines": get_official_form_upload_guidelines()}
+
+
+@router.get("/v2/official-forms")
+async def v2_official_forms_list(
+    department: str | None = Query(default=None, max_length=120),
+    search: str | None = Query(default=None, max_length=200),
+    limit: int = Query(default=50, ge=1, le=200),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = _resolve_compat_tenant_id(x_tenant_id)
+    app_key = _resolve_compat_app_key(x_app_key)
+
+    items = await list_official_forms(
+        tenant_id=tenant_id,
+        app_key=app_key,
+        department=department,
+        search=search,
+        limit=limit,
+    )
+    return {"items": items, "count": len(items)}
+
+
+@router.get("/v2/official-forms/{form_id}")
+async def v2_official_forms_detail(
+    form_id: str,
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = _resolve_compat_tenant_id(x_tenant_id)
+    app_key = _resolve_compat_app_key(x_app_key)
+
+    item = await get_official_form(tenant_id=tenant_id, app_key=app_key, form_id=form_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Official form not found")
+    return item
+
+
+@router.post("/v2/official-forms/{form_id}/render-pdf")
+async def v2_official_forms_render_pdf(
+    form_id: str,
+    payload: OfficialFormRenderRequest,
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = _resolve_compat_tenant_id(x_tenant_id)
+    app_key = _resolve_compat_app_key(x_app_key)
+
+    try:
+        file_bytes = await render_official_form_pdf(
+            tenant_id=tenant_id,
+            app_key=app_key,
+            form_id=form_id,
+            fields=payload.fields,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Failed to render official form PDF: {str(exc)}") from exc
+
+    if not file_bytes:
+        raise HTTPException(status_code=404, detail="Official form not found")
+
+    filename = f"{form_id}_filled.pdf"
     return StreamingResponse(
         file_bytes,
         media_type="application/pdf",
@@ -913,4 +1260,25 @@ async def create_professional_diary(
         "tags": doc["tags"],
         "created_at": doc["created_at"],
     }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 

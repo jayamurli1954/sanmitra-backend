@@ -75,6 +75,10 @@ class Settings:
     LEGAL_SYNC_WORKER_LOCK_TIMEOUT_SECONDS = int(os.getenv("LEGAL_SYNC_WORKER_LOCK_TIMEOUT_SECONDS", "600"))
     LEGAL_SYNC_WORKER_MAX_SOURCES_PER_JOB = int(os.getenv("LEGAL_SYNC_WORKER_MAX_SOURCES_PER_JOB", "8"))
     LEGAL_SYNC_WORKER_HTTP_TIMEOUT_SECONDS = int(os.getenv("LEGAL_SYNC_WORKER_HTTP_TIMEOUT_SECONDS", "15"))
+    # Official form bank (MVP upload constraints)
+    LEGAL_OFFICIAL_FORM_MAX_UPLOAD_MB = int(os.getenv("LEGAL_OFFICIAL_FORM_MAX_UPLOAD_MB", "20"))
+    LEGAL_OFFICIAL_FORM_MAX_PAGES = int(os.getenv("LEGAL_OFFICIAL_FORM_MAX_PAGES", "80"))
+    LEGAL_OFFICIAL_FORM_MIN_SUGGESTED_LABELS = int(os.getenv("LEGAL_OFFICIAL_FORM_MIN_SUGGESTED_LABELS", "3"))
 
     # OpenAI-compatible embeddings gateway
     RAG_EMBEDDING_OPENAI_URL = os.getenv("RAG_EMBEDDING_OPENAI_URL", "").strip()
@@ -94,3 +98,5 @@ class Settings:
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
