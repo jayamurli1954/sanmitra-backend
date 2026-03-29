@@ -278,3 +278,22 @@ Gemini setup example:
 - `GEMINI_API_KEY=<your_existing_gemini_key>`
 - `RAG_GEMINI_EMBED_MODEL=gemini-embedding-001`
 - Optional: `RAG_GEMINI_EMBED_DIM=768`
+
+## Git Safety Guardrails
+This repo now includes commit-safety guardrails to prevent accidental commits from the wrong paths.
+
+1. Enable repository hooks once after clone:
+```powershell
+git config core.hooksPath .githooks
+```
+2. The pre-commit hook blocks commits that include:
+- `external-repos/*` (nested legacy repos are managed separately)
+- `.env` / `.env.*` (secrets)
+- runtime data folders: `data/`, `logs/`, `tmp/`, `.pgdata/`, `.venv/`, `venv/`
+- accidental `LICENSE` deletion
+3. Stage intentionally with explicit paths (avoid `git add .` from root).
+
+If you ever need to bypass once for an intentional maintenance change:
+```powershell
+$env:SKIP_SAFETY_HOOK='1'; git commit -m "..."
+```

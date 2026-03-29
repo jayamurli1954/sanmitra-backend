@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Allow explicit bypass for emergency cases.
+if [[ "${SKIP_SAFETY_HOOK:-0}" == "1" ]]; then
+  exit 0
+fi
+
+staged_files=$(git diff --cached --name-only --diff-filter=ACMRD)
+if [[ -z "${staged_files}" ]]; then
+  exit 0
+fi
+
+blocked_regex='^(external-repos/|\.env($|\.)|data/|logs/|tmp/|\.pgdata/|\.venv/|venv/)'
+blocked_files=$(printf '%s\n' "${staged_files}" | grep -E "${blocked_regex}" || true)
+
+if [[ -n "${blocked_files}" ]]; then
+  echo ""
+  echo "[SAFETY BLOCK] Commit contains restricted paths:" >&2
+  printf '%s\n' "${blocked_files}" >&2
+  echo "" >&2
+  echo "Do not commit secrets/runtime data or nested legacy repos from root." >&2
+  echo "If you must bypass once: SKIP_SAFETY_HOOK=1 git commit ..." >&2
+  exit 1
+fi
+
+# Prevent accidental license deletion.
+if printf '%s\n' "${staged_files}" | grep -qx 'LICENSE'; then
+  status_line=$(git diff --cached --name-status -- LICENSE || true)
+  if printf '%s\n' "${status_line}" | grep -q '^D'; then
+    echo "" >&2
+    echo "[SAFETY BLOCK] LICENSE deletion is staged. Unstage it intentionally first if this is expected." >&2
+    exit 1
+  fi
+fi
+
+exit 0
