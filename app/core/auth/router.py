@@ -1,9 +1,25 @@
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.core.auth.dependencies import get_current_user
-from app.core.auth.schemas import GoogleLoginRequest, LoginRequest, LogoutRequest, RefreshRequest, TokenResponse
+from app.core.auth.schemas import (
+    GoogleLoginRequest,
+    LoginRequest,
+    LogoutRequest,
+    MobileOtpSendRequest,
+    MobileOtpSendResponse,
+    MobileOtpVerifyRequest,
+    RefreshRequest,
+    TokenResponse,
+)
 from app.core.auth.security import hash_password, verify_password
-from app.core.auth.service import login_google_user, login_user, logout_refresh_token, rotate_refresh_token
+from app.core.auth.service import (
+    login_google_user,
+    login_user,
+    logout_refresh_token,
+    rotate_refresh_token,
+    send_mobile_otp,
+    verify_mobile_otp,
+)
 from app.core.tenants.context import inject_app_key
 from app.core.users.service import create_user, get_user_by_email
 from app.db.mongo import get_collection
@@ -75,6 +91,24 @@ async def google_login(payload: GoogleLoginRequest, app_key: str = Depends(injec
     access_token, refresh_token = await login_google_user(
         payload.id_token,
         payload.tenant_id,
+        app_key=app_key,
+    )
+    return TokenResponse(access_token=access_token, refresh_token=refresh_token)
+
+
+@router.post("/mobile-otp/send", response_model=MobileOtpSendResponse)
+async def mobile_otp_send(payload: MobileOtpSendRequest):
+    result = await send_mobile_otp(payload.mobile)
+    return MobileOtpSendResponse(**result)
+
+
+@router.post("/mobile-otp/verify", response_model=TokenResponse)
+async def mobile_otp_verify(payload: MobileOtpVerifyRequest, app_key: str = Depends(inject_app_key)):
+    access_token, refresh_token = await verify_mobile_otp(
+        mobile=payload.mobile,
+        otp=payload.otp,
+        tenant_id=payload.tenant_id,
+        full_name=payload.full_name,
         app_key=app_key,
     )
     return TokenResponse(access_token=access_token, refresh_token=refresh_token)

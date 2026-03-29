@@ -37,6 +37,19 @@ class Settings:
         if client_id.strip()
     ]
 
+    # Mobile OTP login settings
+    MOBILE_OTP_ENABLED = os.getenv("MOBILE_OTP_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
+    MOBILE_OTP_LENGTH = int(os.getenv("MOBILE_OTP_LENGTH", "6"))
+    MOBILE_OTP_TTL_SECONDS = int(os.getenv("MOBILE_OTP_TTL_SECONDS", "300"))
+    MOBILE_OTP_MAX_ATTEMPTS = int(os.getenv("MOBILE_OTP_MAX_ATTEMPTS", "5"))
+    MOBILE_OTP_RESEND_COOLDOWN_SECONDS = int(os.getenv("MOBILE_OTP_RESEND_COOLDOWN_SECONDS", "30"))
+    MOBILE_OTP_DEBUG_RETURN_CODE = os.getenv("MOBILE_OTP_DEBUG_RETURN_CODE", "false").lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
     DEFAULT_APP_KEY = os.getenv("DEFAULT_APP_KEY", "mandirmitra").strip().lower()
     ALLOWED_APP_KEYS = [
         key.strip().lower()
@@ -98,5 +111,3 @@ class Settings:
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
-
-

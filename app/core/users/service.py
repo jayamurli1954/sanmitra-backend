@@ -15,6 +15,10 @@ def _password_provider_subject(email: str) -> str:
     return f"password:{email.strip().lower()}"
 
 
+def _mobile_provider_subject(mobile: str) -> str:
+    return f"mobile:{mobile.strip()}"
+
+
 async def ensure_users_indexes() -> None:
     users = get_collection(USERS_COLLECTION)
     await users.create_index("email", unique=True)
@@ -29,6 +33,16 @@ async def ensure_users_indexes() -> None:
         )
     except OperationFailure:
         await users.create_index("provider_subject", unique=True, sparse=True)
+
+    # Mobile login identity (optional for users created before OTP flow).
+    try:
+        await users.create_index(
+            "mobile",
+            unique=True,
+            partialFilterExpression={"mobile": {"$exists": True}},
+        )
+    except OperationFailure:
+        await users.create_index("mobile", unique=True, sparse=True)
 
 
 async def ensure_seed_user() -> None:
@@ -127,6 +141,15 @@ async def get_user_by_email(email: str):
         raise RuntimeError(f"MongoDB user lookup failed: {exc}") from exc
 
 
+async def get_user_by_mobile(mobile: str):
+    users = get_collection(USERS_COLLECTION)
+    normalized = mobile.strip()
+    try:
+        return await users.find_one({"mobile": normalized, "is_active": True})
+    except Exception as exc:
+        raise RuntimeError(f"MongoDB mobile user lookup failed: {exc}") from exc
+
+
 async def create_user(*, email: str, password: str, full_name: str, tenant_id: str, role: str):
     await ensure_users_indexes()
 
@@ -203,3 +226,49 @@ async def create_user_from_google(*, email: str, full_name: str, tenant_id: str,
         "provider_subject": doc["provider_subject"],
     }
 
+
+async def create_user_from_mobile(*, mobile: str, full_name: str, tenant_id: str, role: str = "operator"):
+    await ensure_users_indexes()
+
+    normalized_tenant_id = tenant_id.strip()
+    normalized_mobile = mobile.strip()
+    await ensure_tenant_exists(normalized_tenant_id)
+
+    users = get_collection(USERS_COLLECTION)
+    now = datetime.now(timezone.utc)
+
+    # Keep email valid and unique for legacy parts that still rely on email field.
+    mobile_local = normalized_mobile.replace("+", "").replace(" ", "").replace("-", "")
+    mobile_email = f"mobile.{mobile_local}@sanmitra.local"
+
+    doc = {
+        "user_id": str(uuid4()),
+        "email": mobile_email,
+        "mobile": normalized_mobile,
+        "full_name": full_name.strip(),
+        "tenant_id": normalized_tenant_id,
+        "role": role.strip(),
+        "hashed_password": None,
+        "auth_provider": "mobile_otp",
+        "provider_subject": _mobile_provider_subject(normalized_mobile),
+        "is_active": True,
+        "created_at": now,
+        "updated_at": now,
+    }
+
+    try:
+        await users.insert_one(doc)
+    except DuplicateKeyError as exc:
+        raise ValueError("User with this mobile already exists") from exc
+
+    return {
+        "user_id": doc["user_id"],
+        "email": doc["email"],
+        "mobile": doc["mobile"],
+        "full_name": doc["full_name"],
+        "tenant_id": doc["tenant_id"],
+        "role": doc["role"],
+        "is_active": doc["is_active"],
+        "auth_provider": doc["auth_provider"],
+        "provider_subject": doc["provider_subject"],
+    }

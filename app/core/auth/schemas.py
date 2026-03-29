@@ -33,3 +33,21 @@ class LogoutRequest(BaseModel):
 class GoogleLoginRequest(BaseModel):
     id_token: str = Field(min_length=10)
     tenant_id: str | None = Field(default=None, min_length=2, max_length=64)
+
+
+class MobileOtpSendRequest(BaseModel):
+    mobile: str = Field(min_length=8, max_length=24)
+
+
+class MobileOtpSendResponse(BaseModel):
+    status: str = "sent"
+    expires_in_seconds: int
+    resend_after_seconds: int
+    otp_debug: str | None = None
+
+
+class MobileOtpVerifyRequest(BaseModel):
+    mobile: str = Field(min_length=8, max_length=24)
+    otp: str = Field(min_length=4, max_length=8)
+    tenant_id: str | None = Field(default=None, min_length=2, max_length=64)
+    full_name: str | None = Field(default=None, min_length=2, max_length=120)
