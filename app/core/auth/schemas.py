@@ -44,6 +44,8 @@ class MobileOtpSendResponse(BaseModel):
     expires_in_seconds: int
     resend_after_seconds: int
     otp_debug: str | None = None
+    provider: str | None = None
+    delivery_id: str | None = None
 
 
 class MobileOtpVerifyRequest(BaseModel):
@@ -51,3 +53,4 @@ class MobileOtpVerifyRequest(BaseModel):
     otp: str = Field(min_length=4, max_length=8)
     tenant_id: str | None = Field(default=None, min_length=2, max_length=64)
     full_name: str | None = Field(default=None, min_length=2, max_length=120)
+

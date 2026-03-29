@@ -49,6 +49,14 @@ class Settings:
         "yes",
         "on",
     }
+    MOBILE_OTP_PROVIDER = os.getenv("MOBILE_OTP_PROVIDER", "none").strip().lower()
+    MOBILE_OTP_MESSAGE_TEMPLATE = os.getenv(
+        "MOBILE_OTP_MESSAGE_TEMPLATE",
+        "Your SanMitra OTP is {otp}. Valid for {ttl_minutes} minutes.",
+    )
+    TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "").strip()
+    TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "").strip()
+    TWILIO_FROM_NUMBER = os.getenv("TWILIO_FROM_NUMBER", "").strip()
 
     DEFAULT_APP_KEY = os.getenv("DEFAULT_APP_KEY", "mandirmitra").strip().lower()
     ALLOWED_APP_KEYS = [
@@ -111,3 +119,4 @@ class Settings:
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+

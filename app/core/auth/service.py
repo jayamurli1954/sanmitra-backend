@@ -6,6 +6,7 @@ from hashlib import sha256
 from typing import Any
 
 from fastapi import HTTPException
+import httpx
 
 from app.config import get_settings
 from app.core.auth.security import create_access_token, create_refresh_token, decode_token, verify_password
@@ -159,6 +160,70 @@ async def _store_refresh_token(refresh_token: str, payload: dict[str, Any]) -> N
     )
 
 
+async def _deliver_otp_via_twilio(*, mobile: str, code: str, expires_in: int) -> dict[str, Any]:
+    settings = get_settings()
+    sid = settings.TWILIO_ACCOUNT_SID
+    token = settings.TWILIO_AUTH_TOKEN
+    from_number = settings.TWILIO_FROM_NUMBER
+
+    if not sid or not token or not from_number:
+        raise HTTPException(
+            status_code=503,
+            detail="Twilio OTP delivery is not configured. Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_FROM_NUMBER.",
+        )
+
+    ttl_minutes = max(1, int(expires_in // 60))
+    body = str(settings.MOBILE_OTP_MESSAGE_TEMPLATE or "Your OTP is {otp}.")
+    body = body.replace("{otp}", code).replace("{ttl_minutes}", str(ttl_minutes))
+
+    url = f"https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json"
+    try:
+        async with httpx.AsyncClient(timeout=12.0) as client:
+            response = await client.post(
+                url,
+                data={"To": mobile, "From": from_number, "Body": body},
+                auth=(sid, token),
+            )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Twilio OTP delivery failed: {exc}") from exc
+
+    if response.status_code >= 400:
+        detail = f"Twilio OTP delivery failed with status {response.status_code}"
+        try:
+            payload = response.json()
+            message = str(payload.get("message") or "").strip()
+            if message:
+                detail = f"{detail}: {message}"
+        except Exception:
+            pass
+        raise HTTPException(status_code=502, detail=detail)
+
+    message_sid = ""
+    try:
+        message_sid = str(response.json().get("sid") or "")
+    except Exception:
+        message_sid = ""
+    return {"provider": "twilio", "delivery_id": message_sid}
+
+
+async def _deliver_mobile_otp(*, mobile: str, code: str, expires_in: int) -> dict[str, Any]:
+    settings = get_settings()
+    provider = str(settings.MOBILE_OTP_PROVIDER or "none").strip().lower()
+
+    if provider in {"", "none", "disabled", "noop"}:
+        if settings.MOBILE_OTP_DEBUG_RETURN_CODE:
+            return {"provider": "debug"}
+        raise HTTPException(
+            status_code=503,
+            detail="OTP delivery provider is not configured. Set MOBILE_OTP_PROVIDER=twilio and Twilio credentials, or enable MOBILE_OTP_DEBUG_RETURN_CODE=true for staging testing.",
+        )
+
+    if provider == "twilio":
+        return await _deliver_otp_via_twilio(mobile=mobile, code=code, expires_in=expires_in)
+
+    raise HTTPException(status_code=503, detail=f"Unsupported MOBILE_OTP_PROVIDER: {provider}")
+
+
 async def send_mobile_otp(mobile: str) -> dict[str, Any]:
     settings = get_settings()
     if not settings.MOBILE_OTP_ENABLED:
@@ -190,6 +255,12 @@ async def send_mobile_otp(mobile: str) -> dict[str, Any]:
     expires_in = max(60, int(settings.MOBILE_OTP_TTL_SECONDS))
     expires_at = now + timedelta(seconds=expires_in)
 
+    delivery_meta = await _deliver_mobile_otp(
+        mobile=normalized_mobile,
+        code=code,
+        expires_in=expires_in,
+    )
+
     await otps.insert_one(
         {
             "mobile": normalized_mobile,
@@ -211,8 +282,14 @@ async def send_mobile_otp(mobile: str) -> dict[str, Any]:
     if settings.MOBILE_OTP_DEBUG_RETURN_CODE:
         payload["otp_debug"] = code
 
-    return payload
+    provider = str(delivery_meta.get("provider") or "").strip()
+    delivery_id = str(delivery_meta.get("delivery_id") or "").strip()
+    if provider:
+        payload["provider"] = provider
+    if delivery_id:
+        payload["delivery_id"] = delivery_id
 
+    return payload
 
 async def verify_mobile_otp(
     mobile: str,
@@ -489,3 +566,5 @@ async def logout_refresh_token(refresh_token: str) -> None:
         {"jti": payload["jti"], "token_hash": _hash_token(refresh_token)},
         {"$set": {"revoked": True, "revoked_at": datetime.now(timezone.utc)}},
     )
+
+
