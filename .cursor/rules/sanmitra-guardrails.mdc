@@ -1,0 +1,19 @@
+﻿---
+description: Sanmitra backend safety guardrails for all AI edits
+globs:
+  - "**/*"
+alwaysApply: true
+---
+
+Follow repository policy in `/AGENTS.md`.
+
+Critical rules:
+- Do not use `git add .`.
+- Stage explicit file paths only.
+- Never commit `.env` or secrets.
+- Never track `external-repos/` in this backend repo.
+- Run required checks before proposing commit:
+  - `python -m compileall app scripts tests`
+  - `python scripts/check_text_integrity.py app scripts .github/workflows`
+  - `python scripts/check_repository_safety.py`
+  - `python -m pytest`

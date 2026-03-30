@@ -356,6 +356,63 @@ async def _fetch_web_legal_news(limit: int = 10) -> list[dict[str, Any]]:
     return merged
 
 
+def _merge_case_items(*sources: list[dict[str, Any]], limit: int = 10) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for items in sources:
+        for item in items or []:
+            title = str(item.get("title") or "").strip()
+            if not title:
+                continue
+            court = str(item.get("court") or "Supreme Court / High Court").strip()
+            year = int(item.get("year") or datetime.now().year)
+            key = f"{title.lower()}|{court.lower()}|{year}"
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(
+                {
+                    "title": title,
+                    "court": court,
+                    "year": year,
+                    "summary": str(item.get("summary") or "Latest major judgment update")[:220],
+                    "query": str(item.get("query") or title),
+                    "url": str(item.get("url") or ""),
+                }
+            )
+            if len(merged) >= limit:
+                return merged
+    return merged
+
+
+def _merge_news_items(*sources: list[dict[str, Any]], limit: int = 10) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for items in sources:
+        for item in items or []:
+            title = str(item.get("title") or "").strip()
+            if not title:
+                continue
+            date_text = str(item.get("date") or datetime.now().date().isoformat())
+            key = f"{title.lower()}|{date_text}"
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(
+                {
+                    "title": title,
+                    "source": str(item.get("source") or "Legal Source"),
+                    "date": date_text,
+                    "summary": str(item.get("summary") or "Latest legal and compliance update")[:220],
+                    "query": str(item.get("query") or title),
+                    "url": str(item.get("url") or ""),
+                }
+            )
+            if len(merged) >= limit:
+                return merged
+    return merged
+
+
 _STATIC_TEMPLATE_LIBRARY: list[dict[str, Any]] = get_template_library()
 _OFFICIAL_TEMPLATE_PREFIX = "official_form::"
 
@@ -375,24 +432,171 @@ def _to_field_id(label: str) -> str:
     return field_id[:64]
 
 
+def _field_spec(
+    field_id: str,
+    label: str,
+    *,
+    required: bool = False,
+    field_type: str = "text",
+    placeholder: str = "",
+    section: str = "",
+    options: list[str] | None = None,
+) -> dict[str, Any]:
+    out: dict[str, Any] = {
+        "id": field_id,
+        "label": label,
+        "required": required,
+        "type": field_type,
+        "placeholder": placeholder,
+    }
+    if section:
+        out["section"] = section
+    if options:
+        out["options"] = options
+    return out
+
+
+def _is_gst_reg01_form(item: dict[str, Any]) -> bool:
+    combined = " ".join(
+        [
+            str(item.get("form_name") or ""),
+            str(item.get("form_code") or ""),
+            str(item.get("purpose") or ""),
+            str(item.get("department") or ""),
+        ]
+    ).lower()
+    return ("gst" in combined) and any(token in combined for token in ["reg-01", "reg 01", "registration"])
+
+
+def _gst_reg01_fields() -> list[dict[str, Any]]:
+    yes_no = ["Yes", "No"]
+    return [
+        _field_spec("legal_name", "Legal Name (as mentioned in PAN)", required=True, section="Applicant Profile"),
+        _field_spec("pan_identity_number", "PAN / Identity Number", required=True, section="Applicant Profile"),
+        _field_spec(
+            "constitution_of_business",
+            "Constitution of Business",
+            required=True,
+            field_type="select",
+            options=["Proprietorship", "Partnership", "Company", "LLP", "Trust", "Society", "Other"],
+            section="Applicant Profile",
+        ),
+        _field_spec(
+            "category_of_registered_person",
+            "Category of Registered Person",
+            required=True,
+            field_type="select",
+            options=["Regular Taxpayer", "SEZ Unit", "SEZ Developer", "Casual Taxable Person", "Composition Dealer", "Other"],
+            section="Applicant Profile",
+        ),
+        _field_spec("option_for_composition", "Option for Composition", field_type="select", options=yes_no, section="Applicant Profile"),
+        _field_spec("composition_declaration", "Composition Declaration", field_type="textarea", section="Applicant Profile"),
+        _field_spec("date_of_commencement_of_business", "Date of commencement of business", field_type="date", section="Applicant Profile"),
+        _field_spec("date_liability_to_register", "Date on which liability to register arises", field_type="date", section="Applicant Profile"),
+        _field_spec("jurisdiction_state", "Jurisdiction - State", section="Applicant Profile"),
+        _field_spec("jurisdiction_centre", "Jurisdiction - Centre", section="Applicant Profile"),
+
+        _field_spec("mobile_number", "Mobile Number", required=True, section="Contact & Principal Place"),
+        _field_spec("email_address", "Email Address", required=True, field_type="email", section="Contact & Principal Place"),
+        _field_spec("office_fax_number_std", "Office Fax Number (STD)", section="Contact & Principal Place"),
+        _field_spec("principal_address", "Principal Address", required=True, field_type="textarea", section="Contact & Principal Place"),
+        _field_spec("building_flat_no", "Building No./Flat No.", section="Contact & Principal Place"),
+        _field_spec("floor_no", "Floor No.", section="Contact & Principal Place"),
+        _field_spec("premises_road_street", "Name of Premises/Building, Road/Street", section="Contact & Principal Place"),
+        _field_spec("city_town_locality_village", "City/Town/Locality/Village", section="Contact & Principal Place"),
+        _field_spec("district", "District", section="Contact & Principal Place"),
+        _field_spec("state_name", "State", section="Contact & Principal Place"),
+        _field_spec("latitude", "Latitude", section="Contact & Principal Place"),
+        _field_spec("longitude", "Longitude", section="Contact & Principal Place"),
+
+        _field_spec("import_activity", "Import", field_type="select", options=yes_no, section="Business Activity"),
+        _field_spec("export_activity", "Export", field_type="select", options=yes_no, section="Business Activity"),
+        _field_spec("factory_manufacturing", "Factory / Manufacturing", field_type="select", options=yes_no, section="Business Activity"),
+        _field_spec("bonded_warehouse", "Bonded Warehouse", field_type="select", options=yes_no, section="Business Activity"),
+        _field_spec("leasing_business", "Leasing Business", field_type="select", options=yes_no, section="Business Activity"),
+        _field_spec("eou_stp_ehtp", "EOU / STP / EHTP", field_type="select", options=yes_no, section="Business Activity"),
+        _field_spec("goods_hsn_details", "Details of Goods/Services with HSN Code", field_type="textarea", section="Business Activity"),
+
+        _field_spec("central_excise_registration_number", "Central Excise Registration Number", section="Existing Registrations & IDs"),
+        _field_spec("central_sales_tax_registration_number", "Central Sales Tax Registration Number", section="Existing Registrations & IDs"),
+        _field_spec("entry_tax_registration_number", "Entry Tax Registration Number", section="Existing Registrations & IDs"),
+        _field_spec("entertainment_tax_registration_number", "Entertainment Tax Registration Number", section="Existing Registrations & IDs"),
+        _field_spec("importer_exporter_code_number", "Importer/Exporter Code Number", section="Existing Registrations & IDs"),
+        _field_spec("llp_identification_number", "LLP Identification Number / Foreign LLPIN", section="Existing Registrations & IDs"),
+        _field_spec("corporate_identity_number", "Corporate Identity Number / Foreign Company Registration Number", section="Existing Registrations & IDs"),
+
+        _field_spec("bank_name", "Bank Name", required=True, section="Bank Account"),
+        _field_spec("account_number", "Account Number", required=True, section="Bank Account"),
+        _field_spec("branch_address", "Branch Address", section="Bank Account"),
+        _field_spec("challan_identification_number", "Challan Identification Number", section="Bank Account"),
+        _field_spec("challan_date", "Challan Date", field_type="date", section="Bank Account"),
+        _field_spec("challan_amount", "Challan Amount", field_type="number", section="Bank Account"),
+        _field_spec("details_of_bank_accounts", "Details of Bank Accounts", field_type="textarea", section="Bank Account"),
+
+        _field_spec("applying_as_sez_developer", "Applying as SEZ Developer", field_type="select", options=yes_no, section="SEZ / Casual Taxable"),
+        _field_spec("applying_as_sez_unit", "Applying as SEZ Unit", field_type="select", options=yes_no, section="SEZ / Casual Taxable"),
+        _field_spec("applying_as_casual_taxable_person", "Applying as Casual Taxable Person", field_type="select", options=yes_no, section="SEZ / Casual Taxable"),
+        _field_spec("casual_period_from", "Casual Taxable Period - From", field_type="date", section="SEZ / Casual Taxable"),
+        _field_spec("casual_period_to", "Casual Taxable Period - To", field_type="date", section="SEZ / Casual Taxable"),
+
+        _field_spec("remarks", "Remarks", field_type="textarea", section="Declarations"),
+    ]
+
+
+def _clean_suggested_label(label: str) -> str:
+    text = " ".join(str(label or "").split()).strip(" :-")
+    if not text:
+        return ""
+    if len(text) < 3 or len(text) > 90:
+        return ""
+
+    lowered = text.lower()
+    noisy_phrases = [
+        "to be auto-populated",
+        "tick in check box",
+        "for which option is not available",
+        "as mentioned in permanent account number",
+        "application for registration",
+        "form gst reg-01",
+    ]
+    if any(phrase in lowered for phrase in noisy_phrases):
+        return ""
+
+    return text
+
+
 def _official_item_fields(item: dict[str, Any]) -> list[dict[str, Any]]:
-    labels = [str(x).strip() for x in (item.get("suggested_labels") or []) if str(x).strip()]
+    if _is_gst_reg01_form(item):
+        return _gst_reg01_fields()
+
+    labels = [
+        _clean_suggested_label(str(x))
+        for x in (item.get("suggested_labels") or [])
+    ]
+    labels = [label for label in labels if label]
+
     fields: list[dict[str, Any]] = []
     seen: set[str] = set()
 
-    for label in labels[:50]:
+    for label in labels[:60]:
         field_id = _to_field_id(label)
         if not field_id or field_id in seen:
             continue
         seen.add(field_id)
+
+        field_type = "text"
+        if "dd/mm/yyyy" in label.lower() or "date" in label.lower():
+            field_type = "date"
+        elif "number" in label.lower() or "amount" in label.lower():
+            field_type = "number"
+
         fields.append(
-            {
-                "id": field_id,
-                "label": label,
-                "required": False,
-                "type": "text",
-                "placeholder": "",
-            }
+            _field_spec(
+                field_id,
+                label,
+                field_type=field_type,
+                section="Detected Fields",
+            )
         )
 
     fallback = [
@@ -407,17 +611,14 @@ def _official_item_fields(item: dict[str, Any]) -> list[dict[str, Any]]:
         if field_id in seen:
             continue
         fields.append(
-            {
-                "id": field_id,
-                "label": label,
-                "required": False,
-                "type": "text",
-                "placeholder": "",
-            }
+            _field_spec(
+                field_id,
+                label,
+                section="Core Details",
+            )
         )
 
-    return fields[:60]
-
+    return fields[:70]
 
 def _official_item_to_template(item: dict[str, Any]) -> dict[str, Any]:
     form_id = str(item.get("form_id") or "")
@@ -544,11 +745,12 @@ async def major_cases(
     except Exception:
         cases = []
 
-    if not cases:
-        cases = await _fetch_web_major_cases(limit=10)
+    if len(cases) < 10:
+        web_cases = await _fetch_web_major_cases(limit=10)
+        cases = _merge_case_items(cases, web_cases, limit=10)
 
-    if not cases:
-        cases = _static_case_items()
+    if len(cases) < 3:
+        cases = _merge_case_items(cases, _static_case_items(), limit=10)
 
     return {"cases": cases}
 
@@ -619,11 +821,12 @@ async def legal_news(
     except Exception:
         news = []
 
-    if not news:
-        news = await _fetch_web_legal_news(limit=10)
+    if len(news) < 10:
+        web_news = await _fetch_web_legal_news(limit=10)
+        news = _merge_news_items(news, web_news, limit=10)
 
-    if not news:
-        news = _static_news_items()
+    if len(news) < 3:
+        news = _merge_news_items(news, _static_news_items(), limit=10)
 
     return {"news": news}
 
@@ -1260,6 +1463,8 @@ async def create_professional_diary(
         "tags": doc["tags"],
         "created_at": doc["created_at"],
     }
+
+
 
 
 

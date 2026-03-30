@@ -26,9 +26,17 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Repository Safety Guardrails
+        run: |
+          python scripts/check_repository_safety.py
+
       - name: Compile Python Sources
         run: |
           python -m compileall app scripts tests
+
+      - name: Check Text Integrity
+        run: |
+          python scripts/check_text_integrity.py app scripts .github/workflows
 
       - name: Run Tests
         run: |

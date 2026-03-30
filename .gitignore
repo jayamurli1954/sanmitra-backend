@@ -38,3 +38,9 @@ npm-debug.log*
 
 # Nested legacy repos (managed independently)
 external-repos/
+
+# Local planning/docs artifacts (not source-of-truth code)
+SanMitra_PRD.pdf
+SanMitra_Unified_Backend_PRD.docx
+SanMitra_eco_system-merging-note.txt
+START_LEGALMITRA_UNIFIED.bat
