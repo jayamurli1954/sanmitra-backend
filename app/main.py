@@ -19,6 +19,7 @@ from app.modules.investment.service import ensure_investment_indexes
 from app.modules.legal.service import ensure_legal_indexes
 from app.modules.legal_compat.service import ensure_legal_compat_indexes
 from app.modules.legal_compat.sync_worker import start_legal_sync_worker, stop_legal_sync_worker
+from app.modules.mandir_compat.service import ensure_demo_mandir_bootstrap
 from app.modules.rag.service import ensure_rag_indexes
 from app.modules.temple.service import ensure_donations_indexes
 
@@ -46,6 +47,7 @@ async def on_startup() -> None:
         await ensure_seed_tenant()
         await ensure_seed_user()
         await ensure_super_admin_user()
+        await ensure_demo_mandir_bootstrap()
         await ensure_audit_indexes()
         await ensure_donations_indexes()
         await ensure_maintenance_indexes()
@@ -110,3 +112,5 @@ async def health():
             "postgres": {"ok": pg_ok, "detail": pg_detail},
         },
     }
+
+

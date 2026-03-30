@@ -130,7 +130,24 @@ class Settings:
     SUPER_ADMIN_FULL_NAME = os.getenv("SUPER_ADMIN_FULL_NAME", "SanMitra Super Admin")
     SUPER_ADMIN_TENANT_ID = os.getenv("SUPER_ADMIN_TENANT_ID", "seed-tenant-1")
 
+    # Demo Mandir bootstrap (non-production convenience seed)
+    DEMO_MANDIR_BOOTSTRAP = os.getenv(
+        "DEMO_MANDIR_BOOTSTRAP",
+        "true" if ENVIRONMENT != "production" else "false",
+    ).lower() in {"1", "true", "yes", "on"}
+    DEMO_MANDIR_TENANT_ID = os.getenv("DEMO_MANDIR_TENANT_ID", "demo-mandir-tenant")
+    DEMO_MANDIR_TEMPLE_NAME = os.getenv("DEMO_MANDIR_TEMPLE_NAME", "Demo Temple")
+    DEMO_MANDIR_TRUST_NAME = os.getenv("DEMO_MANDIR_TRUST_NAME", "Demo Temple Trust")
+    DEMO_MANDIR_TEMPLE_ADDRESS = os.getenv("DEMO_MANDIR_TEMPLE_ADDRESS", "Demo Temple Address")
+    DEMO_MANDIR_TEMPLE_CONTACT = os.getenv("DEMO_MANDIR_TEMPLE_CONTACT", "+91-9000000000")
+    DEMO_MANDIR_TEMPLE_EMAIL = os.getenv("DEMO_MANDIR_TEMPLE_EMAIL", "temple.demo@sanmitra.local")
+    DEMO_MANDIR_ADMIN_FULL_NAME = os.getenv("DEMO_MANDIR_ADMIN_FULL_NAME", "Demo Temple Admin")
+    DEMO_MANDIR_ADMIN_EMAIL = os.getenv("DEMO_MANDIR_ADMIN_EMAIL", "demo.admin@sanmitra.local")
+    DEMO_MANDIR_ADMIN_PASSWORD = os.getenv("DEMO_MANDIR_ADMIN_PASSWORD", "DemoTemple@123")
+    DEMO_MANDIR_ADMIN_PHONE = os.getenv("DEMO_MANDIR_ADMIN_PHONE", "+91-9000000001")
+
 
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+

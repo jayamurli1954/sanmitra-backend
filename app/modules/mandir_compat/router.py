@@ -5,12 +5,40 @@ from typing import Any
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from sqlalchemy.ext.asyncio import AsyncSession
+from decimal import Decimal
 
 from app.core.auth.dependencies import get_current_user
 from app.core.tenants.context import resolve_app_key, resolve_tenant_id
 from app.db.mongo import get_collection
+from app.db.postgres import get_async_session
+from app.accounting.service import list_accounts, create_account, post_journal_entry
+from app.accounting.schemas import JournalPostRequest, JournalLineIn
+from app.modules.mandir_compat.schemas import (
+    MandirFirstLoginOnboardingRequest,
+    MandirFirstLoginOnboardingResponse,
+)
+from app.modules.mandir_compat.service import create_mandir_first_login_onboarding
 
 router = APIRouter(tags=["mandir-compat"])
+
+async def _resolve_mandir_income_account(session: AsyncSession, tenant_id: str, category_name: str) -> int:
+    accounts = await list_accounts(session, tenant_id=tenant_id)
+    for acc in accounts:
+        if acc.type == "income" and acc.name.lower() == category_name.lower():
+            return acc.id
+    
+    new_code = f"INC-M-{uuid4().hex[:6].upper()}"
+    new_acc = await create_account(
+        session,
+        tenant_id=tenant_id,
+        code=new_code,
+        name=category_name,
+        account_type="income",
+        classification="nominal",
+        is_cash_bank=False,
+    )
+    return new_acc.id
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -181,6 +209,7 @@ async def list_donations(
 @router.post("/donations/")
 async def create_donation(
     payload: dict[str, Any],
+    session: AsyncSession = Depends(get_async_session),
     current_user: dict = Depends(get_current_user),
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
     x_app_key: str | None = Header(default=None, alias="X-App-Key"),
@@ -191,14 +220,18 @@ async def create_donation(
     donation_id = str(uuid4())
     now = datetime.utcnow().isoformat()
     devotee_phone = _normalize_phone(payload.get("devotee_phone") or payload.get("phone"))
+    
+    amount = _safe_float(payload.get("amount"), 0.0)
+    category = str(payload.get("category") or "General Donation")
+    payment_mode = str(payload.get("payment_mode") or "Cash").lower()
 
     donation = {
         "donation_id": donation_id,
         "tenant_id": tenant_id,
         "app_key": app_key,
-        "amount": _safe_float(payload.get("amount"), 0.0),
-        "category": str(payload.get("category") or "General Donation"),
-        "payment_mode": str(payload.get("payment_mode") or "Cash"),
+        "amount": amount,
+        "category": category,
+        "payment_mode": payload.get("payment_mode") or "Cash",
         "devotee_phone": devotee_phone,
         "devotee": {
             "name": str(payload.get("devotee_name") or payload.get("first_name") or "Unknown Devotee"),
@@ -217,6 +250,32 @@ async def create_donation(
         await col.insert_one(donation)
     except Exception:
         pass
+        
+    # Double-entry Bookkeeping for Monetary Donations
+    if payload.get("donation_type") != "in_kind" and amount > 0:
+        bank_account_id = payload.get("bank_account_id") or payload.get("payment_account_id")
+        if bank_account_id:
+            try:
+                income_acc_id = await _resolve_mandir_income_account(session, tenant_id, category)
+                journal_payload = JournalPostRequest(
+                    entry_date=datetime.utcnow().date(),
+                    description=f"{category} from {donation['devotee']['name']}",
+                    reference=f"DON-{donation_id[:8].upper()}",
+                    lines=[
+                        JournalLineIn(account_id=int(bank_account_id), debit=Decimal(str(amount)), credit=Decimal("0")),
+                        JournalLineIn(account_id=income_acc_id, debit=Decimal("0"), credit=Decimal(str(amount))),
+                    ]
+                )
+                await post_journal_entry(
+                    session=session,
+                    tenant_id=tenant_id,
+                    created_by="mandir_compat_system",
+                    payload=journal_payload,
+                    idempotency_key=f"don_{donation_id}"
+                )
+            except Exception as e:
+                # Log error but don't fail the donation to maintain compatibility
+                print(f"Failed to post accounting journal for donation {donation_id}: {e}")
 
     return donation
 
@@ -717,9 +776,14 @@ async def mandir_temples(_current_user: dict = Depends(get_current_user), x_tena
     return [{"id": tenant_id, "name": "Temple", "platform_can_write": True}]
 
 
-@router.post("/temples/onboard")
-async def mandir_temples_onboard(_payload: dict[str, Any], _current_user: dict = Depends(get_current_user)):
-    return _ok("temples/onboard")
+@router.post("/temples/onboard", response_model=MandirFirstLoginOnboardingResponse)
+@router.post("/onboarding/first-login", response_model=MandirFirstLoginOnboardingResponse)
+async def mandir_temples_onboard(
+    payload: MandirFirstLoginOnboardingRequest,
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    app_key = resolve_app_key((x_app_key or "mandirmitra").strip())
+    return await create_mandir_first_login_onboarding(payload, app_key=app_key)
 
 
 @router.post("/temples/upload")
@@ -748,6 +812,73 @@ async def mandir_users(_current_user: dict = Depends(get_current_user), x_tenant
     users = get_collection("core_users")
     docs = await users.find({"tenant_id": tenant_id, "is_active": True}).limit(200).to_list(length=200)
     return [{"user_id": d.get("user_id"), "email": d.get("email"), "full_name": d.get("full_name"), "role": d.get("role")} for d in docs]
+
+@router.post("/sevas/bookings")
+@router.post("/sevas/bookings/")
+async def create_seva_booking(
+    payload: dict[str, Any],
+    session: AsyncSession = Depends(get_async_session),
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+
+    booking_id = str(uuid4())
+    now = datetime.utcnow().isoformat()
+    amount = _safe_float(payload.get("amount_paid") or payload.get("amount"), 0.0)
+    
+    seva_id = payload.get("seva_id")
+    seva_category = "Seva Booking Revenue"
+    col_sevas = get_collection("mandir_sevas")
+    if seva_id:
+        seva_doc = await col_sevas.find_one({"id": str(seva_id), "tenant_id": tenant_id})
+        if seva_doc and seva_doc.get("category"):
+            seva_category = str(seva_doc["category"]).replace("_", " ").title() + " Revenue"
+
+    booking = {
+        "id": booking_id,
+        "tenant_id": tenant_id,
+        "app_key": app_key,
+        **{k: v for k, v in payload.items() if k not in ("id", "_id", "tenant_id", "app_key")},
+        "created_at": now,
+        "updated_at": now,
+        "status": "confirmed"
+    }
+
+    try:
+        col = get_collection("mandir_seva_bookings")
+        await col.insert_one(booking)
+    except Exception:
+        pass
+
+    if amount > 0:
+        bank_account_id = payload.get("payment_account_id")
+        if bank_account_id:
+            try:
+                income_acc_id = await _resolve_mandir_income_account(session, tenant_id, seva_category)
+                devotee_names = str(payload.get("devotee_names") or "Devotee")
+                journal_payload = JournalPostRequest(
+                    entry_date=datetime.utcnow().date(),
+                    description=f"{seva_category} - {devotee_names}",
+                    reference=f"SEV-{booking_id[:8].upper()}",
+                    lines=[
+                        JournalLineIn(account_id=int(bank_account_id), debit=Decimal(str(amount)), credit=Decimal("0")),
+                        JournalLineIn(account_id=income_acc_id, debit=Decimal("0"), credit=Decimal(str(amount))),
+                    ]
+                )
+                await post_journal_entry(
+                    session=session,
+                    tenant_id=tenant_id,
+                    created_by="mandir_compat_system",
+                    payload=journal_payload,
+                    idempotency_key=f"sev_{booking_id}"
+                )
+            except Exception as e:
+                print(f"Failed to post accounting journal for seva booking {booking_id}: {e}")
+
+    return booking
 
 @router.get("/sevas/bookings")
 async def mandir_seva_bookings(
@@ -785,3 +916,5 @@ async def mandir_seva_reschedule_pending(
 @router.get("/users/me")
 async def mandir_users_me(current_user: dict = Depends(get_current_user)):
     return current_user
+
+

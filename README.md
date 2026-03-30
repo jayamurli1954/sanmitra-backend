@@ -108,6 +108,7 @@ Server default:
 - `POST /api/v1/auth/login`
 - `POST /api/v1/auth/refresh`
 - `POST /api/v1/auth/logout`
+- `POST /api/v1/temples/onboard` (Mandir first-time onboarding with email or Google start; returns admin email/password tokens)
 
 ### Users
 - `GET /api/v1/users/me`
@@ -179,6 +180,14 @@ Super admin bootstrap env vars:
 - `SUPER_ADMIN_PASSWORD`
 - `SUPER_ADMIN_FULL_NAME`
 - `SUPER_ADMIN_TENANT_ID`
+
+Demo Mandir bootstrap env vars (non-production):
+- `DEMO_MANDIR_BOOTSTRAP`
+- `DEMO_MANDIR_TENANT_ID`
+- `DEMO_MANDIR_TEMPLE_NAME`
+- `DEMO_MANDIR_TRUST_NAME`
+- `DEMO_MANDIR_ADMIN_EMAIL`
+- `DEMO_MANDIR_ADMIN_PASSWORD`
 
 Use `Authorization: Bearer <access_token>` for protected routes.
 
@@ -297,3 +306,5 @@ If you ever need to bypass once for an intentional maintenance change:
 ```powershell
 $env:SKIP_SAFETY_HOOK='1'; git commit -m "..."
 ```
+
+
