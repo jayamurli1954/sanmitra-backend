@@ -35,7 +35,7 @@ class Settings:
         "https://mandirmitra.vercel.app",
         "https://mandir-mitra-alpha.vercel.app",
         "https://legalmitra.vercel.app",
-        "https://gharmitra.vercel.app",
+        "https://gruhamitra.vercel.app",
         "https://invest-mitra.vercel.app",
         "http://localhost:3000",
         "http://localhost:3001"
