@@ -18,7 +18,12 @@ from app.modules.mandir_compat.schemas import (
     MandirFirstLoginOnboardingRequest,
     MandirFirstLoginOnboardingResponse,
 )
-from app.modules.mandir_compat.service import create_mandir_first_login_onboarding
+from app.modules.mandir_compat.service import (
+    create_mandir_first_login_onboarding,
+    ensure_temple_numeric_id,
+    list_mandir_temples,
+    resolve_tenant_by_temple_id,
+)
 
 router = APIRouter(tags=["mandir-compat"])
 
@@ -50,6 +55,22 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
 
 def _normalize_phone(phone: str | None) -> str:
     return "".join(ch for ch in str(phone or "") if ch.isdigit())[:10]
+
+
+def _is_platform_super_admin(user: dict[str, Any]) -> bool:
+    return bool(user.get("is_superuser")) or str(user.get("role") or "").strip().lower() == "super_admin"
+
+
+async def _resolve_tenant_for_mandir_request(
+    current_user: dict[str, Any],
+    x_tenant_id: str | None,
+    temple_id: int | None,
+) -> str:
+    if temple_id and _is_platform_super_admin(current_user):
+        mapped_tenant_id = await resolve_tenant_by_temple_id(temple_id)
+        if mapped_tenant_id:
+            return mapped_tenant_id
+    return resolve_tenant_id(current_user, x_tenant_id)
 
 
 async def _payment_accounts(tenant_id: str, app_key: str) -> dict[str, list[dict[str, Any]]]:
@@ -466,22 +487,26 @@ async def seva_payment_accounts(
 async def get_current_temple(
     current_user: dict = Depends(get_current_user),
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    temple_id: int | None = Query(default=None),
 ):
-    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    tenant_id = await _resolve_tenant_for_mandir_request(current_user, x_tenant_id, temple_id)
     col = get_collection("mandir_temples")
     doc = await col.find_one({"tenant_id": tenant_id})
     if doc:
         return doc
 
+    assigned_temple_id = await ensure_temple_numeric_id(tenant_id)
     now = datetime.utcnow().isoformat()
     fallback = {
-        "id": tenant_id,
+        "id": assigned_temple_id,
+        "temple_id": assigned_temple_id,
         "tenant_id": tenant_id,
         "name": "Temple",
         "trust_name": "Temple Trust",
         "city": "Bengaluru",
         "state": "Karnataka",
         "platform_can_write": True,
+        "is_active": True,
         "updated_at": now,
         "created_at": now,
     }
@@ -493,19 +518,20 @@ async def update_current_temple(
     payload: dict[str, Any],
     current_user: dict = Depends(get_current_user),
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    temple_id: int | None = Query(default=None),
 ):
-    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    tenant_id = await _resolve_tenant_for_mandir_request(current_user, x_tenant_id, temple_id)
+    assigned_temple_id = await ensure_temple_numeric_id(tenant_id)
     col = get_collection("mandir_temples")
     now = datetime.utcnow().isoformat()
-    update = {k: v for k, v in payload.items() if k not in {"id", "_id", "tenant_id"}}
+    update = {k: v for k, v in payload.items() if k not in {"id", "_id", "tenant_id", "temple_id"}}
     update["updated_at"] = now
 
     await col.update_one(
         {"tenant_id": tenant_id},
         {
-            "$set": update,
+            "$set": {**update, "id": assigned_temple_id, "temple_id": assigned_temple_id},
             "$setOnInsert": {
-                "id": tenant_id,
                 "tenant_id": tenant_id,
                 "created_at": now,
             },
@@ -770,10 +796,42 @@ async def mandir_setup_wizard_status(_current_user: dict = Depends(get_current_u
     return {"completed": False, "steps": []}
 
 
+@router.get("/temples/")
 @router.get("/temples")
-async def mandir_temples(_current_user: dict = Depends(get_current_user), x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID")):
-    tenant_id = resolve_tenant_id(_current_user, x_tenant_id)
-    return [{"id": tenant_id, "name": "Temple", "platform_can_write": True}]
+async def mandir_temples(
+    _current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+):
+    if _is_platform_super_admin(_current_user):
+        rows = await list_mandir_temples(limit=500)
+    else:
+        tenant_id = resolve_tenant_id(_current_user, x_tenant_id)
+        rows = await list_mandir_temples(tenant_id=tenant_id, limit=20)
+
+    if rows:
+        return rows
+
+    if _is_platform_super_admin(_current_user):
+        return []
+
+    fallback_tenant_id = resolve_tenant_id(_current_user, x_tenant_id)
+    fallback_temple_id = await ensure_temple_numeric_id(fallback_tenant_id)
+    return [
+        {
+            "id": fallback_temple_id,
+            "temple_id": fallback_temple_id,
+            "tenant_id": fallback_tenant_id,
+            "name": "Temple",
+            "temple_name": "Temple",
+            "trust_name": "Temple Trust",
+            "city": "Bengaluru",
+            "state": "Karnataka",
+            "phone": None,
+            "email": None,
+            "platform_can_write": True,
+            "is_active": True,
+        }
+    ]
 
 
 @router.post("/temples/onboard", response_model=MandirFirstLoginOnboardingResponse)
@@ -792,8 +850,75 @@ async def mandir_temples_upload(_payload: dict[str, Any], _current_user: dict = 
 
 
 @router.get("/temples/modules/config")
-async def mandir_temples_module_config(_current_user: dict = Depends(get_current_user)):
-    return {"module_donations_enabled": True, "module_sevas_enabled": True}
+async def mandir_temples_module_config(
+    _current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    temple_id: int | None = Query(default=None),
+):
+    tenant_id = await _resolve_tenant_for_mandir_request(_current_user, x_tenant_id, temple_id)
+    col = get_collection("mandir_temples")
+    doc = await col.find_one({"tenant_id": tenant_id}) or {}
+    return {
+        "module_donations_enabled": bool(doc.get("module_donations_enabled", True)),
+        "module_sevas_enabled": bool(doc.get("module_sevas_enabled", True)),
+        "module_inventory_enabled": bool(doc.get("module_inventory_enabled", False)),
+        "module_assets_enabled": bool(doc.get("module_assets_enabled", False)),
+        "module_hr_enabled": bool(doc.get("module_hr_enabled", False)),
+        "module_hundi_enabled": bool(doc.get("module_hundi_enabled", False)),
+        "module_accounting_enabled": bool(doc.get("module_accounting_enabled", True)),
+        "module_panchang_enabled": bool(doc.get("module_panchang_enabled", True)),
+    }
+
+
+@router.put("/temples/modules/config")
+async def mandir_temples_module_config_update(
+    payload: dict[str, Any],
+    _current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    temple_id: int | None = Query(default=None),
+):
+    tenant_id = await _resolve_tenant_for_mandir_request(_current_user, x_tenant_id, temple_id)
+    assigned_temple_id = await ensure_temple_numeric_id(tenant_id)
+    col = get_collection("mandir_temples")
+
+    allowed_keys = {
+        "module_donations_enabled",
+        "module_sevas_enabled",
+        "module_inventory_enabled",
+        "module_assets_enabled",
+        "module_hr_enabled",
+        "module_hundi_enabled",
+        "module_accounting_enabled",
+        "module_panchang_enabled",
+    }
+    update = {key: bool(payload.get(key)) for key in allowed_keys if key in payload}
+    update["updated_at"] = datetime.utcnow().isoformat()
+    update["id"] = assigned_temple_id
+    update["temple_id"] = assigned_temple_id
+
+    await col.update_one(
+        {"tenant_id": tenant_id},
+        {
+            "$set": update,
+            "$setOnInsert": {
+                "tenant_id": tenant_id,
+                "created_at": datetime.utcnow().isoformat(),
+            },
+        },
+        upsert=True,
+    )
+
+    doc = await col.find_one({"tenant_id": tenant_id}) or {}
+    return {
+        "module_donations_enabled": bool(doc.get("module_donations_enabled", True)),
+        "module_sevas_enabled": bool(doc.get("module_sevas_enabled", True)),
+        "module_inventory_enabled": bool(doc.get("module_inventory_enabled", False)),
+        "module_assets_enabled": bool(doc.get("module_assets_enabled", False)),
+        "module_hr_enabled": bool(doc.get("module_hr_enabled", False)),
+        "module_hundi_enabled": bool(doc.get("module_hundi_enabled", False)),
+        "module_accounting_enabled": bool(doc.get("module_accounting_enabled", True)),
+        "module_panchang_enabled": bool(doc.get("module_panchang_enabled", True)),
+    }
 
 
 @router.get("/upi-payments")
@@ -916,5 +1041,10 @@ async def mandir_seva_reschedule_pending(
 @router.get("/users/me")
 async def mandir_users_me(current_user: dict = Depends(get_current_user)):
     return current_user
+
+
+
+
+
 
 

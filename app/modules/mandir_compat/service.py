@@ -26,6 +26,22 @@ def _slugify(value: str) -> str:
     return normalized or "mandir-tenant"
 
 
+def _to_positive_int(value: object) -> int | None:
+    try:
+        parsed = int(str(value).strip())
+    except Exception:
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _to_iso(value: object) -> str | None:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, str):
+        return value
+    return None
+
+
 async def _allocate_tenant_id(base_hint: str) -> str:
     base = _slugify(base_hint)
     candidate = base
@@ -44,6 +60,7 @@ async def ensure_mandir_compat_indexes() -> None:
 
     temples = get_collection(MANDIR_TEMPLES_COLLECTION)
     await temples.create_index("tenant_id", unique=True)
+    await temples.create_index("temple_id", unique=True, sparse=True)
     await temples.create_index([("app_key", 1), ("updated_at", -1)])
 
     onboarding_events = get_collection(MANDIR_ONBOARDING_COLLECTION)
@@ -52,6 +69,154 @@ async def ensure_mandir_compat_indexes() -> None:
     await onboarding_events.create_index([("admin_email", 1), ("created_at", -1)])
 
     _MANDIR_INDEXES_READY = True
+
+
+async def _allocate_temple_numeric_id() -> int:
+    temples = get_collection(MANDIR_TEMPLES_COLLECTION)
+    next_id = 1
+
+    try:
+        latest = await temples.find_one({"temple_id": {"$type": "int"}}, sort=[("temple_id", -1)])
+        latest_id = _to_positive_int((latest or {}).get("temple_id"))
+        if latest_id:
+            next_id = latest_id + 1
+    except Exception:
+        docs = getattr(temples, "docs", None)
+        if isinstance(docs, list):
+            max_id = 0
+            for doc in docs:
+                parsed = _to_positive_int(doc.get("temple_id") or doc.get("id"))
+                if parsed and parsed > max_id:
+                    max_id = parsed
+            next_id = max_id + 1 if max_id > 0 else 1
+
+    for _ in range(2000):
+        try:
+            taken = await temples.find_one({"$or": [{"temple_id": next_id}, {"id": next_id}]})
+            if not taken:
+                return next_id
+            next_id += 1
+            continue
+        except Exception:
+            return next_id
+
+    raise HTTPException(status_code=500, detail="Could not allocate temple id")
+
+
+async def ensure_temple_numeric_id(tenant_id: str) -> int:
+    tenant_id = str(tenant_id or "").strip()
+    if not tenant_id:
+        raise HTTPException(status_code=400, detail="tenant_id is required")
+
+    await ensure_mandir_compat_indexes()
+    temples = get_collection(MANDIR_TEMPLES_COLLECTION)
+
+    current: dict | None = None
+    try:
+        current = await temples.find_one({"tenant_id": tenant_id})
+    except Exception:
+        current = None
+
+    existing_temple_id = _to_positive_int((current or {}).get("temple_id")) or _to_positive_int((current or {}).get("id"))
+    if existing_temple_id:
+        try:
+            patch = {}
+            if _to_positive_int((current or {}).get("temple_id")) != existing_temple_id:
+                patch["temple_id"] = existing_temple_id
+            if _to_positive_int((current or {}).get("id")) != existing_temple_id:
+                patch["id"] = existing_temple_id
+            if patch:
+                patch["updated_at"] = datetime.now(timezone.utc)
+                await temples.update_one({"tenant_id": tenant_id}, {"$set": patch}, upsert=False)
+        except Exception:
+            pass
+        return existing_temple_id
+
+    assigned_temple_id = await _allocate_temple_numeric_id()
+    now = datetime.now(timezone.utc)
+    await temples.update_one(
+        {"tenant_id": tenant_id},
+        {
+            "$set": {
+                "tenant_id": tenant_id,
+                "temple_id": assigned_temple_id,
+                "id": assigned_temple_id,
+                "updated_at": now,
+            },
+            "$setOnInsert": {
+                "created_at": now,
+            },
+        },
+        upsert=True,
+    )
+    return assigned_temple_id
+
+
+async def resolve_tenant_by_temple_id(temple_id: int | None) -> str | None:
+    parsed_id = _to_positive_int(temple_id)
+    if not parsed_id:
+        return None
+
+    await ensure_mandir_compat_indexes()
+    temples = get_collection(MANDIR_TEMPLES_COLLECTION)
+
+    try:
+        doc = await temples.find_one({"$or": [{"temple_id": parsed_id}, {"id": parsed_id}]})
+    except Exception:
+        doc = None
+
+    tenant_id = str((doc or {}).get("tenant_id") or "").strip()
+    return tenant_id or None
+
+
+async def list_mandir_temples(*, tenant_id: str | None = None, limit: int = 500) -> list[dict]:
+    await ensure_mandir_compat_indexes()
+    temples = get_collection(MANDIR_TEMPLES_COLLECTION)
+    query: dict = {}
+    if tenant_id:
+        query["tenant_id"] = str(tenant_id).strip()
+
+    try:
+        docs = await temples.find(query).sort("updated_at", -1).limit(limit).to_list(length=limit)
+    except Exception:
+        docs = []
+
+    rows: list[dict] = []
+    for doc in docs:
+        doc_tenant_id = str(doc.get("tenant_id") or "").strip()
+        if not doc_tenant_id:
+            continue
+
+        temple_numeric_id = _to_positive_int(doc.get("temple_id")) or _to_positive_int(doc.get("id"))
+        if not temple_numeric_id:
+            temple_numeric_id = await ensure_temple_numeric_id(doc_tenant_id)
+
+        temple_name = str(doc.get("name") or doc.get("temple_name") or doc.get("trust_name") or "Temple").strip() or "Temple"
+        trust_name = str(doc.get("trust_name") or "").strip() or None
+        rows.append(
+            {
+                "id": temple_numeric_id,
+                "temple_id": temple_numeric_id,
+                "tenant_id": doc_tenant_id,
+                "name": temple_name,
+                "temple_name": str(doc.get("temple_name") or "").strip() or temple_name,
+                "trust_name": trust_name,
+                "primary_deity": str(doc.get("primary_deity") or "").strip() or None,
+                "address": str(doc.get("address") or "").strip() or None,
+                "city": str(doc.get("city") or "").strip() or None,
+                "state": str(doc.get("state") or "").strip() or None,
+                "pincode": str(doc.get("pincode") or "").strip() or None,
+                "phone": str(doc.get("phone") or doc.get("contact_number") or "").strip() or None,
+                "email": str(doc.get("email") or "").strip().lower() or None,
+                "is_active": bool(doc.get("is_active", True)),
+                "platform_can_write": bool(doc.get("platform_can_write", True)),
+                "onboarding_status": str(doc.get("onboarding_status") or "").strip() or None,
+                "updated_at": _to_iso(doc.get("updated_at")),
+                "created_at": _to_iso(doc.get("created_at")),
+            }
+        )
+
+    return rows
 
 
 async def create_mandir_first_login_onboarding(
@@ -65,6 +230,7 @@ async def create_mandir_first_login_onboarding(
     tenant_name = payload.temple_name or payload.trust_name or "Temple Trust"
     tenant_hint = payload.temple_slug or tenant_name
     tenant_id = await _allocate_tenant_id(tenant_hint)
+    temple_id = await _allocate_temple_numeric_id()
 
     try:
         existing_admin = await get_user_by_email(payload.admin_email)
@@ -104,13 +270,15 @@ async def create_mandir_first_login_onboarding(
 
     now = datetime.now(timezone.utc)
     temple_profile = {
-        "id": tenant_id,
+        "id": temple_id,
+        "temple_id": temple_id,
         "tenant_id": tenant_id,
         "app_key": resolved_app_key,
         "name": payload.temple_name or payload.trust_name or "Temple",
         "temple_name": payload.temple_name,
         "trust_name": payload.trust_name,
         "address": payload.temple_address,
+        "phone": payload.temple_contact_number,
         "contact_number": payload.temple_contact_number,
         "email": str(payload.temple_email).lower() if payload.temple_email else None,
         "city": payload.city,
@@ -120,7 +288,8 @@ async def create_mandir_first_login_onboarding(
         "admin_name": payload.admin_name,
         "admin_mobile_number": payload.admin_mobile_number,
         "admin_email": payload.admin_email,
-        "platform_can_write": True,
+        "platform_can_write": bool(payload.platform_demo_temple),
+        "is_active": True,
         "onboarding_status": "completed",
         "onboarding_login_method": payload.login_method,
         "onboarding_details": payload.onboarding_details or {},
@@ -144,6 +313,7 @@ async def create_mandir_first_login_onboarding(
     await onboarding_events.insert_one(
         {
             "onboarding_id": onboarding_id,
+            "temple_id": temple_id,
             "tenant_id": tenant_id,
             "app_key": resolved_app_key,
             "created_at": now,
@@ -173,6 +343,9 @@ async def create_mandir_first_login_onboarding(
         "message": "Temple onboarding completed. Use admin email/password for future logins.",
         "onboarding_id": onboarding_id,
         "tenant_id": tenant_id,
+        "temple_id": temple_id,
+        "temple_name": temple_profile["name"],
+        "admin_email": payload.admin_email,
         "app_key": resolved_app_key,
         "access_token": access_token,
         "refresh_token": refresh_token,
@@ -229,24 +402,28 @@ async def ensure_demo_mandir_bootstrap() -> None:
             pass
 
     now = datetime.now(timezone.utc)
+    temple_id = await ensure_temple_numeric_id(tenant_id)
     temples = get_collection(MANDIR_TEMPLES_COLLECTION)
     await temples.update_one(
         {"tenant_id": tenant_id},
         {
             "$set": {
-                "id": tenant_id,
+                "id": temple_id,
+                "temple_id": temple_id,
                 "tenant_id": tenant_id,
                 "app_key": resolve_app_key("mandirmitra"),
                 "name": temple_name,
                 "temple_name": temple_name,
                 "trust_name": trust_name,
                 "address": str(settings.DEMO_MANDIR_TEMPLE_ADDRESS or "").strip() or None,
+                "phone": str(settings.DEMO_MANDIR_TEMPLE_CONTACT or "").strip() or None,
                 "contact_number": str(settings.DEMO_MANDIR_TEMPLE_CONTACT or "").strip() or None,
                 "email": str(settings.DEMO_MANDIR_TEMPLE_EMAIL or "").strip().lower() or None,
                 "admin_name": admin_name,
                 "admin_mobile_number": str(settings.DEMO_MANDIR_ADMIN_PHONE or "").strip() or None,
                 "admin_email": admin_email,
                 "platform_can_write": True,
+                "is_active": True,
                 "onboarding_status": "demo_bootstrap",
                 "updated_at": now,
             },

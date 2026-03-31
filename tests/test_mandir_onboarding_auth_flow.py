@@ -21,6 +21,18 @@ class FakeCollection:
         self.docs.append(dict(doc))
         return SimpleNamespace(inserted_id=doc.get("onboarding_id"))
 
+    async def find_one(self, filters=None, sort=None):
+        candidates = self.docs
+        if filters:
+            candidates = [doc for doc in self.docs if _matches_query(doc, filters)]
+
+        if sort and candidates:
+            key, direction = sort[0]
+            reverse = int(direction) < 0
+            candidates = sorted(candidates, key=lambda d: d.get(key, 0), reverse=reverse)
+
+        return dict(candidates[0]) if candidates else None
+
     async def update_one(self, filters, update, upsert=False):
         for doc in self.docs:
             if _matches(doc, filters):
@@ -55,6 +67,19 @@ class FakeCollections:
 
 def _matches(doc: dict, filters: dict) -> bool:
     for key, expected in filters.items():
+        if doc.get(key) != expected:
+            return False
+    return True
+
+
+def _matches_query(doc: dict, filters: dict) -> bool:
+    for key, expected in filters.items():
+        if key == "$or":
+            return any(_matches_query(doc, sub) for sub in expected)
+        if isinstance(expected, dict) and "$type" in expected:
+            if expected["$type"] == "int" and not isinstance(doc.get(key), int):
+                return False
+            continue
         if doc.get(key) != expected:
             return False
     return True
@@ -119,6 +144,8 @@ async def test_first_login_onboarding_email_flow_creates_tenant_admin(monkeypatc
 
     assert result["status"] == "onboarded"
     assert result["tenant_id"] == "sri-venkateswara-temple"
+    assert result["temple_id"] == 1
+    assert result["temple_name"] == "Sri Venkateswara Temple"
     assert result["access_token"] == "access-1"
     assert ensured["tenant_id"] == "sri-venkateswara-temple"
     assert created_user["role"] == "tenant_admin"
@@ -126,16 +153,13 @@ async def test_first_login_onboarding_email_flow_creates_tenant_admin(monkeypatc
     assert fake_collections.onboarding.docs[0]["status"] == "completed"
 
 
-def test_google_first_login_requires_non_gmail_admin_email():
+def test_google_first_login_requires_google_id_token():
     with pytest.raises(ValidationError):
         MandirFirstLoginOnboardingRequest(
             login_method="google",
-            google_id_token="a" * 12,
             temple_name="Temple",
             temple_address="Temple Road",
-            temple_contact_number="9876543210",
             admin_name="Admin",
-            admin_mobile_number="9876543211",
             admin_email="owner@gmail.com",
             admin_password="StrongPass123!",
         )
@@ -198,6 +222,7 @@ async def test_first_login_onboarding_google_flow_records_google_meta(monkeypatc
     result = await mandir_service.create_mandir_first_login_onboarding(payload, app_key="mandirmitra")
 
     assert result["google_login"]["email"] == "owner@googlemail.com"
+    assert result["temple_id"] == 1
     assert called["tenant_id"] == "ganesh-temple"
 
 
@@ -208,6 +233,9 @@ def test_temples_onboard_endpoint_is_public_and_returns_tokens(monkeypatch):
             "message": "ok",
             "onboarding_id": "onb-1",
             "tenant_id": "demo-tenant",
+            "temple_id": 7,
+            "temple_name": "Demo Temple",
+            "admin_email": "admin@example.com",
             "app_key": app_key,
             "access_token": "a",
             "refresh_token": "r",
@@ -237,4 +265,16 @@ def test_temples_onboard_endpoint_is_public_and_returns_tokens(monkeypatch):
     assert response.status_code == 200
     data = response.json()
     assert data["tenant_id"] == "demo-tenant"
+    assert data["temple_id"] == 7
     assert data["access_token"] == "a"
+
+def test_invalid_temple_email_is_ignored():
+    payload = MandirFirstLoginOnboardingRequest(
+        login_method="email",
+        temple_name="Temple",
+        temple_email="Mrao@!1954",
+        admin_name="Temple Admin",
+        admin_email="admin@example.com",
+        admin_password="StrongPass123!",
+    )
+    assert payload.temple_email is None

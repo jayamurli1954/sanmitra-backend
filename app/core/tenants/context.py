@@ -48,9 +48,35 @@ def get_app_key() -> str:
     return resolve_app_key(_app_key_ctx.get())
 
 
+async def _resolve_tenant_from_legacy_temple_header(x_temple_id: str | None) -> Optional[str]:
+    raw = str(x_temple_id or "").strip()
+    if not raw:
+        return None
+
+    if raw.isdigit():
+        try:
+            from app.db.mongo import get_collection
+
+            temple_id = int(raw)
+            if temple_id <= 0:
+                return None
+
+            temples = get_collection("mandir_temples")
+            doc = await temples.find_one({"$or": [{"temple_id": temple_id}, {"id": temple_id}, {"id": raw}]})
+            tenant_id = str((doc or {}).get("tenant_id") or "").strip()
+            return tenant_id or None
+        except Exception:
+            return None
+
+    return raw
+
+
 class TenantContextMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         tenant_id = request.headers.get("X-Tenant-ID")
+        if not tenant_id:
+            tenant_id = await _resolve_tenant_from_legacy_temple_header(request.headers.get("X-Temple-Id"))
+
         app_key = resolve_app_key(request.headers.get("X-App-Key"))
 
         tenant_token = _tenant_id_ctx.set(tenant_id)
@@ -67,7 +93,7 @@ class TenantContextMiddleware(BaseHTTPMiddleware):
 
 def resolve_tenant_id(current_user: dict, x_tenant_id: Optional[str]) -> str:
     token_tenant = str(current_user.get("tenant_id") or "").strip()
-    header_tenant = str(x_tenant_id or "").strip()
+    header_tenant = str(x_tenant_id or get_tenant_id() or "").strip()
     is_super_admin = current_user.get("role") == "super_admin"
 
     if token_tenant:
