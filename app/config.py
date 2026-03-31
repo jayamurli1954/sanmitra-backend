@@ -30,7 +30,16 @@ class Settings:
     ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
     REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "7"))
 
-    ALLOWED_ORIGINS = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "*").split(",") if o.strip()]
+    _env_origins = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "").split(",") if o.strip() and o.strip() != "*"]
+    ALLOWED_ORIGINS = list(set(_env_origins + [
+        "https://mandirmitra.vercel.app",
+        "https://mandir-mitra-alpha.vercel.app",
+        "https://legalmitra.vercel.app",
+        "https://gharmitra.vercel.app",
+        "https://invest-mitra.vercel.app",
+        "http://localhost:3000",
+        "http://localhost:3001"
+    ]))
     GOOGLE_OAUTH_CLIENT_IDS = [
         client_id.strip()
         for client_id in os.getenv("GOOGLE_OAUTH_CLIENT_IDS", "").split(",")
