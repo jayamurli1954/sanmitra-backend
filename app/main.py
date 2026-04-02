@@ -29,7 +29,8 @@ app = FastAPI(title=settings.APP_NAME, version=settings.APP_VERSION)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.ALLOWED_ORIGINS if settings.ALLOWED_ORIGINS else ["*"],
+    allow_origins=settings.ALLOWED_ORIGINS,
+    allow_origin_regex=r"https://[a-z0-9-]+\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -112,5 +113,6 @@ async def health():
             "postgres": {"ok": pg_ok, "detail": pg_detail},
         },
     }
+
 
 

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from io import StringIO
+import csv
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Response, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 from decimal import Decimal
 
@@ -52,6 +54,262 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
     except Exception:
         return default
 
+
+def _safe_optional_float(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except Exception:
+        return None
+
+
+def _safe_optional_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except Exception:
+        return None
+
+
+def _safe_bool(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return value != 0
+
+    raw = str(value).strip().lower()
+    if raw in {"true", "1", "yes", "y", "on"}:
+        return True
+    if raw in {"false", "0", "no", "n", "off", ""}:
+        return False
+    return default
+
+
+def _safe_optional_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    raw = str(value).strip()
+    return raw if raw else None
+
+
+def _to_positive_int(value: Any) -> int | None:
+    parsed = _safe_optional_int(value)
+    if parsed is None or parsed <= 0:
+        return None
+    return parsed
+
+
+_SEVA_ALLOWED_CATEGORIES = {
+    "abhisheka",
+    "alankara",
+    "pooja",
+    "archana",
+    "vahana_seva",
+    "special",
+    "festival",
+}
+_SEVA_ALLOWED_AVAILABILITY = {
+    "daily",
+    "weekday",
+    "weekend",
+    "specific_day",
+    "except_day",
+    "festival_only",
+}
+
+
+def _normalize_seva_category(value: Any) -> str:
+    candidate = str(value or "pooja").strip().lower()
+    return candidate if candidate in _SEVA_ALLOWED_CATEGORIES else "pooja"
+
+
+def _normalize_seva_availability(value: Any) -> str:
+    candidate = str(value or "daily").strip().lower()
+    return candidate if candidate in _SEVA_ALLOWED_AVAILABILITY else "daily"
+
+
+def _normalize_seva_day(value: Any) -> int | None:
+    parsed = _safe_optional_int(value)
+    if parsed is None:
+        return None
+    if 0 <= parsed <= 6:
+        return parsed
+    return None
+
+
+def _canonical_seva_name(payload: dict[str, Any]) -> str:
+    name = str(payload.get("name_english") or payload.get("name") or payload.get("seva_name") or "Seva").strip()
+    return name or "Seva"
+
+
+def _build_seva_item(payload: dict[str, Any], *, tenant_id: str, app_key: str) -> dict[str, Any]:
+    now = datetime.utcnow().isoformat()
+    name = _canonical_seva_name(payload)
+    advance_days = _safe_optional_int(payload.get("advance_booking_days"))
+
+    return {
+        "id": str(uuid4()),
+        "tenant_id": tenant_id,
+        "app_key": app_key,
+        "name": name,
+        "name_english": name,
+        "name_kannada": _safe_optional_str(payload.get("name_kannada")) or "",
+        "name_sanskrit": _safe_optional_str(payload.get("name_sanskrit")) or "",
+        "description": _safe_optional_str(payload.get("description")) or "",
+        "category": _normalize_seva_category(payload.get("category")),
+        "amount": _safe_float(payload.get("amount"), 0.0),
+        "min_amount": _safe_optional_float(payload.get("min_amount")),
+        "max_amount": _safe_optional_float(payload.get("max_amount")),
+        "availability": _normalize_seva_availability(payload.get("availability")),
+        "specific_day": _normalize_seva_day(payload.get("specific_day")),
+        "except_day": _normalize_seva_day(payload.get("except_day")),
+        "time_slot": _safe_optional_str(payload.get("time_slot")) or "",
+        "max_bookings_per_day": _safe_optional_int(payload.get("max_bookings_per_day")),
+        "advance_booking_days": advance_days if advance_days and advance_days > 0 else 30,
+        "requires_approval": _safe_bool(payload.get("requires_approval"), False),
+        "is_active": _safe_bool(payload.get("is_active"), True),
+        "benefits": _safe_optional_str(payload.get("benefits")) or "",
+        "instructions": _safe_optional_str(payload.get("instructions")) or "",
+        "duration_minutes": _safe_optional_int(payload.get("duration_minutes")),
+        "created_at": now,
+        "updated_at": now,
+    }
+
+
+def _build_seva_patch(payload: dict[str, Any]) -> dict[str, Any]:
+    patch: dict[str, Any] = {}
+
+    if {"name", "name_english", "seva_name"} & payload.keys():
+        name = _canonical_seva_name(payload)
+        patch["name"] = name
+        patch["name_english"] = name
+
+    if "name_kannada" in payload:
+        patch["name_kannada"] = _safe_optional_str(payload.get("name_kannada")) or ""
+    if "name_sanskrit" in payload:
+        patch["name_sanskrit"] = _safe_optional_str(payload.get("name_sanskrit")) or ""
+    if "description" in payload:
+        patch["description"] = _safe_optional_str(payload.get("description")) or ""
+    if "category" in payload:
+        patch["category"] = _normalize_seva_category(payload.get("category"))
+    if "amount" in payload:
+        patch["amount"] = _safe_float(payload.get("amount"), 0.0)
+    if "min_amount" in payload:
+        patch["min_amount"] = _safe_optional_float(payload.get("min_amount"))
+    if "max_amount" in payload:
+        patch["max_amount"] = _safe_optional_float(payload.get("max_amount"))
+    if "availability" in payload:
+        patch["availability"] = _normalize_seva_availability(payload.get("availability"))
+    if "specific_day" in payload:
+        patch["specific_day"] = _normalize_seva_day(payload.get("specific_day"))
+    if "except_day" in payload:
+        patch["except_day"] = _normalize_seva_day(payload.get("except_day"))
+    if "time_slot" in payload:
+        patch["time_slot"] = _safe_optional_str(payload.get("time_slot")) or ""
+    if "max_bookings_per_day" in payload:
+        patch["max_bookings_per_day"] = _safe_optional_int(payload.get("max_bookings_per_day"))
+    if "advance_booking_days" in payload:
+        days = _safe_optional_int(payload.get("advance_booking_days"))
+        patch["advance_booking_days"] = days if days and days > 0 else 30
+    if "requires_approval" in payload:
+        patch["requires_approval"] = _safe_bool(payload.get("requires_approval"), False)
+    if "is_active" in payload:
+        patch["is_active"] = _safe_bool(payload.get("is_active"), True)
+    if "benefits" in payload:
+        patch["benefits"] = _safe_optional_str(payload.get("benefits")) or ""
+    if "instructions" in payload:
+        patch["instructions"] = _safe_optional_str(payload.get("instructions")) or ""
+    if "duration_minutes" in payload:
+        patch["duration_minutes"] = _safe_optional_int(payload.get("duration_minutes"))
+
+    return patch
+
+
+def _serialize_seva_doc(doc: dict[str, Any]) -> dict[str, Any]:
+    row = dict(doc)
+    row.pop("_id", None)
+
+    name = str(row.get("name_english") or row.get("name") or row.get("seva_name") or "Seva").strip() or "Seva"
+    row["name_english"] = name
+    row["name"] = name
+    row["category"] = _normalize_seva_category(row.get("category"))
+    row["availability"] = _normalize_seva_availability(row.get("availability"))
+    row["amount"] = _safe_float(row.get("amount"), 0.0)
+    row["min_amount"] = _safe_optional_float(row.get("min_amount"))
+    row["max_amount"] = _safe_optional_float(row.get("max_amount"))
+    row["specific_day"] = _normalize_seva_day(row.get("specific_day"))
+    row["except_day"] = _normalize_seva_day(row.get("except_day"))
+    row["max_bookings_per_day"] = _safe_optional_int(row.get("max_bookings_per_day"))
+    row["duration_minutes"] = _safe_optional_int(row.get("duration_minutes"))
+    row["advance_booking_days"] = _safe_optional_int(row.get("advance_booking_days")) or 30
+    row["requires_approval"] = _safe_bool(row.get("requires_approval"), False)
+    row["is_active"] = _safe_bool(row.get("is_active"), True)
+    row["description"] = _safe_optional_str(row.get("description")) or ""
+    row["name_kannada"] = _safe_optional_str(row.get("name_kannada")) or ""
+    row["name_sanskrit"] = _safe_optional_str(row.get("name_sanskrit")) or ""
+    row["time_slot"] = _safe_optional_str(row.get("time_slot")) or ""
+    row["benefits"] = _safe_optional_str(row.get("benefits")) or ""
+    row["instructions"] = _safe_optional_str(row.get("instructions")) or ""
+    row["id"] = str(row.get("id") or row.get("seva_id") or "")
+
+    return row
+
+
+_SEVA_IMPORT_COLUMNS = [
+    "name_english",
+    "name_kannada",
+    "name_sanskrit",
+    "description",
+    "category",
+    "amount",
+    "min_amount",
+    "max_amount",
+    "availability",
+    "specific_day",
+    "except_day",
+    "time_slot",
+    "max_bookings_per_day",
+    "advance_booking_days",
+    "requires_approval",
+    "is_active",
+    "benefits",
+    "instructions",
+    "duration_minutes",
+]
+
+
+def _seva_import_template_csv() -> str:
+    output = StringIO()
+    writer = csv.DictWriter(output, fieldnames=_SEVA_IMPORT_COLUMNS)
+    writer.writeheader()
+    writer.writerow(
+        {
+            "name_english": "Daily Archana",
+            "name_kannada": "",
+            "name_sanskrit": "",
+            "description": "Daily morning archana seva",
+            "category": "archana",
+            "amount": "50",
+            "min_amount": "",
+            "max_amount": "",
+            "availability": "daily",
+            "specific_day": "",
+            "except_day": "",
+            "time_slot": "Morning 6:00 AM",
+            "max_bookings_per_day": "",
+            "advance_booking_days": "30",
+            "requires_approval": "false",
+            "is_active": "true",
+            "benefits": "",
+            "instructions": "",
+            "duration_minutes": "",
+        }
+    )
+    return output.getvalue()
 
 def _normalize_phone(phone: str | None) -> str:
     return "".join(ch for ch in str(phone or "") if ch.isdigit())[:10]
@@ -380,16 +638,26 @@ async def search_devotee_by_mobile(
 @router.get("/sevas/")
 @router.get("/sevas")
 async def list_sevas(
+    include_inactive: bool = Query(default=True),
     current_user: dict = Depends(get_current_user),
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
     x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+    x_temple_id: str | None = Header(default=None, alias="X-Temple-Id"),
 ):
-    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    tenant_id = await _resolve_tenant_for_mandir_request(
+        current_user,
+        x_tenant_id,
+        _to_positive_int(x_temple_id),
+    )
     app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
 
     try:
         col = get_collection("mandir_sevas")
-        return await col.find({"tenant_id": tenant_id, "app_key": app_key}).sort("created_at", -1).to_list(length=1000)
+        query: dict[str, Any] = {"tenant_id": tenant_id, "app_key": app_key}
+        if not include_inactive:
+            query["is_active"] = True
+        rows = await col.find(query).sort("created_at", -1).to_list(length=1000)
+        return [_serialize_seva_doc(row) for row in rows]
     except Exception:
         return []
 
@@ -401,25 +669,22 @@ async def create_seva(
     current_user: dict = Depends(get_current_user),
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
     x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+    x_temple_id: str | None = Header(default=None, alias="X-Temple-Id"),
 ):
-    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    tenant_id = await _resolve_tenant_for_mandir_request(
+        current_user,
+        x_tenant_id,
+        _to_positive_int(x_temple_id),
+    )
     app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
 
-    item = {
-        "id": str(uuid4()),
-        "tenant_id": tenant_id,
-        "app_key": app_key,
-        "name": str(payload.get("name") or payload.get("seva_name") or "Seva"),
-        "amount": _safe_float(payload.get("amount"), 0.0),
-        "is_active": bool(payload.get("is_active", True)),
-        "created_at": datetime.utcnow().isoformat(),
-    }
+    item = _build_seva_item(payload, tenant_id=tenant_id, app_key=app_key)
     try:
         col = get_collection("mandir_sevas")
         await col.insert_one(item)
-    except Exception:
-        pass
-    return item
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to save seva: {exc}") from exc
+    return _serialize_seva_doc(item)
 
 
 @router.put("/sevas/{seva_id}")
@@ -429,19 +694,33 @@ async def update_seva(
     current_user: dict = Depends(get_current_user),
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
     x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+    x_temple_id: str | None = Header(default=None, alias="X-Temple-Id"),
 ):
-    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    tenant_id = await _resolve_tenant_for_mandir_request(
+        current_user,
+        x_tenant_id,
+        _to_positive_int(x_temple_id),
+    )
     app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
 
-    patch = {k: v for k, v in payload.items() if k not in {"id", "_id", "tenant_id", "app_key"}}
+    patch = _build_seva_patch(payload)
+    patch.pop("id", None)
+    patch.pop("_id", None)
+    patch.pop("tenant_id", None)
+    patch.pop("app_key", None)
+    if not patch:
+        raise HTTPException(status_code=400, detail="No updatable seva fields provided")
     patch["updated_at"] = datetime.utcnow().isoformat()
 
     col = get_collection("mandir_sevas")
-    await col.update_one({"id": seva_id, "tenant_id": tenant_id, "app_key": app_key}, {"$set": patch}, upsert=False)
-    doc = await col.find_one({"id": seva_id, "tenant_id": tenant_id, "app_key": app_key})
+    try:
+        await col.update_one({"id": seva_id, "tenant_id": tenant_id, "app_key": app_key}, {"$set": patch}, upsert=False)
+        doc = await col.find_one({"id": seva_id, "tenant_id": tenant_id, "app_key": app_key})
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to update seva: {exc}") from exc
     if not doc:
         raise HTTPException(status_code=404, detail="Seva not found")
-    return doc
+    return _serialize_seva_doc(doc)
 
 
 @router.delete("/sevas/{seva_id}")
@@ -450,13 +729,112 @@ async def delete_seva(
     current_user: dict = Depends(get_current_user),
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
     x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+    x_temple_id: str | None = Header(default=None, alias="X-Temple-Id"),
 ):
-    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    tenant_id = await _resolve_tenant_for_mandir_request(
+        current_user,
+        x_tenant_id,
+        _to_positive_int(x_temple_id),
+    )
     app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
 
     col = get_collection("mandir_sevas")
     await col.delete_one({"id": seva_id, "tenant_id": tenant_id, "app_key": app_key})
     return {"status": "deleted", "id": seva_id}
+
+
+@router.get("/sevas/import/template")
+async def seva_import_template(
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+    x_temple_id: str | None = Header(default=None, alias="X-Temple-Id"),
+):
+    await _resolve_tenant_for_mandir_request(current_user, x_tenant_id, _to_positive_int(x_temple_id))
+    resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+
+    csv_body = _seva_import_template_csv()
+    return Response(
+        content=csv_body,
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=sevas_import_template.csv"},
+    )
+
+
+@router.post("/sevas/import")
+async def import_sevas(
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+    x_temple_id: str | None = Header(default=None, alias="X-Temple-Id"),
+):
+    tenant_id = await _resolve_tenant_for_mandir_request(
+        current_user,
+        x_tenant_id,
+        _to_positive_int(x_temple_id),
+    )
+    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+
+    filename = str(file.filename or "").strip().lower()
+    if filename and not filename.endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Only CSV files are supported for seva import")
+
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty")
+
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Unable to decode CSV file as UTF-8") from exc
+
+    reader = csv.DictReader(StringIO(text))
+    if not reader.fieldnames:
+        raise HTTPException(status_code=400, detail="CSV header row is missing")
+
+    items: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+
+    for row_number, row in enumerate(reader, start=2):
+        normalized = {
+            str(key or "").strip(): (value.strip() if isinstance(value, str) else value)
+            for key, value in row.items()
+            if key is not None
+        }
+        if not any(str(value or "").strip() for value in normalized.values()):
+            continue
+
+        provided_name = normalized.get("name_english") or normalized.get("name") or normalized.get("seva_name")
+        if not str(provided_name or "").strip():
+            errors.append({"row": row_number, "error": "name_english is required"})
+            continue
+
+        amount_value = _safe_optional_float(normalized.get("amount"))
+        if amount_value is None:
+            errors.append({"row": row_number, "error": "amount is required"})
+            continue
+        if amount_value < 0:
+            errors.append({"row": row_number, "error": "amount must be greater than or equal to 0"})
+            continue
+
+        payload = dict(normalized)
+        payload["amount"] = amount_value
+        items.append(_build_seva_item(payload, tenant_id=tenant_id, app_key=app_key))
+
+    if items:
+        col = get_collection("mandir_sevas")
+        try:
+            await col.insert_many(items)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Failed to import sevas: {exc}") from exc
+
+    return {
+        "status": "ok",
+        "inserted_count": len(items),
+        "failed_count": len(errors),
+        "errors": errors[:200],
+    }
 
 
 @router.get("/sevas/lists/priests")
@@ -1041,10 +1419,3 @@ async def mandir_seva_reschedule_pending(
 @router.get("/users/me")
 async def mandir_users_me(current_user: dict = Depends(get_current_user)):
     return current_user
-
-
-
-
-
-
-
