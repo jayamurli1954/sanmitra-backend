@@ -5,6 +5,7 @@ from io import StringIO
 import csv
 from typing import Any
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Response, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -141,6 +142,42 @@ def _normalize_seva_day(value: Any) -> int | None:
     return None
 
 
+_IST_TIMEZONE = ZoneInfo("Asia/Kolkata")
+
+
+def _today_weekday_js_index() -> int:
+    # JavaScript Date.getDay convention: Sunday=0 ... Saturday=6.
+    return (datetime.now(_IST_TIMEZONE).weekday() + 1) % 7
+
+
+def _compute_seva_available_today(row: dict[str, Any]) -> bool:
+    if not _safe_bool(row.get("is_active"), True):
+        return False
+
+    slots_left = _safe_optional_int(row.get("bookings_available"))
+    if slots_left is not None and slots_left <= 0:
+        return False
+
+    today = _today_weekday_js_index()
+    specific_day = _normalize_seva_day(row.get("specific_day"))
+    except_day = _normalize_seva_day(row.get("except_day"))
+
+    # Explicit day constraints are authoritative even if availability is stale.
+    if specific_day is not None:
+        return specific_day == today
+    if except_day is not None:
+        return except_day != today
+
+    availability = _normalize_seva_availability(row.get("availability"))
+    if availability == "weekday":
+        return 1 <= today <= 5
+    if availability == "weekend":
+        return today in {0, 6}
+    if availability == "festival_only":
+        return False
+    return True
+
+
 def _canonical_seva_name(payload: dict[str, Any]) -> str:
     name = str(payload.get("name_english") or payload.get("name") or payload.get("seva_name") or "Seva").strip()
     return name or "Seva"
@@ -244,10 +281,12 @@ def _serialize_seva_doc(doc: dict[str, Any]) -> dict[str, Any]:
     row["specific_day"] = _normalize_seva_day(row.get("specific_day"))
     row["except_day"] = _normalize_seva_day(row.get("except_day"))
     row["max_bookings_per_day"] = _safe_optional_int(row.get("max_bookings_per_day"))
+    row["bookings_available"] = _safe_optional_int(row.get("bookings_available"))
     row["duration_minutes"] = _safe_optional_int(row.get("duration_minutes"))
     row["advance_booking_days"] = _safe_optional_int(row.get("advance_booking_days")) or 30
     row["requires_approval"] = _safe_bool(row.get("requires_approval"), False)
     row["is_active"] = _safe_bool(row.get("is_active"), True)
+    row["is_available_today"] = _compute_seva_available_today(row)
     row["description"] = _safe_optional_str(row.get("description")) or ""
     row["name_kannada"] = _safe_optional_str(row.get("name_kannada")) or ""
     row["name_sanskrit"] = _safe_optional_str(row.get("name_sanskrit")) or ""

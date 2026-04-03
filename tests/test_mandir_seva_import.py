@@ -1,4 +1,4 @@
-﻿from types import SimpleNamespace
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 import pytest
@@ -8,9 +8,28 @@ from app.core.auth.dependencies import get_current_user
 from app.main import app
 
 
+class FakeCursor:
+    def __init__(self, docs):
+        self.docs = list(docs)
+
+    def sort(self, _field, _direction):
+        return self
+
+    async def to_list(self, length=None):
+        if length is None:
+            return list(self.docs)
+        return list(self.docs)[:length]
+
+
 class FakeSevaCollection:
     def __init__(self):
         self.docs: list[dict] = []
+
+    def find(self, query):
+        def matches(doc):
+            return all(doc.get(k) == v for k, v in query.items())
+
+        return FakeCursor([doc for doc in self.docs if matches(doc)])
 
     async def insert_many(self, docs):
         inserted = [dict(doc) for doc in docs]
@@ -96,3 +115,27 @@ def test_seva_bulk_import_rejects_non_csv_files(seva_client):
 
     assert response.status_code == 400
     assert response.json()["detail"] == "Only CSV files are supported for seva import"
+
+def test_seva_list_daily_is_available_today(seva_client):
+    client, collection = seva_client
+
+    collection.docs.append(
+        {
+            "id": "seva-1",
+            "tenant_id": "tenant-1",
+            "app_key": "mandirmitra",
+            "name_english": "Sarva Seve",
+            "category": "pooja",
+            "availability": "daily",
+            "amount": 500,
+            "is_active": True,
+        }
+    )
+
+    response = client.get("/api/v1/sevas/")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload) == 1
+    assert payload[0]["availability"] == "daily"
+    assert payload[0]["is_available_today"] is True
