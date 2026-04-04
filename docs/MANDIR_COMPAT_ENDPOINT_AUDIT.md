@@ -12,6 +12,7 @@ Status legend:
 | Route | Status | Evidence |
 |---|---|---|
 | `POST /api/v1/accounts/initialize-default` | real | Live staging now returns seeded COA data and creates 6 default accounts for temple `1`. |
+| `POST /api/v1/accounts/import-legacy` | placeholder | Returns `_ok("accounts/import-legacy")`. |
 | `GET /api/v1/accounts` | real | Returns seeded COA rows for the active temple. |
 | `GET /api/v1/accounts/hierarchy` | real | Returns active COA hierarchy for the active temple. |
 | `GET /api/v1/donations/payment-accounts` | real | Returns cash/bank selector data from seeded COA rows. |
@@ -48,6 +49,9 @@ Status legend:
 | `POST /api/v1/financial-closing/close-year` | placeholder | Returns `_ok("financial-closing/close-year")`. |
 | `GET /api/v1/financial-closing/closing-summary` | placeholder | Returns `{ "summary": {} }`. |
 | `GET /api/v1/financial-closing/period-closings` | placeholder | Returns `[]`. |
+| `POST /api/v1/forgot-password` | placeholder | Returns `_ok("forgot-password")`. |
+| `POST /api/v1/reset-password` | placeholder | Returns `_ok("reset-password")`. |
+| `POST /api/v1/opening-balances/import` | placeholder | Returns `_ok("opening-balances/import")`. |
 | `GET /api/v1/hr/employees` | placeholder | Returns `[]`. |
 | `GET /api/v1/hr/attendance/monthly` | placeholder | Returns `[]`. |
 | `GET /api/v1/hundi/masters` | placeholder | Returns `[]`. |
