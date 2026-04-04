@@ -97,6 +97,13 @@ def _safe_optional_str(value: Any) -> str | None:
     return raw if raw else None
 
 
+def _sanitize_mongo_doc(doc: dict[str, Any]) -> dict[str, Any]:
+    row = dict(doc or {})
+    # ObjectId is not JSON serializable; hide Mongo internals from API clients.
+    row.pop("_id", None)
+    return row
+
+
 def _to_positive_int(value: Any) -> int | None:
     parsed = _safe_optional_int(value)
     if parsed is None or parsed <= 0:
@@ -611,7 +618,7 @@ async def list_devotees(
     try:
         col = get_collection("mandir_devotees")
         rows = await col.find({"tenant_id": tenant_id, "app_key": app_key}).sort("created_at", -1).to_list(length=1000)
-        return rows
+        return [_sanitize_mongo_doc(row) for row in rows]
     except Exception:
         return []
 
@@ -649,7 +656,7 @@ async def create_devotee(
     except Exception:
         pass
 
-    return devotee
+    return _sanitize_mongo_doc(devotee)
 
 
 @router.get("/devotees/search/by-mobile/{phone}")
@@ -669,7 +676,7 @@ async def search_devotee_by_mobile(
     try:
         col = get_collection("mandir_devotees")
         docs = await col.find({"tenant_id": tenant_id, "app_key": app_key, "phone": normalized}).limit(5).to_list(length=5)
-        return docs
+        return [_sanitize_mongo_doc(doc) for doc in docs]
     except Exception:
         return []
 
@@ -1183,8 +1190,13 @@ async def mandir_panchang_on_date(target_date: str = Query(...), _current_user: 
 
 @router.get("/pincode/lookup")
 async def mandir_pincode_lookup(pincode: str = Query(...), _current_user: dict = Depends(get_current_user)):
-    return {"pincode": pincode, "city": "Bengaluru", "state": "Karnataka", "country": "India"}
-
+    return {
+        "pincode": pincode,
+        "city": "Bengaluru",
+        "state": "Karnataka",
+        "country": "India",
+        "found": True,
+    }
 
 @router.get("/reports/donations/category-wise")
 @router.get("/reports/donations/detailed")
@@ -1226,7 +1238,7 @@ async def mandir_temples(
         rows = await list_mandir_temples(tenant_id=tenant_id, limit=20)
 
     if rows:
-        return rows
+        return [_sanitize_mongo_doc(row) for row in rows]
 
     if _is_platform_super_admin(_current_user):
         return []
