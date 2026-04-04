@@ -50,6 +50,139 @@ async def _resolve_mandir_income_account(session: AsyncSession, tenant_id: str, 
     return new_acc.id
 
 
+MANDIR_DEFAULT_ACCOUNTS: list[dict[str, Any]] = [
+    {
+        "account_id": 1001,
+        "account_code": "1001",
+        "account_name": "Cash in Hand",
+        "account_type": "asset",
+        "classification": "real",
+        "is_cash_bank": True,
+        "cash_bank_nature": "cash",
+        "is_receivable": False,
+        "is_payable": False,
+        "is_system_account": True,
+    },
+    {
+        "account_id": 1002,
+        "account_code": "1002",
+        "account_name": "Bank Account",
+        "account_type": "asset",
+        "classification": "real",
+        "is_cash_bank": True,
+        "cash_bank_nature": "bank",
+        "is_receivable": False,
+        "is_payable": False,
+        "is_system_account": True,
+    },
+    {
+        "account_id": 1100,
+        "account_code": "1100",
+        "account_name": "Devotee Receivables",
+        "account_type": "asset",
+        "classification": "real",
+        "is_cash_bank": False,
+        "cash_bank_nature": None,
+        "is_receivable": True,
+        "is_payable": False,
+        "is_system_account": True,
+    },
+    {
+        "account_id": 4000,
+        "account_code": "4000",
+        "account_name": "Donation Income",
+        "account_type": "income",
+        "classification": "nominal",
+        "is_cash_bank": False,
+        "cash_bank_nature": None,
+        "is_receivable": False,
+        "is_payable": False,
+        "is_system_account": True,
+    },
+    {
+        "account_id": 4100,
+        "account_code": "4100",
+        "account_name": "Seva Income",
+        "account_type": "income",
+        "classification": "nominal",
+        "is_cash_bank": False,
+        "cash_bank_nature": None,
+        "is_receivable": False,
+        "is_payable": False,
+        "is_system_account": True,
+    },
+    {
+        "account_id": 5000,
+        "account_code": "5000",
+        "account_name": "Temple Expenses",
+        "account_type": "expense",
+        "classification": "nominal",
+        "is_cash_bank": False,
+        "cash_bank_nature": None,
+        "is_receivable": False,
+        "is_payable": False,
+        "is_system_account": True,
+    },
+]
+
+
+def _mandir_account_view(doc: dict[str, Any]) -> dict[str, Any]:
+    account_id = doc.get("account_id") or doc.get("_id")
+    account_id_str = str(account_id or "")
+    account_code = str(doc.get("account_code") or account_id_str)
+    account_name = str(doc.get("account_name") or doc.get("name") or "Account")
+    account_type = str(doc.get("account_type") or "asset")
+
+    cash_bank_nature = str(doc.get("cash_bank_nature") or "").lower()
+    return {
+        "id": account_id,
+        "account_id": account_id,
+        "account_code": account_code,
+        "account_name": account_name,
+        "account_name_kannada": doc.get("account_name_kannada"),
+        "description": doc.get("description"),
+        "account_type": account_type,
+        "account_subtype": doc.get("account_subtype"),
+        "parent_account_id": doc.get("parent_account_id"),
+        "is_system_account": bool(doc.get("is_system_account", False)),
+        "is_active": bool(doc.get("is_active", True)),
+        "cash_bank_nature": cash_bank_nature or None,
+        "cash_account_id": account_id if cash_bank_nature == "cash" else None,
+        "bank_account_id": account_id if cash_bank_nature == "bank" else None,
+        "sub_accounts": [],
+    }
+
+
+async def _ensure_default_mandir_accounts(tenant_id: str, app_key: str) -> int:
+    accounts = get_collection("accounting_accounts")
+    existing_docs = await accounts.find({"tenant_id": tenant_id, "app_key": app_key}).to_list(length=500)
+    existing_codes = {
+        str(doc.get("account_code") or doc.get("account_id") or "").strip()
+        for doc in existing_docs
+        if str(doc.get("account_code") or doc.get("account_id") or "").strip()
+    }
+
+    now = datetime.utcnow().isoformat()
+    docs_to_insert: list[dict[str, Any]] = []
+    for seed in MANDIR_DEFAULT_ACCOUNTS:
+        if str(seed["account_code"]) in existing_codes:
+            continue
+        docs_to_insert.append({
+            **seed,
+            "tenant_id": tenant_id,
+            "app_key": app_key,
+            "name": seed["account_name"],
+            "created_at": now,
+            "updated_at": now,
+            "is_active": True,
+        })
+
+    if docs_to_insert:
+        await accounts.insert_many(docs_to_insert)
+
+    return len(docs_to_insert)
+
+
 def _safe_float(value: Any, default: float = 0.0) -> float:
     try:
         return float(value)
@@ -415,23 +548,32 @@ async def _payment_accounts(tenant_id: str, app_key: str) -> dict[str, list[dict
 
     try:
         accounts = get_collection("accounting_accounts")
+        await _ensure_default_mandir_accounts(tenant_id, app_key)
         docs = await accounts.find({"tenant_id": tenant_id, "app_key": app_key, "is_active": True}).to_list(length=200)
         for doc in docs:
-            item = {
-                "id": str(doc.get("account_id") or doc.get("_id") or ""),
-                "name": str(doc.get("name") or doc.get("account_name") or "Account"),
-                "account_type": str(doc.get("account_type") or ""),
-            }
+            item = _mandir_account_view(doc)
             account_type = item["account_type"].lower()
-            if account_type in {"cash", "cash_in_hand"}:
+            cash_bank_nature = str(item.get("cash_bank_nature") or "").lower()
+            name = str(item.get("account_name") or "").lower()
+            if cash_bank_nature == "cash" or account_type in {"cash", "cash_in_hand"} or ("cash" in name and item.get("is_cash_bank")):
                 cash_accounts.append(item)
-            elif account_type in {"bank", "bank_account", "current_asset"}:
+            elif cash_bank_nature == "bank" or account_type in {"bank", "bank_account", "current_asset"} or ("bank" in name and item.get("is_cash_bank")):
                 bank_accounts.append(item)
     except Exception:
         pass
 
     if not cash_accounts:
-        cash_accounts = [{"id": "cash-main", "name": "Cash Account", "account_type": "cash"}]
+        cash_accounts = [{
+            "id": "cash-main",
+            "account_id": "cash-main",
+            "account_code": "1001",
+            "account_name": "Cash Account",
+            "account_type": "asset",
+            "cash_bank_nature": "cash",
+            "is_cash_bank": True,
+            "is_active": True,
+            "sub_accounts": [],
+        }]
     return {"cash_accounts": cash_accounts, "bank_accounts": bank_accounts}
 
 
@@ -1004,12 +1146,22 @@ def _ok(name: str, **extra: Any) -> dict[str, Any]:
 
 @router.get("/accounts")
 async def mandir_accounts_list(_current_user: dict = Depends(get_current_user)):
-    return []
+    tenant_id = resolve_tenant_id(_current_user, None)
+    app_key = resolve_app_key((_current_user.get("app_key") or "mandirmitra").strip())
+    await _ensure_default_mandir_accounts(tenant_id, app_key)
+    accounts = get_collection("accounting_accounts")
+    docs = await accounts.find({"tenant_id": tenant_id, "app_key": app_key, "is_active": True}).to_list(length=500)
+    return [_mandir_account_view(doc) for doc in docs]
 
 
 @router.get("/accounts/hierarchy")
 async def mandir_accounts_hierarchy(_current_user: dict = Depends(get_current_user)):
-    return {"nodes": []}
+    tenant_id = resolve_tenant_id(_current_user, None)
+    app_key = resolve_app_key((_current_user.get("app_key") or "mandirmitra").strip())
+    await _ensure_default_mandir_accounts(tenant_id, app_key)
+    accounts = get_collection("accounting_accounts")
+    docs = await accounts.find({"tenant_id": tenant_id, "app_key": app_key, "is_active": True}).to_list(length=500)
+    return [_mandir_account_view(doc) for doc in sorted(docs, key=lambda item: str(item.get("account_code") or item.get("account_id") or ""))]
 
 
 @router.post("/accounts/import-legacy")
@@ -1019,7 +1171,10 @@ async def mandir_accounts_import_legacy(_payload: dict[str, Any], _current_user:
 
 @router.post("/accounts/initialize-default")
 async def mandir_accounts_initialize_default(_current_user: dict = Depends(get_current_user)):
-    return _ok("accounts/initialize-default")
+    tenant_id = resolve_tenant_id(_current_user, None)
+    app_key = resolve_app_key((_current_user.get("app_key") or "mandirmitra").strip())
+    created = await _ensure_default_mandir_accounts(tenant_id, app_key)
+    return _ok("accounts/initialize-default", message="Default accounts initialized", created=created)
 
 
 @router.get("/assets")
