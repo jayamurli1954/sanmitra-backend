@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from io import StringIO
 import csv
+import httpx
 from typing import Any
 from uuid import uuid4
 from zoneinfo import ZoneInfo
@@ -102,6 +103,37 @@ def _sanitize_mongo_doc(doc: dict[str, Any]) -> dict[str, Any]:
     # ObjectId is not JSON serializable; hide Mongo internals from API clients.
     row.pop("_id", None)
     return row
+
+
+def _normalize_pincode(value: Any) -> str:
+    digits = "".join(ch for ch in str(value or "") if ch.isdigit())
+    return digits[:6]
+
+
+async def _lookup_pincode_city_state(pincode: str) -> tuple[str | None, str | None]:
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(f"https://api.postalpincode.in/pincode/{pincode}")
+        response.raise_for_status()
+        payload = response.json()
+    except Exception:
+        return None, None
+
+    if not isinstance(payload, list) or not payload:
+        return None, None
+
+    first = payload[0] if isinstance(payload[0], dict) else {}
+    if str(first.get("Status") or "").strip().lower() != "success":
+        return None, None
+
+    offices = first.get("PostOffice")
+    if not isinstance(offices, list) or not offices:
+        return None, None
+
+    primary = offices[0] if isinstance(offices[0], dict) else {}
+    city = str(primary.get("District") or primary.get("Taluk") or primary.get("Name") or "").strip() or None
+    state = str(primary.get("State") or "").strip() or None
+    return city, state
 
 
 def _to_positive_int(value: Any) -> int | None:
@@ -1190,14 +1222,20 @@ async def mandir_panchang_on_date(target_date: str = Query(...), _current_user: 
 
 @router.get("/pincode/lookup")
 async def mandir_pincode_lookup(pincode: str = Query(...), _current_user: dict = Depends(get_current_user)):
-    return {
-        "pincode": pincode,
-        "city": "Bengaluru",
-        "state": "Karnataka",
-        "country": "India",
-        "found": True,
-    }
+    normalized = _normalize_pincode(pincode)
+    if len(normalized) != 6:
+        return {"pincode": normalized, "city": None, "state": None, "country": "India", "found": False}
 
+    city, state = await _lookup_pincode_city_state(normalized)
+    found = bool(city and state)
+
+    return {
+        "pincode": normalized,
+        "city": city if found else None,
+        "state": state if found else None,
+        "country": "India",
+        "found": found,
+    }
 @router.get("/reports/donations/category-wise")
 @router.get("/reports/donations/detailed")
 @router.get("/reports/sevas/detailed")

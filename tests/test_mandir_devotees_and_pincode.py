@@ -1,4 +1,4 @@
-﻿from types import SimpleNamespace
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 import pytest
@@ -137,14 +137,37 @@ def test_search_devotees_response_omits_mongo_internal_id(mandir_client):
     assert "_id" not in payload[0]
 
 
-def test_pincode_lookup_returns_found_for_autofill(mandir_client):
+def test_pincode_lookup_returns_found_for_autofill(mandir_client, monkeypatch):
     client, _collection = mandir_client
 
-    response = client.get("/api/v1/pincode/lookup?pincode=560001")
+    async def fake_lookup(_pincode):
+        return "Chennai", "Tamil Nadu"
+
+    monkeypatch.setattr(mandir_router, "_lookup_pincode_city_state", fake_lookup)
+
+    response = client.get("/api/v1/pincode/lookup?pincode=600004")
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["pincode"] == "560001"
-    assert payload["city"] == "Bengaluru"
-    assert payload["state"] == "Karnataka"
+    assert payload["pincode"] == "600004"
+    assert payload["city"] == "Chennai"
+    assert payload["state"] == "Tamil Nadu"
     assert payload["found"] is True
+
+
+def test_pincode_lookup_returns_not_found_when_lookup_misses(mandir_client, monkeypatch):
+    client, _collection = mandir_client
+
+    async def fake_lookup(_pincode):
+        return None, None
+
+    monkeypatch.setattr(mandir_router, "_lookup_pincode_city_state", fake_lookup)
+
+    response = client.get("/api/v1/pincode/lookup?pincode=999999")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["pincode"] == "999999"
+    assert payload["city"] is None
+    assert payload["state"] is None
+    assert payload["found"] is False
