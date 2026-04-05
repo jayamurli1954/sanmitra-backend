@@ -11,7 +11,8 @@ from typing import Any
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Request, Response, UploadFile
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from decimal import Decimal
 
@@ -19,8 +20,43 @@ from app.core.auth.dependencies import get_current_user
 from app.core.tenants.context import resolve_app_key, resolve_tenant_id
 from app.db.mongo import get_collection
 from app.db.postgres import get_async_session
-from app.accounting.service import list_accounts, create_account, post_journal_entry
+from app.accounting.models.entities import Account, JournalEntry, JournalLine
+from app.accounting.service import (
+    create_account,
+    get_accounts_payable,
+    get_accounts_receivable,
+    get_balance_sheet,
+    get_ledger_lines,
+    get_profit_loss,
+    get_receipts_payments,
+    get_trial_balance,
+    list_accounts,
+    post_journal_entry,
+)
 from app.accounting.schemas import JournalPostRequest, JournalLineIn
+from app.modules.mandir_compat.report_helpers import (
+    accounts_payable_report,
+    accounts_receivable_report,
+    balance_sheet_report,
+    bank_book_report,
+    cash_book_report,
+    category_income_report,
+    day_book_report,
+    detailed_donation_report,
+    detailed_seva_report,
+    donation_category_wise_report,
+    donation_daily_report,
+    donation_monthly_report,
+    journal_entries_report,
+    ledger_report,
+    posted_donations,
+    posted_sevas,
+    profit_loss_report,
+    receipts_payments_report,
+    seva_schedule_report,
+    top_donors_report,
+    trial_balance_report,
+)
 from app.modules.mandir_compat.schemas import (
     MandirFirstLoginOnboardingRequest,
     MandirFirstLoginOnboardingResponse,
@@ -1477,27 +1513,171 @@ async def mandir_inventory_summary(_current_user: dict = Depends(get_current_use
 
 
 @router.get("/journal-entries")
-async def mandir_journal_entries(_current_user: dict = Depends(get_current_user)):
-    return []
+async def mandir_journal_entries(
+    session: AsyncSession = Depends(get_async_session),
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    return await journal_entries_report(session, tenant_id=tenant_id)
+
+
+@router.get("/journal-entries/reports/trial-balance")
+async def mandir_journal_trial_balance(
+    as_of: date,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    return await trial_balance_report(session, tenant_id=tenant_id, as_of=as_of)
+
+
+@router.get("/journal-entries/reports/profit-loss")
+async def mandir_journal_profit_loss(
+    from_date: date = Query(...),
+    to_date: date = Query(...),
+    session: AsyncSession = Depends(get_async_session),
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    return await profit_loss_report(session, tenant_id=tenant_id, from_date=from_date, to_date=to_date)
+
+
+@router.get("/journal-entries/reports/income-expenditure")
+async def mandir_journal_income_expenditure(
+    from_date: date = Query(...),
+    to_date: date = Query(...),
+    session: AsyncSession = Depends(get_async_session),
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    return await profit_loss_report(session, tenant_id=tenant_id, from_date=from_date, to_date=to_date)
+
+
+@router.get("/journal-entries/reports/receipts-payments")
+async def mandir_journal_receipts_payments(
+    from_date: date = Query(...),
+    to_date: date = Query(...),
+    session: AsyncSession = Depends(get_async_session),
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    return await receipts_payments_report(session, tenant_id=tenant_id, from_date=from_date, to_date=to_date)
 
 
 @router.get("/journal-entries/reports/balance-sheet")
-@router.get("/journal-entries/reports/profit-loss")
-@router.get("/journal-entries/reports/trial-balance")
-@router.get("/journal-entries/reports/ledger")
+async def mandir_journal_balance_sheet(
+    as_of: date = Query(...),
+    session: AsyncSession = Depends(get_async_session),
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    return await balance_sheet_report(session, tenant_id=tenant_id, as_of=as_of)
+
+
+@router.get("/journal-entries/reports/accounts-receivable")
+async def mandir_journal_accounts_receivable(
+    as_of: date = Query(...),
+    session: AsyncSession = Depends(get_async_session),
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    return await accounts_receivable_report(session, tenant_id=tenant_id, as_of=as_of)
+
+
+@router.get("/journal-entries/reports/accounts-payable")
+async def mandir_journal_accounts_payable(
+    as_of: date = Query(...),
+    session: AsyncSession = Depends(get_async_session),
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    return await accounts_payable_report(session, tenant_id=tenant_id, as_of=as_of)
+
+
+@router.get("/journal-entries/reports/ledger/{account_id}")
+async def mandir_journal_ledger(
+    account_id: int,
+    from_date: date | None = Query(default=None),
+    to_date: date | None = Query(default=None),
+    session: AsyncSession = Depends(get_async_session),
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    return await ledger_report(session, tenant_id=tenant_id, account_id=account_id, from_date=from_date, to_date=to_date)
+
+
 @router.get("/journal-entries/reports/category-income")
+async def mandir_journal_category_income(
+    from_date: date = Query(...),
+    to_date: date = Query(...),
+    session: AsyncSession = Depends(get_async_session),
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    return await category_income_report(session, tenant_id=tenant_id, app_key=app_key, from_date=from_date, to_date=to_date)
+
+
 @router.get("/journal-entries/reports/top-donors")
+async def mandir_journal_top_donors(
+    from_date: date = Query(...),
+    to_date: date = Query(...),
+    limit: int = Query(default=10, ge=1, le=100),
+    session: AsyncSession = Depends(get_async_session),
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    return await top_donors_report(session, tenant_id=tenant_id, app_key=app_key, from_date=from_date, to_date=to_date, limit=limit)
+
+
 @router.get("/journal-entries/reports/day-book")
+async def mandir_journal_day_book(
+    date: date = Query(...),
+    session: AsyncSession = Depends(get_async_session),
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    return await day_book_report(session, tenant_id=tenant_id, date_value=date)
+
+
 @router.get("/journal-entries/reports/cash-book")
-@router.get("/journal-entries/reports/bank-book")
-@router.get("/journal-entries/reports/day-book/export/pdf")
-@router.get("/journal-entries/reports/day-book/export/excel")
-@router.get("/journal-entries/reports/cash-book/export/pdf")
-@router.get("/journal-entries/reports/cash-book/export/excel")
-@router.get("/journal-entries/reports/bank-book/export/pdf")
-@router.get("/journal-entries/reports/bank-book/export/excel")
-async def mandir_journal_reports(_current_user: dict = Depends(get_current_user)):
-    return {"items": []}
+async def mandir_journal_cash_book(
+    from_date: date = Query(...),
+    to_date: date = Query(...),
+    session: AsyncSession = Depends(get_async_session),
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    return await cash_book_report(session, tenant_id=tenant_id, from_date=from_date, to_date=to_date)
+
+
+@router.get("/journal-entries/reports/bank-book/{account_id}")
+async def mandir_journal_bank_book(
+    account_id: int,
+    from_date: date = Query(...),
+    to_date: date = Query(...),
+    session: AsyncSession = Depends(get_async_session),
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    return await bank_book_report(session, tenant_id=tenant_id, account_id=account_id, from_date=from_date, to_date=to_date)
 
 
 @router.post("/login")
@@ -1550,15 +1730,127 @@ async def mandir_pincode_lookup(pincode: str = Query(...), _current_user: dict =
         "found": found,
     }
 @router.get("/reports/donations/category-wise")
+async def mandir_report_donations_category_wise(
+    from_date: date = Query(...),
+    to_date: date = Query(...),
+    session: AsyncSession = Depends(get_async_session),
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    return await donation_category_wise_report(session, tenant_id=tenant_id, app_key=app_key, from_date=from_date, to_date=to_date)
+
+
 @router.get("/reports/donations/detailed")
+async def mandir_report_donations_detailed(
+    from_date: date = Query(...),
+    to_date: date = Query(...),
+    category: str | None = Query(default=None),
+    payment_mode: str | None = Query(default=None),
+    session: AsyncSession = Depends(get_async_session),
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    return await detailed_donation_report(
+        session,
+        tenant_id=tenant_id,
+        app_key=app_key,
+        from_date=from_date,
+        to_date=to_date,
+        category=category,
+        payment_mode=payment_mode,
+    )
+
+
 @router.get("/reports/sevas/detailed")
+async def mandir_report_sevas_detailed(
+    from_date: date = Query(...),
+    to_date: date = Query(...),
+    status: str | None = Query(default=None),
+    session: AsyncSession = Depends(get_async_session),
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    return await detailed_seva_report(session, tenant_id=tenant_id, app_key=app_key, from_date=from_date, to_date=to_date, status=status)
+
+
 @router.get("/reports/sevas/schedule")
+async def mandir_report_sevas_schedule(
+    days: int = Query(default=3, ge=1, le=30),
+    session: AsyncSession = Depends(get_async_session),
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    return await seva_schedule_report(session, tenant_id=tenant_id, app_key=app_key, days=days)
+
+
 @router.get("/donations/report/daily")
+async def mandir_donations_daily_report(
+    from_date: date = Query(...),
+    to_date: date = Query(...),
+    session: AsyncSession = Depends(get_async_session),
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    return await donation_daily_report(session, tenant_id=tenant_id, app_key=app_key, from_date=from_date, to_date=to_date)
+
+
 @router.get("/donations/report/monthly")
+async def mandir_donations_monthly_report(
+    from_date: date = Query(...),
+    to_date: date = Query(...),
+    session: AsyncSession = Depends(get_async_session),
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    return await donation_monthly_report(session, tenant_id=tenant_id, app_key=app_key, from_date=from_date, to_date=to_date)
+
+
 @router.get("/donations/export/excel")
+async def mandir_donations_export_excel(
+    from_date: date = Query(...),
+    to_date: date = Query(...),
+    session: AsyncSession = Depends(get_async_session),
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    data = await detailed_donation_report(session, tenant_id=tenant_id, app_key=app_key, from_date=from_date, to_date=to_date)
+    return {**data, "export_format": "excel"}
+
+
 @router.get("/donations/export/pdf")
-async def mandir_report_routes(_current_user: dict = Depends(get_current_user)):
-    return {"items": []}
+async def mandir_donations_export_pdf(
+    from_date: date = Query(...),
+    to_date: date = Query(...),
+    session: AsyncSession = Depends(get_async_session),
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    data = await detailed_donation_report(session, tenant_id=tenant_id, app_key=app_key, from_date=from_date, to_date=to_date)
+    return {**data, "export_format": "pdf"}
 
 
 @router.get("/role-permissions")
