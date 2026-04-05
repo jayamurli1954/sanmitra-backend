@@ -12,7 +12,7 @@ Status legend:
 | Route | Status | Evidence |
 |---|---|---|
 | `POST /api/v1/accounts/initialize-default` | real | Live staging now returns seeded COA data and creates 6 default accounts for temple `1`. |
-| `POST /api/v1/accounts/import-legacy` | placeholder | Returns `_ok("accounts/import-legacy")`. |
+| `POST /api/v1/accounts/import-legacy` | real | Loads the checked-in 123-account legacy COA payload and upserts it for the active temple. |
 | `GET /api/v1/accounts` | real | Returns seeded COA rows for the active temple. |
 | `GET /api/v1/accounts/hierarchy` | real | Returns active COA hierarchy for the active temple. |
 | `GET /api/v1/donations/payment-accounts` | real | Returns cash/bank selector data from seeded COA rows. |

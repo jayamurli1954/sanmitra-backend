@@ -44,3 +44,9 @@ SanMitra_PRD.pdf
 SanMitra_Unified_Backend_PRD.docx
 SanMitra_eco_system-merging-note.txt
 START_LEGALMITRA_UNIFIED.bat
+
+
+# Keep tracked legacy COA payload for Mandir compat
+!app/modules/mandir_compat/data/
+!app/modules/mandir_compat/data/legacy_mandir_coa.json
+
