@@ -64,12 +64,12 @@ def _as_float(value: Any, default: float = 0.0) -> float:
 
 
 _MANDIR_ACCOUNT_CODE_ALIASES: dict[str, set[str]] = {
-    "1001": {"cash in hand", "cash"},
-    "1002": {"bank account", "bank"},
-    "1100": {"devotee receivables", "devotee receivable"},
-    "4000": {"donation income", "general donation", "general donation income"},
-    "4100": {"seva income", "pooja revenue", "seva booking revenue", "seva booking income"},
-    "5000": {"temple expenses", "expense"},
+    "11001": {"cash in hand", "cash in hand - counter", "cash"},
+    "12001": {"bank account", "bank - current account", "bank"},
+    "13000": {"devotee receivables", "devotee receivable", "trade receivables", "receivable"},
+    "44001": {"donation income", "general donation", "general donation income", "general donations"},
+    "42002": {"seva income", "seva income - general", "pooja revenue", "seva booking revenue", "seva booking income"},
+    "54012": {"temple expenses", "miscellaneous expenses", "expense"},
 }
 
 
@@ -88,9 +88,12 @@ def _fallback_account_code(account_code: Any, account_name: Any, account_id: Any
             break
 
     if raw_code:
-        # Legacy SQL seeds sometimes wrote short surrogate codes ("1", "2", "8")
-        # while names still point to canonical COA buckets. Prefer canonical code then.
-        if raw_code.isdigit() and len(raw_code) <= 3 and alias_match:
+        normalized_raw = raw_code.upper()
+        # Normalize legacy/surrogate/non-canonical income and summary codes to canonical 5-digit COA codes.
+        if alias_match and (
+            normalized_raw.startswith("INC-M-")
+            or (raw_code.isdigit() and len(raw_code) < 5)
+        ):
             return alias_match
         return raw_code
 

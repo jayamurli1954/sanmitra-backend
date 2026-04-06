@@ -219,7 +219,7 @@ async def test_trial_balance_report_backfills_known_account_codes(monkeypatch):
     )
 
     codes = [line['account_code'] for line in payload['lines']]
-    assert codes == ['1001', '4000', '4100']
+    assert codes == ['11001', '44001', '42002']
     assert payload['accounts'] == payload['lines']
 
 
@@ -276,5 +276,5 @@ async def test_ledger_report_uses_fallback_code_for_resolved_account(monkeypatch
         to_date=date.today(),
     )
 
-    assert payload['account_code'] == '1001'
+    assert payload['account_code'] == '11001'
     assert len(payload['entries']) == 1

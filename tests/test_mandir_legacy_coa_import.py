@@ -75,6 +75,11 @@ async def test_import_legacy_coa_seeds_full_chart(monkeypatch):
 
     monkeypatch.setattr(mandir_router, "_sync_mandir_sql_accounts_from_seed", fake_sync_sql_accounts_from_seed)
 
+    async def fake_normalize_income(_session, _tenant_id):
+        return {"remapped_lines": 0}
+
+    monkeypatch.setattr(mandir_router, "_normalize_mandir_income_accounts", fake_normalize_income)
+
     response = await mandir_router.mandir_accounts_import_legacy(
         payload=None,
         session=object(),

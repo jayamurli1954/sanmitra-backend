@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Request, Response, UploadFile
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from decimal import Decimal
 
@@ -78,11 +78,23 @@ logger = logging.getLogger(__name__)
 
 
 _MANDIR_CANONICAL_INCOME_CODES: dict[str, tuple[str, str]] = {
-    'general donation': ('4000', 'Donation Income'),
-    'donation income': ('4000', 'Donation Income'),
-    'seva booking revenue': ('4100', 'Seva Income'),
-    'pooja revenue': ('4100', 'Seva Income'),
-    'seva income': ('4100', 'Seva Income'),
+    'general donation': ('44001', 'General Donations'),
+    'donation income': ('44001', 'General Donations'),
+    'general donations': ('44001', 'General Donations'),
+    'seva booking revenue': ('42002', 'Seva Income - General'),
+    'pooja revenue': ('42002', 'Seva Income - General'),
+    'seva income': ('42002', 'Seva Income - General'),
+    'seva income - general': ('42002', 'Seva Income - General'),
+}
+
+_MANDIR_INCOME_BUCKET_ALIASES: dict[str, set[str]] = {
+    'donation': {'general donation', 'donation income', 'general donations'},
+    'seva': {'seva income', 'seva income - general', 'seva booking revenue', 'pooja revenue'},
+}
+
+_MANDIR_INCOME_LEGACY_CODES: dict[str, set[str]] = {
+    'donation': {'4000'},
+    'seva': {'4100'},
 }
 
 
@@ -90,21 +102,114 @@ def _normalize_income_category(value: Any) -> str:
     return ' '.join(str(value or '').strip().lower().split())
 
 
+def _mandir_income_bucket_for_account(name: Any, code: Any) -> str | None:
+    normalized_name = _normalize_income_category(name)
+    code_text = str(code or '').strip()
+
+    if code_text in {'44001', *(_MANDIR_INCOME_LEGACY_CODES.get('donation') or set())}:
+        return 'donation'
+    if code_text in {'42002', *(_MANDIR_INCOME_LEGACY_CODES.get('seva') or set())}:
+        return 'seva'
+
+    if any(alias in normalized_name for alias in _MANDIR_INCOME_BUCKET_ALIASES['donation']):
+        return 'donation'
+    if any(alias in normalized_name for alias in _MANDIR_INCOME_BUCKET_ALIASES['seva']):
+        return 'seva'
+    return None
+
+
+async def _normalize_mandir_income_accounts(session: AsyncSession, tenant_id: str) -> dict[str, int]:
+    canonical_targets = {
+        'donation': ('44001', 'General Donations'),
+        'seva': ('42002', 'Seva Income - General'),
+    }
+
+    accounts = await list_accounts(session, tenant_id=tenant_id)
+    income_accounts = [acc for acc in accounts if str(acc.type or '').strip().lower() == 'income']
+
+    canonical_by_bucket: dict[str, Account] = {}
+    dirty = False
+    remapped_lines = 0
+
+    for bucket, (target_code, target_name) in canonical_targets.items():
+        canonical = next((acc for acc in income_accounts if str(acc.code or '').strip() == target_code), None)
+
+        if canonical is None:
+            candidate = next(
+                (
+                    acc
+                    for acc in income_accounts
+                    if _mandir_income_bucket_for_account(acc.name, acc.code) == bucket
+                ),
+                None,
+            )
+            if candidate is not None:
+                candidate.code = target_code
+                candidate.name = target_name
+                candidate.type = 'income'
+                candidate.classification = 'nominal'
+                canonical = candidate
+                dirty = True
+            else:
+                canonical = await create_account(
+                    session,
+                    tenant_id=tenant_id,
+                    code=target_code,
+                    name=target_name,
+                    account_type='income',
+                    classification='nominal',
+                    is_cash_bank=False,
+                    is_receivable=False,
+                    is_payable=False,
+                )
+                accounts = await list_accounts(session, tenant_id=tenant_id)
+                income_accounts = [acc for acc in accounts if str(acc.type or '').strip().lower() == 'income']
+
+        canonical_by_bucket[bucket] = canonical
+
+    for bucket, canonical in canonical_by_bucket.items():
+        duplicate_ids = [
+            int(acc.id)
+            for acc in income_accounts
+            if int(acc.id) != int(canonical.id)
+            and _mandir_income_bucket_for_account(acc.name, acc.code) == bucket
+        ]
+        if not duplicate_ids:
+            continue
+
+        tenant_journal_ids = select(JournalEntry.id).where(JournalEntry.tenant_id == tenant_id)
+        remap_stmt = (
+            update(JournalLine)
+            .where(
+                JournalLine.account_id.in_(duplicate_ids),
+                JournalLine.journal_id.in_(tenant_journal_ids),
+            )
+            .values(account_id=int(canonical.id))
+        )
+        result = await session.execute(remap_stmt)
+        changed = int(result.rowcount or 0)
+        if changed > 0:
+            remapped_lines += changed
+            dirty = True
+
+    if dirty:
+        await session.commit()
+
+    return {'remapped_lines': remapped_lines}
+
+
 async def _resolve_mandir_income_account(session: AsyncSession, tenant_id: str, category_name: str) -> int:
     normalized_category = _normalize_income_category(category_name)
     preferred_code, preferred_name = _MANDIR_CANONICAL_INCOME_CODES.get(
         normalized_category,
-        ('4100', 'Seva Income') if any(token in normalized_category for token in ('seva', 'pooja')) else ('4000', 'Donation Income'),
+        ('42002', 'Seva Income - General') if any(token in normalized_category for token in ('seva', 'pooja')) else ('44001', 'General Donations'),
     )
 
+    await _normalize_mandir_income_accounts(session, tenant_id)
+
     accounts = await list_accounts(session, tenant_id=tenant_id)
-
     for acc in accounts:
-        if acc.type == 'income' and str(acc.code or '').strip() == preferred_code:
-            return int(acc.id)
-
-    for acc in accounts:
-        if acc.type == 'income' and _normalize_income_category(acc.name) == normalized_category:
+        if str(acc.type or '').strip().lower() == 'income' and str(acc.code or '').strip() == preferred_code:
             return int(acc.id)
 
     new_acc = await create_account(
@@ -157,10 +262,32 @@ async def _resolve_mandir_payment_account_id(
     mode = str(payment_mode or "").strip().lower()
 
     if mode == "cash":
+        for preferred_code in ("11001", "1001"):
+            preferred = next(
+                (
+                    acc
+                    for acc in accounts
+                    if acc.is_cash_bank and str(acc.code or "").strip() == preferred_code
+                ),
+                None,
+            )
+            if preferred is not None:
+                return int(preferred.id)
         for acc in accounts:
             if acc.is_cash_bank and "cash" in str(acc.name).lower():
                 return int(acc.id)
     elif mode == "bank":
+        for preferred_code in ("12001", "1002"):
+            preferred = next(
+                (
+                    acc
+                    for acc in accounts
+                    if acc.is_cash_bank and str(acc.code or "").strip() == preferred_code
+                ),
+                None,
+            )
+            if preferred is not None:
+                return int(preferred.id)
         for acc in accounts:
             if acc.is_cash_bank and "bank" in str(acc.name).lower():
                 return int(acc.id)
@@ -174,9 +301,9 @@ async def _resolve_mandir_payment_account_id(
 
 MANDIR_DEFAULT_ACCOUNTS: list[dict[str, Any]] = [
     {
-        "account_id": 1001,
-        "account_code": "1001",
-        "account_name": "Cash in Hand",
+        "account_id": 11001,
+        "account_code": "11001",
+        "account_name": "Cash in Hand - Counter",
         "account_type": "asset",
         "classification": "real",
         "is_cash_bank": True,
@@ -186,9 +313,9 @@ MANDIR_DEFAULT_ACCOUNTS: list[dict[str, Any]] = [
         "is_system_account": True,
     },
     {
-        "account_id": 1002,
-        "account_code": "1002",
-        "account_name": "Bank Account",
+        "account_id": 12001,
+        "account_code": "12001",
+        "account_name": "Bank - Current Account",
         "account_type": "asset",
         "classification": "real",
         "is_cash_bank": True,
@@ -198,9 +325,9 @@ MANDIR_DEFAULT_ACCOUNTS: list[dict[str, Any]] = [
         "is_system_account": True,
     },
     {
-        "account_id": 1100,
-        "account_code": "1100",
-        "account_name": "Devotee Receivables",
+        "account_id": 13000,
+        "account_code": "13000",
+        "account_name": "Trade Receivables",
         "account_type": "asset",
         "classification": "real",
         "is_cash_bank": False,
@@ -210,9 +337,9 @@ MANDIR_DEFAULT_ACCOUNTS: list[dict[str, Any]] = [
         "is_system_account": True,
     },
     {
-        "account_id": 4000,
-        "account_code": "4000",
-        "account_name": "Donation Income",
+        "account_id": 44001,
+        "account_code": "44001",
+        "account_name": "General Donations",
         "account_type": "income",
         "classification": "nominal",
         "is_cash_bank": False,
@@ -222,9 +349,9 @@ MANDIR_DEFAULT_ACCOUNTS: list[dict[str, Any]] = [
         "is_system_account": True,
     },
     {
-        "account_id": 4100,
-        "account_code": "4100",
-        "account_name": "Seva Income",
+        "account_id": 42002,
+        "account_code": "42002",
+        "account_name": "Seva Income - General",
         "account_type": "income",
         "classification": "nominal",
         "is_cash_bank": False,
@@ -234,9 +361,9 @@ MANDIR_DEFAULT_ACCOUNTS: list[dict[str, Any]] = [
         "is_system_account": True,
     },
     {
-        "account_id": 5000,
-        "account_code": "5000",
-        "account_name": "Temple Expenses",
+        "account_id": 54012,
+        "account_code": "54012",
+        "account_name": "Miscellaneous Expenses",
         "account_type": "expense",
         "classification": "nominal",
         "is_cash_bank": False,
@@ -246,6 +373,11 @@ MANDIR_DEFAULT_ACCOUNTS: list[dict[str, Any]] = [
         "is_system_account": True,
     },
 ]
+
+
+def _mandir_seed_accounts() -> list[dict[str, Any]]:
+    legacy = _load_mandir_legacy_accounts()
+    return legacy if legacy else MANDIR_DEFAULT_ACCOUNTS
 
 
 def _mandir_account_view(doc: dict[str, Any]) -> dict[str, Any]:
@@ -276,7 +408,7 @@ def _mandir_account_view(doc: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _ensure_default_mandir_accounts(tenant_id: str, app_key: str) -> int:
-    result = await _upsert_mandir_account_docs(tenant_id, app_key, MANDIR_DEFAULT_ACCOUNTS)
+    result = await _upsert_mandir_account_docs(tenant_id, app_key, _mandir_seed_accounts())
     return result["created"]
 
 
@@ -328,7 +460,9 @@ async def _sync_mandir_sql_accounts_from_seed(
                 (
                     acc
                     for acc in candidates
-                    if not str(acc.code or "").strip() or (str(acc.code or "").strip().isdigit() and len(str(acc.code or "").strip()) <= 3)
+                    if (not str(acc.code or "").strip())
+                    or str(acc.code or "").strip().upper().startswith("INC-M-")
+                    or (str(acc.code or "").strip().isdigit() and len(str(acc.code or "").strip()) < 5)
                 ),
                 None,
             )
@@ -395,8 +529,14 @@ async def _ensure_default_mandir_sql_accounts(session: AsyncSession, tenant_id: 
     await _sync_mandir_sql_accounts_from_seed(
         session,
         tenant_id=tenant_id,
-        seed_rows=MANDIR_DEFAULT_ACCOUNTS,
+        seed_rows=_mandir_seed_accounts(),
     )
+    await _normalize_mandir_income_accounts(session, tenant_id)
+
+async def _ensure_default_mandir_sql_accounts_safe(session: AsyncSession, tenant_id: str) -> None:
+    if not hasattr(session, 'execute'):
+        return
+    await _ensure_default_mandir_sql_accounts(session, tenant_id)
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
     try:
@@ -1023,8 +1163,8 @@ async def _payment_accounts(tenant_id: str, app_key: str) -> dict[str, list[dict
         cash_accounts = [{
             "id": "cash-main",
             "account_id": "cash-main",
-            "account_code": "1001",
-            "account_name": "Cash Account",
+            "account_code": "11001",
+            "account_name": "Cash in Hand - Counter",
             "account_type": "asset",
             "cash_bank_nature": "cash",
             "is_cash_bank": True,
@@ -1163,7 +1303,7 @@ async def create_donation(
 ):
     tenant_id = resolve_tenant_id(current_user, x_tenant_id)
     app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
-    await _ensure_default_mandir_sql_accounts(session, tenant_id)
+    await _ensure_default_mandir_sql_accounts_safe(session, tenant_id)
 
     donation_id = str(uuid4())
     now = datetime.utcnow().isoformat()
@@ -1213,7 +1353,7 @@ async def create_donation(
             raise HTTPException(status_code=400, detail="No valid cash/bank account is configured for donation posting")
 
         try:
-            income_acc_id = await _resolve_mandir_income_account(session, tenant_id, category)
+            income_acc_id = await _resolve_mandir_income_account(session, tenant_id, "General Donations")
             journal_payload = JournalPostRequest(
                 entry_date=datetime.utcnow().date(),
                 description=f"{category} from {donation['devotee']['name']}",
@@ -1250,7 +1390,7 @@ async def reconcile_donation_posting(
     """
     tenant_id = resolve_tenant_id(current_user, x_tenant_id)
     app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
-    await _ensure_default_mandir_sql_accounts(session, tenant_id)
+    await _ensure_default_mandir_sql_accounts_safe(session, tenant_id)
 
     col = get_collection("mandir_donations")
     try:
@@ -1302,7 +1442,7 @@ async def reconcile_donation_posting(
                 raise ValueError("No valid cash/bank account is configured for donation posting")
 
             category = str(doc.get("category") or "General Donation")
-            income_acc_id = await _resolve_mandir_income_account(session, tenant_id, category)
+            income_acc_id = await _resolve_mandir_income_account(session, tenant_id, "General Donations")
             devotee = doc.get("devotee") if isinstance(doc.get("devotee"), dict) else {}
             devotee_name = str(devotee.get("name") or doc.get("devotee_name") or "Devotee")
 
@@ -1843,6 +1983,7 @@ async def mandir_accounts_import_legacy(
         tenant_id=tenant_id,
         seed_rows=normalized_seed_rows,
     )
+    await _normalize_mandir_income_accounts(session, tenant_id)
     return _ok(
         "accounts/import-legacy",
         message="Legacy accounts imported",
@@ -1863,12 +2004,14 @@ async def mandir_accounts_initialize_default(
 ):
     tenant_id = resolve_tenant_id(_current_user, None)
     app_key = resolve_app_key((_current_user.get("app_key") or "mandirmitra").strip())
-    mongo_result = await _upsert_mandir_account_docs(tenant_id, app_key, MANDIR_DEFAULT_ACCOUNTS)
+    seed_rows = _mandir_seed_accounts()
+    mongo_result = await _upsert_mandir_account_docs(tenant_id, app_key, seed_rows)
     sql_result = await _sync_mandir_sql_accounts_from_seed(
         session,
         tenant_id=tenant_id,
-        seed_rows=MANDIR_DEFAULT_ACCOUNTS,
+        seed_rows=seed_rows,
     )
+    await _normalize_mandir_income_accounts(session, tenant_id)
     return _ok(
         "accounts/initialize-default",
         message="Default accounts initialized",
@@ -2041,6 +2184,7 @@ async def mandir_journal_trial_balance(
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
 ):
     tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    await _ensure_default_mandir_sql_accounts_safe(session, tenant_id)
     try:
         return await trial_balance_report(session, tenant_id=tenant_id, as_of=as_of)
     except (ConnectionRefusedError, OSError, SQLAlchemyError) as exc:
@@ -2057,6 +2201,7 @@ async def mandir_journal_profit_loss(
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
 ):
     tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    await _ensure_default_mandir_sql_accounts_safe(session, tenant_id)
     return await profit_loss_report(session, tenant_id=tenant_id, from_date=from_date, to_date=to_date)
 
 
@@ -2069,6 +2214,7 @@ async def mandir_journal_income_expenditure(
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
 ):
     tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    await _ensure_default_mandir_sql_accounts_safe(session, tenant_id)
     return await profit_loss_report(session, tenant_id=tenant_id, from_date=from_date, to_date=to_date)
 
 
@@ -2081,6 +2227,7 @@ async def mandir_journal_receipts_payments(
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
 ):
     tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    await _ensure_default_mandir_sql_accounts_safe(session, tenant_id)
     return await receipts_payments_report(session, tenant_id=tenant_id, from_date=from_date, to_date=to_date)
 
 
@@ -2092,6 +2239,7 @@ async def mandir_journal_balance_sheet(
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
 ):
     tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    await _ensure_default_mandir_sql_accounts_safe(session, tenant_id)
     return await balance_sheet_report(session, tenant_id=tenant_id, as_of=as_of)
 
 
@@ -2103,6 +2251,7 @@ async def mandir_journal_accounts_receivable(
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
 ):
     tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    await _ensure_default_mandir_sql_accounts_safe(session, tenant_id)
     return await accounts_receivable_report(session, tenant_id=tenant_id, as_of=as_of)
 
 
@@ -2114,6 +2263,7 @@ async def mandir_journal_accounts_payable(
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
 ):
     tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    await _ensure_default_mandir_sql_accounts_safe(session, tenant_id)
     return await accounts_payable_report(session, tenant_id=tenant_id, as_of=as_of)
 
 
@@ -2127,6 +2277,7 @@ async def mandir_journal_ledger(
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
 ):
     tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    await _ensure_default_mandir_sql_accounts_safe(session, tenant_id)
     return await ledger_report(session, tenant_id=tenant_id, account_id=account_id, from_date=from_date, to_date=to_date)
 
 
@@ -2167,6 +2318,7 @@ async def mandir_journal_day_book(
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
 ):
     tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    await _ensure_default_mandir_sql_accounts_safe(session, tenant_id)
     return await day_book_report(session, tenant_id=tenant_id, date_value=date)
 
 
@@ -2179,6 +2331,7 @@ async def mandir_journal_cash_book(
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
 ):
     tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    await _ensure_default_mandir_sql_accounts_safe(session, tenant_id)
     return await cash_book_report(session, tenant_id=tenant_id, from_date=from_date, to_date=to_date)
 
 
@@ -2192,6 +2345,7 @@ async def mandir_journal_bank_book(
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
 ):
     tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    await _ensure_default_mandir_sql_accounts_safe(session, tenant_id)
     return await bank_book_report(session, tenant_id=tenant_id, account_id=account_id, from_date=from_date, to_date=to_date)
 
 
@@ -2574,21 +2728,19 @@ async def create_seva_booking(
 ):
     tenant_id = resolve_tenant_id(current_user, x_tenant_id)
     app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
-    await _ensure_default_mandir_sql_accounts(session, tenant_id)
+    await _ensure_default_mandir_sql_accounts_safe(session, tenant_id)
 
     booking_id = str(uuid4())
     now = datetime.utcnow().isoformat()
     amount = _safe_float(payload.get("amount_paid") or payload.get("amount"), 0.0)
     payment_mode = str(payload.get("payment_mode") or payload.get("payment_method") or "Cash")
-
-    
     seva_id = payload.get("seva_id")
-    seva_category = "Seva Booking Revenue"
+    seva_name = str(payload.get("seva_name") or "Seva Booking")
     col_sevas = get_collection("mandir_sevas")
     if seva_id:
         seva_doc = await col_sevas.find_one({"id": str(seva_id), "tenant_id": tenant_id})
-        if seva_doc and seva_doc.get("category"):
-            seva_category = str(seva_doc["category"]).replace("_", " ").title() + " Revenue"
+        if seva_doc and seva_doc.get("name"):
+            seva_name = str(seva_doc["name"])
 
     booking = {
         "id": booking_id,
@@ -2619,11 +2771,11 @@ async def create_seva_booking(
             raise HTTPException(status_code=400, detail="No valid cash/bank account is configured for seva posting")
 
         try:
-            income_acc_id = await _resolve_mandir_income_account(session, tenant_id, seva_category)
+            income_acc_id = await _resolve_mandir_income_account(session, tenant_id, "Seva Income - General")
             devotee_names = str(payload.get("devotee_names") or "Devotee")
             journal_payload = JournalPostRequest(
                 entry_date=datetime.utcnow().date(),
-                description=f"{seva_category} - {devotee_names}",
+                description=f"Seva Booking ({seva_name}) - {devotee_names}",
                 reference=f"SEV-{booking_id[:8].upper()}",
                 lines=[
                     JournalLineIn(account_id=resolved_account_id, debit=Decimal(str(amount)), credit=Decimal("0")),
@@ -2679,4 +2831,3 @@ async def mandir_seva_reschedule_pending(
 @router.get("/users/me")
 async def mandir_users_me(current_user: dict = Depends(get_current_user)):
     return current_user
-
