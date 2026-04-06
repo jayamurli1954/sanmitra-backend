@@ -1,10 +1,11 @@
-﻿from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 import pytest
 
 import app.modules.mandir_compat.report_helpers as report_helpers
+import app.modules.mandir_compat.router as mandir_router
 from app.core.auth.dependencies import get_current_user
 from app.db.postgres import get_async_session
 from app.main import app
@@ -124,3 +125,43 @@ def test_seva_schedule_report_route_returns_posted_rows(report_client):
     assert payload['total_bookings'] == 1
     assert payload['schedule'][0]['seva_name'] == 'Sarva Seve'
     assert payload['schedule'][0]['status'] in {'Today', 'Upcoming'}
+
+
+def test_daily_report_accepts_legacy_date_query(report_client):
+    today = date.today().isoformat()
+    response = report_client.get('/api/v1/donations/report/daily', params={'date': today})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload['total'] == 25000.0
+    assert payload['count'] == 1
+    assert isinstance(payload.get('by_category'), list)
+
+
+def test_monthly_report_accepts_legacy_month_year_query(report_client):
+    today = date.today()
+    response = report_client.get(
+        '/api/v1/donations/report/monthly',
+        params={'month': today.month, 'year': today.year},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload['total'] == 25000.0
+    assert payload['count'] == 1
+    assert isinstance(payload.get('by_category'), list)
+
+
+def test_trial_balance_returns_503_when_db_connection_fails(report_client, monkeypatch):
+    async def _raise_connection_error(_session, *, tenant_id, as_of):
+        raise ConnectionRefusedError('postgres connection refused')
+
+    monkeypatch.setattr(mandir_router, 'trial_balance_report', _raise_connection_error)
+
+    response = report_client.get(
+        '/api/v1/journal-entries/reports/trial-balance',
+        params={'as_of': date.today().isoformat()},
+    )
+
+    assert response.status_code == 503
+    assert 'database unavailable' in response.json().get('detail', '').lower()

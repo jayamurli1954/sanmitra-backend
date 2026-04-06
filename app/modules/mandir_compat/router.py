@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import calendar
 import json
+import logging
 from datetime import date, datetime
 from io import StringIO
 import csv
@@ -12,6 +14,7 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Request, Response, UploadFile
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from decimal import Decimal
@@ -71,6 +74,7 @@ from app.modules.mandir_compat.service import (
 router = APIRouter(tags=["mandir-compat"])
 MANDIR_COMPAT_DATA_DIR = Path(__file__).resolve().parent / "data"
 MANDIR_LEGACY_COA_PATH = MANDIR_COMPAT_DATA_DIR / "legacy_mandir_coa.json"
+logger = logging.getLogger(__name__)
 
 
 async def _resolve_mandir_income_account(session: AsyncSession, tenant_id: str, category_name: str) -> int:
@@ -579,6 +583,92 @@ def _compute_seva_available_today(row: dict[str, Any]) -> bool:
         return False
     return True
 
+def _resolve_report_date_window(
+    *,
+    from_date: date | None,
+    to_date: date | None,
+    single_date: date | None = None,
+    month: int | None = None,
+    year: int | None = None,
+) -> tuple[date, date]:
+    if single_date is not None:
+        return single_date, single_date
+
+    if from_date is not None and to_date is not None:
+        if from_date > to_date:
+            raise HTTPException(status_code=422, detail="from_date cannot be greater than to_date")
+        return from_date, to_date
+
+    if month is not None or year is not None:
+        resolved_year = year or datetime.utcnow().year
+        if month is None:
+            start = date(resolved_year, 1, 1)
+            end = date(resolved_year, 12, 31)
+            return start, end
+
+        _, last_day = calendar.monthrange(resolved_year, month)
+        start = date(resolved_year, month, 1)
+        end = date(resolved_year, month, last_day)
+        return start, end
+
+    if from_date is not None and to_date is None:
+        return from_date, from_date
+    if to_date is not None and from_date is None:
+        return to_date, to_date
+
+    raise HTTPException(
+        status_code=422,
+        detail="Provide either date, from_date/to_date, or month/year query parameters",
+    )
+
+
+def _resolve_export_window(
+    *,
+    from_date: date | None,
+    to_date: date | None,
+    date_from: date | None,
+    date_to: date | None,
+) -> tuple[date, date]:
+    start = from_date or date_from
+    end = to_date or date_to
+    if start is None or end is None:
+        raise HTTPException(status_code=422, detail="from_date/to_date (or date_from/date_to) are required")
+    if start > end:
+        raise HTTPException(status_code=422, detail="from_date cannot be greater than to_date")
+    return start, end
+
+
+async def _dashboard_posted_stats(
+    *,
+    session: AsyncSession,
+    tenant_id: str,
+    app_key: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    today = datetime.utcnow().date()
+    start_of_year = date(today.year, 1, 1)
+    try:
+        donations = await posted_donations(
+            session,
+            tenant_id=tenant_id,
+            app_key=app_key,
+            from_date=start_of_year,
+            to_date=today,
+        )
+    except Exception:
+        donations = []
+
+    try:
+        sevas = await posted_sevas(
+            session,
+            tenant_id=tenant_id,
+            app_key=app_key,
+            from_date=start_of_year,
+            to_date=today,
+        )
+    except Exception:
+        sevas = []
+
+    return donations, sevas
 
 def _canonical_seva_name(payload: dict[str, Any]) -> str:
     name = str(payload.get("name_english") or payload.get("name") or payload.get("seva_name") or "Seva").strip()
@@ -809,6 +899,7 @@ async def _payment_accounts(tenant_id: str, app_key: str) -> dict[str, list[dict
 
 @router.get("/dashboard/stats")
 async def dashboard_stats(
+    session: AsyncSession = Depends(get_async_session),
     current_user: dict = Depends(get_current_user),
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
     x_app_key: str | None = Header(default=None, alias="X-App-Key"),
@@ -821,17 +912,7 @@ async def dashboard_stats(
     month = now.strftime("%Y-%m")
     year = now.year
 
-    try:
-        donations_col = get_collection("mandir_donations")
-        donations = await donations_col.find({"tenant_id": tenant_id, "app_key": app_key}).to_list(length=5000)
-    except Exception:
-        donations = []
-
-    try:
-        bookings_col = get_collection("mandir_seva_bookings")
-        sevas = await bookings_col.find({"tenant_id": tenant_id, "app_key": app_key}).to_list(length=5000)
-    except Exception:
-        sevas = []
+    donations, sevas = await _dashboard_posted_stats(session=session, tenant_id=tenant_id, app_key=app_key)
 
     def summarize(rows: list[dict[str, Any]]) -> dict[str, dict[str, float | int]]:
         out = {
@@ -840,7 +921,7 @@ async def dashboard_stats(
             "year": {"amount": 0.0, "count": 0},
         }
         for row in rows:
-            created = str(row.get("created_at") or row.get("date") or "")
+            created = str(row.get("created_at") or row.get("date") or row.get("booking_date") or "")
             amount = _safe_float(row.get("amount"), 0.0)
             if created[:10] == today:
                 out["today"]["amount"] += amount
@@ -1684,7 +1765,11 @@ async def mandir_journal_trial_balance(
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
 ):
     tenant_id = resolve_tenant_id(current_user, x_tenant_id)
-    return await trial_balance_report(session, tenant_id=tenant_id, as_of=as_of)
+    try:
+        return await trial_balance_report(session, tenant_id=tenant_id, as_of=as_of)
+    except (ConnectionRefusedError, OSError, SQLAlchemyError) as exc:
+        logger.exception("Trial balance query failed", extra={"tenant_id": tenant_id, "as_of": as_of.isoformat()})
+        raise HTTPException(status_code=503, detail="Accounting database unavailable. Please retry shortly.") from exc
 
 
 @router.get("/journal-entries/reports/profit-loss")
@@ -1951,59 +2036,97 @@ async def mandir_report_sevas_schedule(
 
 @router.get("/donations/report/daily")
 async def mandir_donations_daily_report(
-    from_date: date = Query(...),
-    to_date: date = Query(...),
+    from_date: date | None = Query(default=None),
+    to_date: date | None = Query(default=None),
+    date_value: date | None = Query(default=None, alias="date"),
     session: AsyncSession = Depends(get_async_session),
     current_user: dict = Depends(get_current_user),
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
     x_app_key: str | None = Header(default=None, alias="X-App-Key"),
 ):
+    start_date, end_date = _resolve_report_date_window(from_date=from_date, to_date=to_date, single_date=date_value)
     tenant_id = resolve_tenant_id(current_user, x_tenant_id)
     app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
-    return await donation_daily_report(session, tenant_id=tenant_id, app_key=app_key, from_date=from_date, to_date=to_date)
+    data = await donation_daily_report(session, tenant_id=tenant_id, app_key=app_key, from_date=start_date, to_date=end_date)
+    category_data = await donation_category_wise_report(
+        session,
+        tenant_id=tenant_id,
+        app_key=app_key,
+        from_date=start_date,
+        to_date=end_date,
+    )
+    data["total"] = data.get("total_amount", 0.0)
+    data["count"] = data.get("total_count", 0)
+    data["by_category"] = category_data.get("categories", [])
+    return data
 
 
 @router.get("/donations/report/monthly")
 async def mandir_donations_monthly_report(
-    from_date: date = Query(...),
-    to_date: date = Query(...),
+    from_date: date | None = Query(default=None),
+    to_date: date | None = Query(default=None),
+    month: int | None = Query(default=None, ge=1, le=12),
+    year: int | None = Query(default=None, ge=1900, le=3000),
     session: AsyncSession = Depends(get_async_session),
     current_user: dict = Depends(get_current_user),
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
     x_app_key: str | None = Header(default=None, alias="X-App-Key"),
 ):
+    start_date, end_date = _resolve_report_date_window(
+        from_date=from_date,
+        to_date=to_date,
+        month=month,
+        year=year,
+    )
     tenant_id = resolve_tenant_id(current_user, x_tenant_id)
     app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
-    return await donation_monthly_report(session, tenant_id=tenant_id, app_key=app_key, from_date=from_date, to_date=to_date)
+    data = await donation_monthly_report(session, tenant_id=tenant_id, app_key=app_key, from_date=start_date, to_date=end_date)
+    category_data = await donation_category_wise_report(
+        session,
+        tenant_id=tenant_id,
+        app_key=app_key,
+        from_date=start_date,
+        to_date=end_date,
+    )
+    data["total"] = data.get("total_amount", 0.0)
+    data["count"] = data.get("total_count", 0)
+    data["by_category"] = category_data.get("categories", [])
+    return data
 
 
 @router.get("/donations/export/excel")
 async def mandir_donations_export_excel(
-    from_date: date = Query(...),
-    to_date: date = Query(...),
+    from_date: date | None = Query(default=None),
+    to_date: date | None = Query(default=None),
+    date_from: date | None = Query(default=None),
+    date_to: date | None = Query(default=None),
     session: AsyncSession = Depends(get_async_session),
     current_user: dict = Depends(get_current_user),
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
     x_app_key: str | None = Header(default=None, alias="X-App-Key"),
 ):
+    start_date, end_date = _resolve_export_window(from_date=from_date, to_date=to_date, date_from=date_from, date_to=date_to)
     tenant_id = resolve_tenant_id(current_user, x_tenant_id)
     app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
-    data = await detailed_donation_report(session, tenant_id=tenant_id, app_key=app_key, from_date=from_date, to_date=to_date)
+    data = await detailed_donation_report(session, tenant_id=tenant_id, app_key=app_key, from_date=start_date, to_date=end_date)
     return {**data, "export_format": "excel"}
 
 
 @router.get("/donations/export/pdf")
 async def mandir_donations_export_pdf(
-    from_date: date = Query(...),
-    to_date: date = Query(...),
+    from_date: date | None = Query(default=None),
+    to_date: date | None = Query(default=None),
+    date_from: date | None = Query(default=None),
+    date_to: date | None = Query(default=None),
     session: AsyncSession = Depends(get_async_session),
     current_user: dict = Depends(get_current_user),
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
     x_app_key: str | None = Header(default=None, alias="X-App-Key"),
 ):
+    start_date, end_date = _resolve_export_window(from_date=from_date, to_date=to_date, date_from=date_from, date_to=date_to)
     tenant_id = resolve_tenant_id(current_user, x_tenant_id)
     app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
-    data = await detailed_donation_report(session, tenant_id=tenant_id, app_key=app_key, from_date=from_date, to_date=to_date)
+    data = await detailed_donation_report(session, tenant_id=tenant_id, app_key=app_key, from_date=start_date, to_date=end_date)
     return {**data, "export_format": "pdf"}
 
 
@@ -2279,3 +2402,6 @@ async def mandir_seva_reschedule_pending(
 @router.get("/users/me")
 async def mandir_users_me(current_user: dict = Depends(get_current_user)):
     return current_user
+
+
+
