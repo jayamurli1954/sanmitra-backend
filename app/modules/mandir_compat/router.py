@@ -94,6 +94,61 @@ async def _resolve_mandir_income_account(session: AsyncSession, tenant_id: str, 
     return new_acc.id
 
 
+async def _resolve_mandir_payment_account_id(
+    session: AsyncSession,
+    tenant_id: str,
+    raw_account_id: Any,
+    payment_mode: str | None,
+) -> int | None:
+    if raw_account_id is None:
+        return None
+
+    raw_value = str(raw_account_id).strip()
+    if not raw_value:
+        return None
+
+    maybe_id = _safe_optional_int(raw_value)
+    if maybe_id:
+        by_id_stmt = select(Account.id).where(
+            Account.tenant_id == tenant_id,
+            Account.id == maybe_id,
+        )
+        by_id = (await session.execute(by_id_stmt)).scalar_one_or_none()
+        if by_id is not None:
+            return int(by_id)
+
+    code_candidate = raw_value
+    if " - " in raw_value:
+        code_candidate = raw_value.split(" - ", 1)[0].strip()
+
+    if code_candidate.isdigit():
+        by_code_stmt = select(Account.id).where(
+            Account.tenant_id == tenant_id,
+            Account.code == code_candidate,
+        )
+        by_code = (await session.execute(by_code_stmt)).scalar_one_or_none()
+        if by_code is not None:
+            return int(by_code)
+
+    accounts = await list_accounts(session, tenant_id=tenant_id)
+    mode = str(payment_mode or "").strip().lower()
+
+    if mode == "cash":
+        for acc in accounts:
+            if acc.is_cash_bank and "cash" in str(acc.name).lower():
+                return int(acc.id)
+    elif mode == "bank":
+        for acc in accounts:
+            if acc.is_cash_bank and "bank" in str(acc.name).lower():
+                return int(acc.id)
+
+    for acc in accounts:
+        if acc.is_cash_bank:
+            return int(acc.id)
+
+    return None
+
+
 MANDIR_DEFAULT_ACCOUNTS: list[dict[str, Any]] = [
     {
         "account_id": 1001,
@@ -876,7 +931,7 @@ async def list_donations(
     except Exception:
         rows = []
 
-    return rows
+    return [_sanitize_mongo_doc(row) for row in rows]
 
 
 @router.post("/donations")
@@ -894,7 +949,7 @@ async def create_donation(
     donation_id = str(uuid4())
     now = datetime.utcnow().isoformat()
     devotee_phone = _normalize_phone(payload.get("devotee_phone") or payload.get("phone"))
-    
+
     amount = _safe_float(payload.get("amount"), 0.0)
     category = str(payload.get("category") or "General Donation")
     payment_mode = str(payload.get("payment_mode") or "Cash").lower()
@@ -919,39 +974,48 @@ async def create_donation(
         "created_at": now,
     }
 
+    col = get_collection("mandir_donations")
     try:
-        col = get_collection("mandir_donations")
         await col.insert_one(donation)
-    except Exception:
-        pass
-        
-    # Double-entry Bookkeeping for Monetary Donations
-    if payload.get("donation_type") != "in_kind" and amount > 0:
-        bank_account_id = payload.get("bank_account_id") or payload.get("payment_account_id")
-        if bank_account_id:
-            try:
-                income_acc_id = await _resolve_mandir_income_account(session, tenant_id, category)
-                journal_payload = JournalPostRequest(
-                    entry_date=datetime.utcnow().date(),
-                    description=f"{category} from {donation['devotee']['name']}",
-                    reference=f"DON-{donation_id[:8].upper()}",
-                    lines=[
-                        JournalLineIn(account_id=int(bank_account_id), debit=Decimal(str(amount)), credit=Decimal("0")),
-                        JournalLineIn(account_id=income_acc_id, debit=Decimal("0"), credit=Decimal(str(amount))),
-                    ]
-                )
-                await post_journal_entry(
-                    session=session,
-                    tenant_id=tenant_id,
-                    created_by="mandir_compat_system",
-                    payload=journal_payload,
-                    idempotency_key=f"don_{donation_id}"
-                )
-            except Exception as e:
-                # Log error but don't fail the donation to maintain compatibility
-                print(f"Failed to post accounting journal for donation {donation_id}: {e}")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to save donation: {exc}") from exc
 
-    return donation
+    # Monetary donations must also post into accounting; otherwise reports and TB diverge.
+    if payload.get("donation_type") != "in_kind" and amount > 0:
+        raw_account_id = payload.get("bank_account_id") or payload.get("payment_account_id")
+        resolved_account_id = await _resolve_mandir_payment_account_id(
+            session,
+            tenant_id,
+            raw_account_id,
+            payment_mode,
+        )
+        if not resolved_account_id:
+            await col.delete_one({"donation_id": donation_id, "tenant_id": tenant_id, "app_key": app_key})
+            raise HTTPException(status_code=400, detail="No valid cash/bank account is configured for donation posting")
+
+        try:
+            income_acc_id = await _resolve_mandir_income_account(session, tenant_id, category)
+            journal_payload = JournalPostRequest(
+                entry_date=datetime.utcnow().date(),
+                description=f"{category} from {donation['devotee']['name']}",
+                reference=f"DON-{donation_id[:8].upper()}",
+                lines=[
+                    JournalLineIn(account_id=resolved_account_id, debit=Decimal(str(amount)), credit=Decimal("0")),
+                    JournalLineIn(account_id=income_acc_id, debit=Decimal("0"), credit=Decimal(str(amount))),
+                ],
+            )
+            await post_journal_entry(
+                session=session,
+                tenant_id=tenant_id,
+                created_by="mandir_compat_system",
+                payload=journal_payload,
+                idempotency_key=f"don_{donation_id}",
+            )
+        except Exception as exc:
+            await col.delete_one({"donation_id": donation_id, "tenant_id": tenant_id, "app_key": app_key})
+            raise HTTPException(status_code=500, detail=f"Failed to post donation journal: {exc}") from exc
+
+    return _sanitize_mongo_doc(donation)
 
 @router.delete("/donations/cleanup")
 async def cleanup_donation_entry(
@@ -2115,6 +2179,8 @@ async def create_seva_booking(
     booking_id = str(uuid4())
     now = datetime.utcnow().isoformat()
     amount = _safe_float(payload.get("amount_paid") or payload.get("amount"), 0.0)
+    payment_mode = str(payload.get("payment_mode") or payload.get("payment_method") or "Cash")
+
     
     seva_id = payload.get("seva_id")
     seva_category = "Seva Booking Revenue"
@@ -2129,43 +2195,53 @@ async def create_seva_booking(
         "tenant_id": tenant_id,
         "app_key": app_key,
         **{k: v for k, v in payload.items() if k not in ("id", "_id", "tenant_id", "app_key")},
+        "payment_mode": payment_mode,
         "created_at": now,
         "updated_at": now,
         "status": "confirmed"
     }
-
+    col = get_collection("mandir_seva_bookings")
     try:
-        col = get_collection("mandir_seva_bookings")
         await col.insert_one(booking)
-    except Exception:
-        pass
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to save seva booking: {exc}") from exc
 
     if amount > 0:
-        bank_account_id = payload.get("payment_account_id")
-        if bank_account_id:
-            try:
-                income_acc_id = await _resolve_mandir_income_account(session, tenant_id, seva_category)
-                devotee_names = str(payload.get("devotee_names") or "Devotee")
-                journal_payload = JournalPostRequest(
-                    entry_date=datetime.utcnow().date(),
-                    description=f"{seva_category} - {devotee_names}",
-                    reference=f"SEV-{booking_id[:8].upper()}",
-                    lines=[
-                        JournalLineIn(account_id=int(bank_account_id), debit=Decimal(str(amount)), credit=Decimal("0")),
-                        JournalLineIn(account_id=income_acc_id, debit=Decimal("0"), credit=Decimal(str(amount))),
-                    ]
-                )
-                await post_journal_entry(
-                    session=session,
-                    tenant_id=tenant_id,
-                    created_by="mandir_compat_system",
-                    payload=journal_payload,
-                    idempotency_key=f"sev_{booking_id}"
-                )
-            except Exception as e:
-                print(f"Failed to post accounting journal for seva booking {booking_id}: {e}")
+        raw_account_id = payload.get("bank_account_id") or payload.get("payment_account_id")
+        resolved_account_id = await _resolve_mandir_payment_account_id(
+            session,
+            tenant_id,
+            raw_account_id,
+            payment_mode,
+        )
+        if not resolved_account_id:
+            await col.delete_one({"id": booking_id, "tenant_id": tenant_id, "app_key": app_key})
+            raise HTTPException(status_code=400, detail="No valid cash/bank account is configured for seva posting")
 
-    return booking
+        try:
+            income_acc_id = await _resolve_mandir_income_account(session, tenant_id, seva_category)
+            devotee_names = str(payload.get("devotee_names") or "Devotee")
+            journal_payload = JournalPostRequest(
+                entry_date=datetime.utcnow().date(),
+                description=f"{seva_category} - {devotee_names}",
+                reference=f"SEV-{booking_id[:8].upper()}",
+                lines=[
+                    JournalLineIn(account_id=resolved_account_id, debit=Decimal(str(amount)), credit=Decimal("0")),
+                    JournalLineIn(account_id=income_acc_id, debit=Decimal("0"), credit=Decimal(str(amount))),
+                ],
+            )
+            await post_journal_entry(
+                session=session,
+                tenant_id=tenant_id,
+                created_by="mandir_compat_system",
+                payload=journal_payload,
+                idempotency_key=f"sev_{booking_id}",
+            )
+        except Exception as exc:
+            await col.delete_one({"id": booking_id, "tenant_id": tenant_id, "app_key": app_key})
+            raise HTTPException(status_code=500, detail=f"Failed to post seva journal: {exc}") from exc
+
+    return _sanitize_mongo_doc(booking)
 
 @router.get("/sevas/bookings")
 async def mandir_seva_bookings(
@@ -2178,7 +2254,7 @@ async def mandir_seva_bookings(
     app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
     col = get_collection("mandir_seva_bookings")
     docs = await col.find({"tenant_id": tenant_id, "app_key": app_key}).sort("booking_date", -1).limit(limit).to_list(length=limit)
-    return docs
+    return [_sanitize_mongo_doc(doc) for doc in docs]
 
 
 @router.get("/sevas/reschedule/pending")
@@ -2197,12 +2273,9 @@ async def mandir_seva_reschedule_pending(
         "$or": [{"reschedule_pending": True}, {"status": "reschedule_pending"}],
     }
     docs = await col.find(q).sort("updated_at", -1).limit(limit).to_list(length=limit)
-    return docs
+    return [_sanitize_mongo_doc(doc) for doc in docs]
 
 
 @router.get("/users/me")
 async def mandir_users_me(current_user: dict = Depends(get_current_user)):
     return current_user
-
-
-
