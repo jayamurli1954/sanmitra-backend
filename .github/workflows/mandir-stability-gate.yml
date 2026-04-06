@@ -1,0 +1,59 @@
+﻿name: mandir-stability-gate
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - app/modules/mandir_compat/**
+      - app/accounting/**
+      - tests/test_mandir_*.py
+      - tests/test_accounting_validation.py
+      - scripts/check_repository_safety.py
+      - scripts/check_text_integrity.py
+      - .github/workflows/mandir-stability-gate.yml
+  pull_request:
+    paths:
+      - app/modules/mandir_compat/**
+      - app/accounting/**
+      - tests/test_mandir_*.py
+      - tests/test_accounting_validation.py
+      - scripts/check_repository_safety.py
+      - scripts/check_text_integrity.py
+      - .github/workflows/mandir-stability-gate.yml
+  workflow_dispatch:
+
+jobs:
+  mandir-stability:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Repository Safety Guardrails
+        run: |
+          python scripts/check_repository_safety.py
+
+      - name: Compile Python Sources
+        run: |
+          python -m compileall app scripts tests
+
+      - name: Check Text Integrity
+        run: |
+          python scripts/check_text_integrity.py app scripts .github/workflows
+
+      - name: Mandir Regression Suite
+        run: |
+          python -m pytest tests/test_mandir_*.py tests/test_accounting_validation.py
