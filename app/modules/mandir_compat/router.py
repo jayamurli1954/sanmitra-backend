@@ -88,6 +88,8 @@ async def _resolve_mandir_income_account(session: AsyncSession, tenant_id: str, 
         account_type="income",
         classification="nominal",
         is_cash_bank=False,
+        is_receivable=False,
+        is_payable=False,
     )
     return new_acc.id
 
@@ -2201,5 +2203,6 @@ async def mandir_seva_reschedule_pending(
 @router.get("/users/me")
 async def mandir_users_me(current_user: dict = Depends(get_current_user)):
     return current_user
+
 
 
