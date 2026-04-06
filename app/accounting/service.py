@@ -842,6 +842,7 @@ async def get_trial_balance(session: AsyncSession, *, tenant_id: str, as_of: dat
     stmt = (
         select(
             Account.id.label("account_id"),
+            Account.code.label("account_code"),
             Account.name.label("account_name"),
             func.coalesce(func.sum(JournalLine.debit), 0).label("debit_total"),
             func.coalesce(func.sum(JournalLine.credit), 0).label("credit_total"),
@@ -849,7 +850,7 @@ async def get_trial_balance(session: AsyncSession, *, tenant_id: str, as_of: dat
         .join(JournalLine, JournalLine.account_id == Account.id)
         .join(JournalEntry, JournalEntry.id == JournalLine.journal_id)
         .where(Account.tenant_id == tenant_id, JournalEntry.entry_date <= as_of)
-        .group_by(Account.id, Account.name)
+        .group_by(Account.id, Account.code, Account.name)
         .order_by(Account.name.asc())
     )
 
@@ -867,6 +868,7 @@ async def get_trial_balance(session: AsyncSession, *, tenant_id: str, as_of: dat
         lines.append(
             {
                 "account_id": row.account_id,
+                "account_code": row.account_code,
                 "account_name": row.account_name,
                 "debit_total": debit_total,
                 "credit_total": credit_total,
@@ -932,6 +934,7 @@ async def _gl_sums_by_account(
     stmt = (
         select(
             Account.id.label("account_id"),
+            Account.code.label("account_code"),
             Account.name.label("account_name"),
             Account.type.label("account_type"),
             func.coalesce(func.sum(JournalLine.debit), 0).label("debit_total"),
@@ -940,7 +943,7 @@ async def _gl_sums_by_account(
         .join(JournalLine, JournalLine.account_id == Account.id)
         .join(JournalEntry, JournalEntry.id == JournalLine.journal_id)
         .where(and_(*conditions))
-        .group_by(Account.id, Account.name, Account.type)
+        .group_by(Account.id, Account.code, Account.name, Account.type)
         .order_by(Account.name.asc())
     )
 
@@ -974,6 +977,7 @@ async def get_profit_loss(session: AsyncSession, *, tenant_id: str, from_date: d
         lines.append(
             {
                 "account_id": row.account_id,
+                "account_code": row.account_code,
                 "account_name": row.account_name,
                 "account_type": row.account_type,
                 "debit_total": debit_total,
@@ -1013,6 +1017,7 @@ async def get_receipts_payments(session: AsyncSession, *, tenant_id: str, from_d
         lines.append(
             {
                 "account_id": row.account_id,
+                "account_code": row.account_code,
                 "account_name": row.account_name,
                 "receipts": receipts,
                 "payments": payments,
@@ -1046,6 +1051,7 @@ async def get_balance_sheet(session: AsyncSession, *, tenant_id: str, as_of: dat
 
         line = {
             "account_id": row.account_id,
+            "account_code": row.account_code,
             "account_name": row.account_name,
             "balance": balance,
         }
@@ -1101,6 +1107,7 @@ async def get_accounts_receivable(session: AsyncSession, *, tenant_id: str, as_o
         lines.append(
             {
                 "account_id": row.account_id,
+                "account_code": row.account_code,
                 "account_name": row.account_name,
                 "balance": balance,
             }
@@ -1126,17 +1133,10 @@ async def get_accounts_payable(session: AsyncSession, *, tenant_id: str, as_of: 
         lines.append(
             {
                 "account_id": row.account_id,
+                "account_code": row.account_code,
                 "account_name": row.account_name,
                 "balance": balance,
             }
         )
 
     return lines, _q(total_balance)
-
-
-
-
-
-
-
-

@@ -70,12 +70,16 @@ async def test_import_legacy_coa_seeds_full_chart(monkeypatch):
         return collection
 
     monkeypatch.setattr(mandir_router, "get_collection", fake_get_collection)
+    async def fake_sync_sql_accounts_from_seed(_session, *, tenant_id, seed_rows):
+        return {"created": 0, "updated": 0, "total": len(seed_rows)}
+
+    monkeypatch.setattr(mandir_router, "_sync_mandir_sql_accounts_from_seed", fake_sync_sql_accounts_from_seed)
 
     response = await mandir_router.mandir_accounts_import_legacy(
-        None,
-        {"tenant_id": "tenant-1", "app_key": "mandirmitra"},
+        payload=None,
+        session=object(),
+        _current_user={"tenant_id": "tenant-1", "app_key": "mandirmitra"},
     )
-
     assert response["status"] == "ok"
     assert response["endpoint"] == "accounts/import-legacy"
     assert response["created"] == 123

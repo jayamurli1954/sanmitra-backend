@@ -1,4 +1,4 @@
-﻿from datetime import date
+from datetime import date
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -149,6 +149,7 @@ async def test_get_balance_sheet_includes_unclosed_earnings(monkeypatch) -> None
             return [
                 SimpleNamespace(
                     account_id=1,
+                    account_code="1001",
                     account_name="Cash",
                     account_type="asset",
                     debit_total=Decimal("15500"),
@@ -159,6 +160,7 @@ async def test_get_balance_sheet_includes_unclosed_earnings(monkeypatch) -> None
             return [
                 SimpleNamespace(
                     account_id=2,
+                    account_code="4100",
                     account_name="Service Income",
                     account_type="income",
                     debit_total=Decimal("0"),

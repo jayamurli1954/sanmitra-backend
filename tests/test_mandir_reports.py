@@ -1,4 +1,5 @@
-﻿from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 
@@ -177,3 +178,103 @@ async def test_seva_reports_include_only_posted_rows(report_collections):
     assert schedule_report['total_bookings'] == 1
     assert schedule_report['schedule'][0]['seva_name'] == 'Sarva Seve'
     assert schedule_report['schedule'][0]['status'] in {'Today', 'Upcoming'}
+
+@pytest.mark.asyncio
+async def test_trial_balance_report_backfills_known_account_codes(monkeypatch):
+    async def fake_get_trial_balance(_session, *, tenant_id, as_of):
+        return (
+            [
+                {
+                    'account_id': 2,
+                    'account_code': '2',
+                    'account_name': 'Cash in Hand',
+                    'debit_total': 5000,
+                    'credit_total': 0,
+                },
+                {
+                    'account_id': 1,
+                    'account_code': '1',
+                    'account_name': 'General Donation',
+                    'debit_total': 0,
+                    'credit_total': 5000,
+                },
+                {
+                    'account_id': 8,
+                    'account_code': '8',
+                    'account_name': 'Pooja Revenue',
+                    'debit_total': 0,
+                    'credit_total': 500,
+                },
+            ],
+            5000,
+            5500,
+        )
+
+    monkeypatch.setattr(report_helpers, 'get_trial_balance', fake_get_trial_balance)
+
+    payload = await report_helpers.trial_balance_report(
+        DummySession(),
+        tenant_id='tenant-1',
+        as_of=date.today(),
+    )
+
+    codes = [line['account_code'] for line in payload['lines']]
+    assert codes == ['1001', '4000', '4100']
+    assert payload['accounts'] == payload['lines']
+
+
+@pytest.mark.asyncio
+async def test_ledger_report_returns_empty_for_unmapped_account_code(monkeypatch):
+    async def fake_resolve_ledger_account(_session, *, tenant_id, account_ref):
+        return None
+
+    monkeypatch.setattr(report_helpers, '_resolve_ledger_account', fake_resolve_ledger_account)
+
+    payload = await report_helpers.ledger_report(
+        DummySession(),
+        tenant_id='tenant-1',
+        account_id=11001,
+        from_date=date.today(),
+        to_date=date.today(),
+    )
+
+    assert payload['account_code'] == '11001'
+    assert payload['entries'] == []
+    assert payload['opening_balance'] == 0.0
+    assert payload['closing_balance'] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_ledger_report_uses_fallback_code_for_resolved_account(monkeypatch):
+    account = SimpleNamespace(id=2, code=None, name='Cash in Hand', type='asset')
+
+    async def fake_resolve_ledger_account(_session, *, tenant_id, account_ref):
+        return account
+
+    async def fake_get_ledger_lines(_session, *, tenant_id, account_id):
+        assert account_id == 2
+        return account, [
+            {
+                'journal_id': 7,
+                'entry_date': date.today().isoformat(),
+                'description': 'Donation posted',
+                'reference': 'DON-TEST',
+                'debit': 5000,
+                'credit': 0,
+                'running_balance': 5000,
+            }
+        ]
+
+    monkeypatch.setattr(report_helpers, '_resolve_ledger_account', fake_resolve_ledger_account)
+    monkeypatch.setattr(report_helpers, 'get_ledger_lines', fake_get_ledger_lines)
+
+    payload = await report_helpers.ledger_report(
+        DummySession(),
+        tenant_id='tenant-1',
+        account_id=1001,
+        from_date=date.today(),
+        to_date=date.today(),
+    )
+
+    assert payload['account_code'] == '1001'
+    assert len(payload['entries']) == 1

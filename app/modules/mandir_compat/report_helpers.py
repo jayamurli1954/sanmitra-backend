@@ -4,10 +4,10 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.accounting.models.entities import Account, JournalEntry
+from app.accounting.models.entities import Account, JournalEntry, JournalLine
 from app.accounting.service import (
     get_accounts_payable,
     get_accounts_receivable,
@@ -15,6 +15,7 @@ from app.accounting.service import (
     get_ledger_lines,
     get_profit_loss,
     get_receipts_payments,
+    AccountingNotFoundError,
     get_trial_balance,
     list_accounts,
 )
@@ -61,6 +62,107 @@ def _as_float(value: Any, default: float = 0.0) -> float:
 
 
 
+
+_MANDIR_ACCOUNT_CODE_ALIASES: dict[str, set[str]] = {
+    "1001": {"cash in hand", "cash"},
+    "1002": {"bank account", "bank"},
+    "1100": {"devotee receivables", "devotee receivable"},
+    "4000": {"donation income", "general donation", "general donation income"},
+    "4100": {"seva income", "pooja revenue", "seva booking revenue", "seva booking income"},
+    "5000": {"temple expenses", "expense"},
+}
+
+
+def _normalize_account_name(value: Any) -> str:
+    return " ".join(str(value or "").strip().lower().split())
+
+
+def _fallback_account_code(account_code: Any, account_name: Any, account_id: Any) -> str:
+    raw_code = str(account_code or "").strip()
+
+    normalized_name = _normalize_account_name(account_name)
+    alias_match: str | None = None
+    for code, aliases in _MANDIR_ACCOUNT_CODE_ALIASES.items():
+        if normalized_name in aliases or any(alias in normalized_name for alias in aliases):
+            alias_match = code
+            break
+
+    if raw_code:
+        # Legacy SQL seeds sometimes wrote short surrogate codes ("1", "2", "8")
+        # while names still point to canonical COA buckets. Prefer canonical code then.
+        if raw_code.isdigit() and len(raw_code) <= 3 and alias_match:
+            return alias_match
+        return raw_code
+
+    if alias_match:
+        return alias_match
+
+    return str(account_id or "")
+
+def _alias_names_for_code(code: str) -> set[str]:
+    return {_normalize_account_name(alias) for alias in _MANDIR_ACCOUNT_CODE_ALIASES.get(str(code).strip(), set())}
+
+
+async def _resolve_ledger_account(session: AsyncSession, *, tenant_id: str, account_ref: Any) -> Account | None:
+    raw_ref = str(account_ref or "").strip()
+    if not raw_ref:
+        return None
+
+    filters = [Account.code == raw_ref]
+    if raw_ref.isdigit():
+        filters.append(Account.id == int(raw_ref))
+
+    alias_names = _alias_names_for_code(raw_ref)
+    if alias_names:
+        filters.append(func.lower(Account.name).in_(alias_names))
+
+    stmt = select(Account).where(Account.tenant_id == tenant_id, or_(*filters))
+    candidates = list((await session.execute(stmt)).scalars().all())
+    if not candidates:
+        return None
+
+    candidate_ids = [int(account.id) for account in candidates]
+    counts_stmt = (
+        select(JournalLine.account_id, func.count(JournalLine.id).label("line_count"))
+        .join(JournalEntry, JournalEntry.id == JournalLine.journal_id)
+        .where(JournalEntry.tenant_id == tenant_id, JournalLine.account_id.in_(candidate_ids))
+        .group_by(JournalLine.account_id)
+    )
+    activity_counts = {int(row.account_id): int(row.line_count or 0) for row in (await session.execute(counts_stmt)).all()}
+
+    def _best(matches: list[Account]) -> Account | None:
+        if not matches:
+            return None
+        matches.sort(key=lambda acc: (activity_counts.get(int(acc.id), 0), int(acc.id)), reverse=True)
+        return matches[0]
+
+    by_code_with_activity = _best(
+        [acc for acc in candidates if str(acc.code or "").strip() == raw_ref and activity_counts.get(int(acc.id), 0) > 0]
+    )
+    if by_code_with_activity is not None:
+        return by_code_with_activity
+
+    by_alias_with_activity = _best(
+        [acc for acc in candidates if _normalize_account_name(acc.name) in alias_names and activity_counts.get(int(acc.id), 0) > 0]
+    )
+    if by_alias_with_activity is not None:
+        return by_alias_with_activity
+
+    by_code = _best([acc for acc in candidates if str(acc.code or "").strip() == raw_ref])
+    if by_code is not None:
+        return by_code
+
+    by_alias = _best([acc for acc in candidates if _normalize_account_name(acc.name) in alias_names])
+    if by_alias is not None:
+        return by_alias
+
+    if raw_ref.isdigit():
+        by_id = _best([acc for acc in candidates if int(acc.id) == int(raw_ref)])
+        if by_id is not None:
+            return by_id
+
+    return _best(candidates)
+
 def _normalize_status(value: Any, *, default: str = "Completed") -> str:
     raw = str(value or "").strip().lower()
     if not raw:
@@ -77,6 +179,7 @@ def _normalize_status(value: Any, *, default: str = "Completed") -> str:
         "today": "Today",
     }
     return mapping.get(raw, raw.replace("_", " ").title())
+
 async def _journal_entry_exists(session: AsyncSession, tenant_id: str, idempotency_key: str) -> bool:
     stmt = select(JournalEntry.id).where(
         JournalEntry.tenant_id == tenant_id,
@@ -473,11 +576,23 @@ async def donation_monthly_report(
         'total_count': sum((row['count'] for row in rows), 0),
         'total_amount': _as_float(total_amount, 0.0),
     }
+
 async def trial_balance_report(session: AsyncSession, *, tenant_id: str, as_of: date) -> dict[str, Any]:
     lines, total_debit, total_credit = await get_trial_balance(session, tenant_id=tenant_id, as_of=as_of)
+    normalized_lines = []
+    for line in lines:
+        normalized_line = dict(line)
+        normalized_line['account_code'] = _fallback_account_code(
+            normalized_line.get('account_code'),
+            normalized_line.get('account_name'),
+            normalized_line.get('account_id'),
+        )
+        normalized_lines.append(normalized_line)
+
     return {
         'as_of': as_of.isoformat(),
-        'lines': lines,
+        'lines': normalized_lines,
+        'accounts': normalized_lines,
         'total_debit': _as_float(total_debit, 0.0),
         'total_credit': _as_float(total_credit, 0.0),
         'balanced': total_debit == total_credit,
@@ -554,12 +669,27 @@ async def ledger_report(
     from_date: date | None = None,
     to_date: date | None = None,
 ) -> dict[str, Any]:
-    account_stmt = select(Account).where(Account.id == account_id, Account.tenant_id == tenant_id)
-    account = (await session.execute(account_stmt)).scalar_one_or_none()
+    account_ref = str(account_id)
+    account = await _resolve_ledger_account(session, tenant_id=tenant_id, account_ref=account_ref)
     if account is None:
-        raise ValueError('Account not found')
+        empty_entries: list[dict[str, Any]] = []
+        return {
+            'account_id': int(account_ref) if account_ref.isdigit() else None,
+            'account_code': account_ref,
+            'account_name': f'Account {account_ref}',
+            'account_type': None,
+            'from_date': from_date.isoformat() if from_date else None,
+            'to_date': to_date.isoformat() if to_date else None,
+            'opening_balance': 0.0,
+            'closing_balance': 0.0,
+            'entries': empty_entries,
+            'transactions': empty_entries,
+        }
 
-    _account, all_lines = await get_ledger_lines(session, tenant_id=tenant_id, account_id=account_id)
+    try:
+        _account, all_lines = await get_ledger_lines(session, tenant_id=tenant_id, account_id=int(account.id))
+    except AccountingNotFoundError:
+        all_lines = []
     filtered = [
         line
         for line in all_lines
@@ -600,7 +730,7 @@ async def ledger_report(
 
     return {
         'account_id': account.id,
-        'account_code': account.code,
+        'account_code': _fallback_account_code(account.code, account.name, account.id),
         'account_name': account.name,
         'account_type': account.type,
         'from_date': from_date.isoformat() if from_date else (filtered[0].get('entry_date') if filtered else None),

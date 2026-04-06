@@ -77,25 +77,48 @@ MANDIR_LEGACY_COA_PATH = MANDIR_COMPAT_DATA_DIR / "legacy_mandir_coa.json"
 logger = logging.getLogger(__name__)
 
 
+_MANDIR_CANONICAL_INCOME_CODES: dict[str, tuple[str, str]] = {
+    'general donation': ('4000', 'Donation Income'),
+    'donation income': ('4000', 'Donation Income'),
+    'seva booking revenue': ('4100', 'Seva Income'),
+    'pooja revenue': ('4100', 'Seva Income'),
+    'seva income': ('4100', 'Seva Income'),
+}
+
+
+def _normalize_income_category(value: Any) -> str:
+    return ' '.join(str(value or '').strip().lower().split())
+
+
 async def _resolve_mandir_income_account(session: AsyncSession, tenant_id: str, category_name: str) -> int:
+    normalized_category = _normalize_income_category(category_name)
+    preferred_code, preferred_name = _MANDIR_CANONICAL_INCOME_CODES.get(
+        normalized_category,
+        ('4100', 'Seva Income') if any(token in normalized_category for token in ('seva', 'pooja')) else ('4000', 'Donation Income'),
+    )
+
     accounts = await list_accounts(session, tenant_id=tenant_id)
+
     for acc in accounts:
-        if acc.type == "income" and acc.name.lower() == category_name.lower():
-            return acc.id
-    
-    new_code = f"INC-M-{uuid4().hex[:6].upper()}"
+        if acc.type == 'income' and str(acc.code or '').strip() == preferred_code:
+            return int(acc.id)
+
+    for acc in accounts:
+        if acc.type == 'income' and _normalize_income_category(acc.name) == normalized_category:
+            return int(acc.id)
+
     new_acc = await create_account(
         session,
         tenant_id=tenant_id,
-        code=new_code,
-        name=category_name,
-        account_type="income",
-        classification="nominal",
+        code=preferred_code,
+        name=preferred_name,
+        account_type='income',
+        classification='nominal',
         is_cash_bank=False,
         is_receivable=False,
         is_payable=False,
     )
-    return new_acc.id
+    return int(new_acc.id)
 
 
 async def _resolve_mandir_payment_account_id(
@@ -257,39 +280,123 @@ async def _ensure_default_mandir_accounts(tenant_id: str, app_key: str) -> int:
     return result["created"]
 
 
-async def _ensure_default_mandir_sql_accounts(session: AsyncSession, tenant_id: str) -> None:
-    """
-    Ensure canonical SQL ledger accounts exist for MandirMitra posting flows.
+async def _sync_mandir_sql_accounts_from_seed(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    seed_rows: list[dict[str, Any]],
+) -> dict[str, int]:
+    """Mirror Mandir COA seed rows into SQL accounts used by journal posting/reporting."""
+    prepared_rows = _prepare_mandir_account_docs(seed_rows, tenant_id, "mandirmitra")
+    if not prepared_rows:
+        return {"created": 0, "updated": 0, "total": 0}
 
-    Mongo COA docs can exist without SQL ledger accounts; in that case donation/seva
-    entries save but cannot be journal-posted. This bootstrap keeps posting stable.
-    """
+    valid_types = {"asset", "liability", "equity", "income", "expense"}
+    valid_classifications = {"personal", "real", "nominal"}
+
     existing_accounts = await list_accounts(session, tenant_id=tenant_id)
-    existing_codes = {str(acc.code).strip() for acc in existing_accounts}
+    existing_by_code: dict[str, Account] = {}
+    existing_by_key: dict[tuple[str, str], list[Account]] = {}
 
-    for doc in MANDIR_DEFAULT_ACCOUNTS:
-        code = str(doc.get("account_code") or "").strip()
-        if not code or code in existing_codes:
+    for acc in existing_accounts:
+        code = str(acc.code or "").strip()
+        if code:
+            existing_by_code[code] = acc
+        key = (" ".join(str(acc.name or "").strip().lower().split()), str(acc.type or "").strip().lower())
+        existing_by_key.setdefault(key, []).append(acc)
+
+    created = 0
+    updated = 0
+    dirty = False
+
+    for row in prepared_rows:
+        code = str(row.get("account_code") or "").strip()
+        account_type = str(row.get("account_type") or "asset").strip().lower()
+        if not code or account_type not in valid_types:
             continue
 
-        try:
-            await create_account(
-                session,
-                tenant_id=tenant_id,
-                code=code,
-                name=str(doc.get("account_name") or "Account"),
-                account_type=str(doc.get("account_type") or "asset"),
-                classification=str(doc.get("classification") or "real"),
-                is_cash_bank=bool(doc.get("is_cash_bank", False)),
-                is_receivable=bool(doc.get("is_receivable", False)),
-                is_payable=bool(doc.get("is_payable", False)),
-            )
-            existing_codes.add(code)
-        except IntegrityError:
-            # Another request created the same account concurrently.
-            await session.rollback()
-            existing_codes.add(code)
+        account_name = str(row.get("account_name") or "Account").strip() or "Account"
+        classification = str(row.get("classification") or "real").strip().lower()
+        if classification not in valid_classifications:
+            classification = "real" if account_type in {"asset", "liability", "equity"} else "nominal"
 
+        existing = existing_by_code.get(code)
+        if existing is None:
+            key = (" ".join(account_name.lower().split()), account_type)
+            candidates = existing_by_key.get(key, [])
+            existing = next(
+                (
+                    acc
+                    for acc in candidates
+                    if not str(acc.code or "").strip() or (str(acc.code or "").strip().isdigit() and len(str(acc.code or "").strip()) <= 3)
+                ),
+                None,
+            )
+
+        if existing is None:
+            try:
+                created_acc = await create_account(
+                    session,
+                    tenant_id=tenant_id,
+                    code=code,
+                    name=account_name,
+                    account_type=account_type,
+                    classification=classification,
+                    is_cash_bank=bool(row.get("is_cash_bank", False)),
+                    is_receivable=bool(row.get("is_receivable", False)),
+                    is_payable=bool(row.get("is_payable", False)),
+                )
+                created += 1
+                existing_by_code[code] = created_acc
+                key = (" ".join(str(created_acc.name or "").strip().lower().split()), str(created_acc.type or "").strip().lower())
+                existing_by_key.setdefault(key, []).append(created_acc)
+            except IntegrityError:
+                await session.rollback()
+            continue
+
+        changed = False
+        if str(existing.code or "").strip() != code:
+            existing.code = code
+            changed = True
+        if str(existing.name or "").strip() != account_name:
+            existing.name = account_name
+            changed = True
+        if str(existing.type or "").strip().lower() != account_type:
+            existing.type = account_type
+            changed = True
+        if str(existing.classification or "").strip().lower() != classification:
+            existing.classification = classification
+            changed = True
+        if bool(existing.is_cash_bank) != bool(row.get("is_cash_bank", False)):
+            existing.is_cash_bank = bool(row.get("is_cash_bank", False))
+            changed = True
+        if bool(existing.is_receivable) != bool(row.get("is_receivable", False)):
+            existing.is_receivable = bool(row.get("is_receivable", False))
+            changed = True
+        if bool(existing.is_payable) != bool(row.get("is_payable", False)):
+            existing.is_payable = bool(row.get("is_payable", False))
+            changed = True
+
+        if changed:
+            updated += 1
+            dirty = True
+        existing_by_code[code] = existing
+
+    if dirty:
+        try:
+            await session.commit()
+        except IntegrityError:
+            await session.rollback()
+
+    return {"created": created, "updated": updated, "total": len(prepared_rows)}
+
+
+async def _ensure_default_mandir_sql_accounts(session: AsyncSession, tenant_id: str) -> None:
+    await _sync_mandir_sql_accounts_from_seed(
+        session,
+        tenant_id=tenant_id,
+        seed_rows=MANDIR_DEFAULT_ACCOUNTS,
+    )
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
     try:
@@ -1716,6 +1823,7 @@ async def mandir_accounts_hierarchy(_current_user: dict = Depends(get_current_us
 @router.post("/accounts/import-legacy")
 async def mandir_accounts_import_legacy(
     payload: dict[str, Any] | None = None,
+    session: AsyncSession = Depends(get_async_session),
     _current_user: dict = Depends(get_current_user),
 ):
     tenant_id = resolve_tenant_id(_current_user, None)
@@ -1729,22 +1837,49 @@ async def mandir_accounts_import_legacy(
         raise HTTPException(status_code=400, detail="Legacy COA payload is empty")
 
     normalized_seed_rows = [row for row in seed_rows if isinstance(row, dict)]
-    result = await _upsert_mandir_account_docs(tenant_id, app_key, normalized_seed_rows)
-    return _ok("accounts/import-legacy", message="Legacy accounts imported", **result)
+    mongo_result = await _upsert_mandir_account_docs(tenant_id, app_key, normalized_seed_rows)
+    sql_result = await _sync_mandir_sql_accounts_from_seed(
+        session,
+        tenant_id=tenant_id,
+        seed_rows=normalized_seed_rows,
+    )
+    return _ok(
+        "accounts/import-legacy",
+        message="Legacy accounts imported",
+        created=mongo_result["created"],
+        reactivated=mongo_result["reactivated"],
+        updated=mongo_result["updated"],
+        total=mongo_result["total"],
+        sql_created=sql_result["created"],
+        sql_updated=sql_result["updated"],
+        sql_total=sql_result["total"],
+    )
 
 
 @router.post("/accounts/initialize-default")
-async def mandir_accounts_initialize_default(_current_user: dict = Depends(get_current_user)):
+async def mandir_accounts_initialize_default(
+    session: AsyncSession = Depends(get_async_session),
+    _current_user: dict = Depends(get_current_user),
+):
     tenant_id = resolve_tenant_id(_current_user, None)
     app_key = resolve_app_key((_current_user.get("app_key") or "mandirmitra").strip())
-    result = await _upsert_mandir_account_docs(tenant_id, app_key, MANDIR_DEFAULT_ACCOUNTS)
+    mongo_result = await _upsert_mandir_account_docs(tenant_id, app_key, MANDIR_DEFAULT_ACCOUNTS)
+    sql_result = await _sync_mandir_sql_accounts_from_seed(
+        session,
+        tenant_id=tenant_id,
+        seed_rows=MANDIR_DEFAULT_ACCOUNTS,
+    )
     return _ok(
         "accounts/initialize-default",
         message="Default accounts initialized",
-        created=result["created"],
-        reactivated=result["reactivated"],
-        updated=result["updated"],
+        created=mongo_result["created"],
+        reactivated=mongo_result["reactivated"],
+        updated=mongo_result["updated"],
+        sql_created=sql_result["created"],
+        sql_updated=sql_result["updated"],
+        sql_total=sql_result["total"],
     )
+
 
 
 @router.get("/assets")
