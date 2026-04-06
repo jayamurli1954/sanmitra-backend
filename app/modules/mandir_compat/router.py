@@ -951,6 +951,94 @@ async def create_donation(
 
     return donation
 
+@router.delete("/donations/cleanup")
+async def cleanup_donation_entry(
+    amount: float = Query(..., gt=0),
+    devotee_phone: str = Query(..., min_length=6),
+    payment_mode: str | None = Query(default=None),
+    session: AsyncSession = Depends(get_async_session),
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    normalized_phone = _normalize_phone(devotee_phone)
+    normalized_amount = _safe_float(amount, 0.0)
+    normalized_mode = str(payment_mode or "").strip().lower() or None
+
+    try:
+        col = get_collection("mandir_donations")
+        candidates = await col.find(
+            {
+                "tenant_id": tenant_id,
+                "app_key": app_key,
+                "amount": normalized_amount,
+                "devotee_phone": normalized_phone,
+            }
+        ).sort("created_at", -1).to_list(length=50)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to search donation entries: {exc}") from exc
+
+    if normalized_mode:
+        candidates = [
+            row
+            for row in candidates
+            if str(row.get("payment_mode") or "").strip().lower() == normalized_mode
+        ]
+
+    if not candidates:
+        raise HTTPException(
+            status_code=404,
+            detail="Donation entry not found for the provided amount and phone",
+        )
+
+    donation = candidates[0]
+    donation_id = str(donation.get("donation_id") or "")
+
+    try:
+        await col.delete_one(
+            {
+                "donation_id": donation_id,
+                "tenant_id": tenant_id,
+                "app_key": app_key,
+            }
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to delete donation entry: {exc}") from exc
+
+    journal_deleted = False
+    journal_status = "not_found"
+    journal_idempotency_key = f"don_{donation_id}" if donation_id else None
+    if journal_idempotency_key:
+        try:
+            journal_stmt = select(JournalEntry).where(
+                JournalEntry.tenant_id == tenant_id,
+                JournalEntry.idempotency_key == journal_idempotency_key,
+            )
+            journal_entry = (await session.execute(journal_stmt)).scalar_one_or_none()
+            if journal_entry is not None:
+                await session.delete(journal_entry)
+                await session.commit()
+                journal_deleted = True
+                journal_status = "deleted"
+        except Exception as exc:
+            try:
+                await session.rollback()
+            except Exception:
+                pass
+            journal_status = f"delete_failed: {exc}"
+
+    return {
+        "status": "deleted",
+        "matched_count": len(candidates),
+        "donation_id": donation_id,
+        "amount": normalized_amount,
+        "devotee_phone": normalized_phone,
+        "payment_mode": donation.get("payment_mode"),
+        "journal_deleted": journal_deleted,
+        "journal_status": journal_status,
+    }
 
 @router.get("/devotees")
 @router.get("/devotees/")
@@ -2113,3 +2201,5 @@ async def mandir_seva_reschedule_pending(
 @router.get("/users/me")
 async def mandir_users_me(current_user: dict = Depends(get_current_user)):
     return current_user
+
+
