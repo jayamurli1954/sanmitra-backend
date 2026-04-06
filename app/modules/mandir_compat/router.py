@@ -104,35 +104,31 @@ async def _resolve_mandir_payment_account_id(
     raw_account_id: Any,
     payment_mode: str | None,
 ) -> int | None:
-    if raw_account_id is None:
-        return None
+    raw_value = str(raw_account_id).strip() if raw_account_id is not None else ""
 
-    raw_value = str(raw_account_id).strip()
-    if not raw_value:
-        return None
+    if raw_value:
+        maybe_id = _safe_optional_int(raw_value)
+        if maybe_id:
+            by_id_stmt = select(Account.id).where(
+                Account.tenant_id == tenant_id,
+                Account.id == maybe_id,
+            )
+            by_id = (await session.execute(by_id_stmt)).scalar_one_or_none()
+            if by_id is not None:
+                return int(by_id)
 
-    maybe_id = _safe_optional_int(raw_value)
-    if maybe_id:
-        by_id_stmt = select(Account.id).where(
-            Account.tenant_id == tenant_id,
-            Account.id == maybe_id,
-        )
-        by_id = (await session.execute(by_id_stmt)).scalar_one_or_none()
-        if by_id is not None:
-            return int(by_id)
+        code_candidate = raw_value
+        if " - " in raw_value:
+            code_candidate = raw_value.split(" - ", 1)[0].strip()
 
-    code_candidate = raw_value
-    if " - " in raw_value:
-        code_candidate = raw_value.split(" - ", 1)[0].strip()
-
-    if code_candidate.isdigit():
-        by_code_stmt = select(Account.id).where(
-            Account.tenant_id == tenant_id,
-            Account.code == code_candidate,
-        )
-        by_code = (await session.execute(by_code_stmt)).scalar_one_or_none()
-        if by_code is not None:
-            return int(by_code)
+        if code_candidate.isdigit():
+            by_code_stmt = select(Account.id).where(
+                Account.tenant_id == tenant_id,
+                Account.code == code_candidate,
+            )
+            by_code = (await session.execute(by_code_stmt)).scalar_one_or_none()
+            if by_code is not None:
+                return int(by_code)
 
     accounts = await list_accounts(session, tenant_id=tenant_id)
     mode = str(payment_mode or "").strip().lower()
@@ -2548,6 +2544,4 @@ async def mandir_seva_reschedule_pending(
 @router.get("/users/me")
 async def mandir_users_me(current_user: dict = Depends(get_current_user)):
     return current_user
-
-
 
