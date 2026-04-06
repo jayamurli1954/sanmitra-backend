@@ -14,7 +14,7 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Request, Response, UploadFile
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from decimal import Decimal
@@ -259,6 +259,40 @@ def _mandir_account_view(doc: dict[str, Any]) -> dict[str, Any]:
 async def _ensure_default_mandir_accounts(tenant_id: str, app_key: str) -> int:
     result = await _upsert_mandir_account_docs(tenant_id, app_key, MANDIR_DEFAULT_ACCOUNTS)
     return result["created"]
+
+
+async def _ensure_default_mandir_sql_accounts(session: AsyncSession, tenant_id: str) -> None:
+    """
+    Ensure canonical SQL ledger accounts exist for MandirMitra posting flows.
+
+    Mongo COA docs can exist without SQL ledger accounts; in that case donation/seva
+    entries save but cannot be journal-posted. This bootstrap keeps posting stable.
+    """
+    existing_accounts = await list_accounts(session, tenant_id=tenant_id)
+    existing_codes = {str(acc.code).strip() for acc in existing_accounts}
+
+    for doc in MANDIR_DEFAULT_ACCOUNTS:
+        code = str(doc.get("account_code") or "").strip()
+        if not code or code in existing_codes:
+            continue
+
+        try:
+            await create_account(
+                session,
+                tenant_id=tenant_id,
+                code=code,
+                name=str(doc.get("account_name") or "Account"),
+                account_type=str(doc.get("account_type") or "asset"),
+                classification=str(doc.get("classification") or "real"),
+                is_cash_bank=bool(doc.get("is_cash_bank", False)),
+                is_receivable=bool(doc.get("is_receivable", False)),
+                is_payable=bool(doc.get("is_payable", False)),
+            )
+            existing_codes.add(code)
+        except IntegrityError:
+            # Another request created the same account concurrently.
+            await session.rollback()
+            existing_codes.add(code)
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -1026,6 +1060,7 @@ async def create_donation(
 ):
     tenant_id = resolve_tenant_id(current_user, x_tenant_id)
     app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    await _ensure_default_mandir_sql_accounts(session, tenant_id)
 
     donation_id = str(uuid4())
     now = datetime.utcnow().isoformat()
@@ -1097,6 +1132,116 @@ async def create_donation(
             raise HTTPException(status_code=500, detail=f"Failed to post donation journal: {exc}") from exc
 
     return _sanitize_mongo_doc(donation)
+
+
+@router.post("/donations/reconcile-posting")
+async def reconcile_donation_posting(
+    limit: int = Query(default=500, ge=1, le=5000),
+    session: AsyncSession = Depends(get_async_session),
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    """
+    Backfill journal entries for legacy donation docs that were saved before posting guardrails.
+    """
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    await _ensure_default_mandir_sql_accounts(session, tenant_id)
+
+    col = get_collection("mandir_donations")
+    try:
+        docs = await col.find({"tenant_id": tenant_id, "app_key": app_key}).sort("created_at", -1).limit(limit).to_list(length=limit)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to load donations for reconciliation: {exc}") from exc
+
+    scanned = 0
+    posted = 0
+    already_posted = 0
+    skipped = 0
+    errors: list[dict[str, Any]] = []
+
+    for doc in docs:
+        scanned += 1
+        donation_id = str(doc.get("donation_id") or doc.get("id") or doc.get("_id") or "").strip()
+        if not donation_id:
+            skipped += 1
+            continue
+
+        idempotency_key = f"don_{donation_id}"
+        exists_stmt = select(JournalEntry.id).where(
+            JournalEntry.tenant_id == tenant_id,
+            JournalEntry.idempotency_key == idempotency_key,
+        )
+        existing_journal_id = (await session.execute(exists_stmt)).scalar_one_or_none()
+        if existing_journal_id is not None:
+            already_posted += 1
+            continue
+
+        amount = _safe_float(doc.get("amount"), 0.0)
+        if amount <= 0:
+            skipped += 1
+            continue
+
+        payment_mode_raw = str(doc.get("payment_mode") or "Cash").strip().lower()
+        payment_mode_for_account = "cash" if payment_mode_raw == "cash" else "bank"
+
+        try:
+            resolved_account_id = await _resolve_mandir_payment_account_id(
+                session,
+                tenant_id,
+                doc.get("bank_account_id") or doc.get("payment_account_id"),
+                payment_mode_for_account,
+            )
+            if not resolved_account_id:
+                resolved_account_id = await _resolve_mandir_payment_account_id(session, tenant_id, None, payment_mode_for_account)
+            if not resolved_account_id:
+                raise ValueError("No valid cash/bank account is configured for donation posting")
+
+            category = str(doc.get("category") or "General Donation")
+            income_acc_id = await _resolve_mandir_income_account(session, tenant_id, category)
+            devotee = doc.get("devotee") if isinstance(doc.get("devotee"), dict) else {}
+            devotee_name = str(devotee.get("name") or doc.get("devotee_name") or "Devotee")
+
+            created_raw = str(doc.get("created_at") or "").strip()
+            entry_date = datetime.utcnow().date()
+            if created_raw:
+                try:
+                    entry_date = datetime.fromisoformat(created_raw.replace("Z", "+00:00")).date()
+                except Exception:
+                    pass
+
+            journal_payload = JournalPostRequest(
+                entry_date=entry_date,
+                description=f"{category} from {devotee_name}",
+                reference=f"DON-{donation_id[:8].upper()}",
+                lines=[
+                    JournalLineIn(account_id=resolved_account_id, debit=Decimal(str(amount)), credit=Decimal("0")),
+                    JournalLineIn(account_id=income_acc_id, debit=Decimal("0"), credit=Decimal(str(amount))),
+                ],
+            )
+            await post_journal_entry(
+                session=session,
+                tenant_id=tenant_id,
+                created_by="mandir_reconcile",
+                payload=journal_payload,
+                idempotency_key=idempotency_key,
+            )
+            posted += 1
+        except Exception as exc:
+            errors.append({"donation_id": donation_id, "error": str(exc)})
+
+    return {
+        "status": "ok",
+        "tenant_id": tenant_id,
+        "app_key": app_key,
+        "scanned": scanned,
+        "posted": posted,
+        "already_posted": already_posted,
+        "skipped": skipped,
+        "errors": errors[:25],
+    }
+
 
 @router.delete("/donations/cleanup")
 async def cleanup_donation_entry(
@@ -2298,6 +2443,7 @@ async def create_seva_booking(
 ):
     tenant_id = resolve_tenant_id(current_user, x_tenant_id)
     app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    await _ensure_default_mandir_sql_accounts(session, tenant_id)
 
     booking_id = str(uuid4())
     now = datetime.utcnow().isoformat()

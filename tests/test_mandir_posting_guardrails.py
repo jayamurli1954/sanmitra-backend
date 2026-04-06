@@ -99,7 +99,11 @@ def mandir_posting_client(monkeypatch):
     async def fake_session():
         yield DummySession()
 
+    async def noop_ensure_sql_accounts(_session, _tenant_id):
+        return None
+
     monkeypatch.setattr(mandir_router, "get_collection", fake_get_collection)
+    monkeypatch.setattr(mandir_router, "_ensure_default_mandir_sql_accounts", noop_ensure_sql_accounts)
 
     app.dependency_overrides[get_current_user] = lambda: {
         "tenant_id": "tenant-1",
@@ -238,3 +242,4 @@ def test_list_donations_sanitizes_mongo_internal_id(mandir_posting_client):
     assert len(payload) == 1
     assert payload[0]["donation_id"] == "don-1"
     assert "_id" not in payload[0]
+
