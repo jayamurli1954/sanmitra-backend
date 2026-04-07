@@ -534,9 +534,20 @@ async def _ensure_default_mandir_sql_accounts(session: AsyncSession, tenant_id: 
     await _normalize_mandir_income_accounts(session, tenant_id)
 
 async def _ensure_default_mandir_sql_accounts_safe(session: AsyncSession, tenant_id: str) -> None:
-    if not hasattr(session, 'execute'):
+    if not hasattr(session, "execute"):
         return
-    await _ensure_default_mandir_sql_accounts(session, tenant_id)
+    try:
+        await _ensure_default_mandir_sql_accounts(session, tenant_id)
+    except Exception as exc:
+        # Reporting endpoints should not fail hard if background COA normalization races.
+        rollback = getattr(session, "rollback", None)
+        if callable(rollback):
+            try:
+                await rollback()
+            except Exception:
+                pass
+        logger.warning("Skipped COA normalization for tenant %s due to: %s", tenant_id, exc)
+        return
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
     try:
