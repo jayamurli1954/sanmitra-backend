@@ -1,9 +1,9 @@
 services:
   - type: web
-    name: sanmitra-backend-staging
+    name: sanmitra-backend-staging-sg
     runtime: python
     plan: starter
-    region: oregon
+    region: singapore
     branch: main
     rootDir: .
     buildCommand: pip install -r requirements.txt
@@ -53,3 +53,4 @@ services:
         value: "60"
       - key: LEGAL_SYNC_WORKER_BATCH_SIZE
         value: "5"
+
