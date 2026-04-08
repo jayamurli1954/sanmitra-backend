@@ -197,13 +197,23 @@ class Settings:
             )
 
         if self.SUPER_ADMIN_BOOTSTRAP and not self.SUPER_ADMIN_PASSWORD:
-            raise ValueError(
-                "SUPER_ADMIN_PASSWORD must be set when SUPER_ADMIN_BOOTSTRAP=true."
+            if is_prod:
+                raise ValueError(
+                    "SUPER_ADMIN_PASSWORD must be set when SUPER_ADMIN_BOOTSTRAP=true."
+                )
+            _config_logger.warning(
+                "SUPER_ADMIN_BOOTSTRAP=true but SUPER_ADMIN_PASSWORD is not set — "
+                "bootstrap will be skipped at startup. Set SUPER_ADMIN_PASSWORD to enable it."
             )
 
         if self.DEMO_MANDIR_BOOTSTRAP and not self.DEMO_MANDIR_ADMIN_PASSWORD:
-            raise ValueError(
-                "DEMO_MANDIR_ADMIN_PASSWORD must be set when DEMO_MANDIR_BOOTSTRAP=true."
+            if is_prod:
+                raise ValueError(
+                    "DEMO_MANDIR_ADMIN_PASSWORD must be set when DEMO_MANDIR_BOOTSTRAP=true."
+                )
+            _config_logger.warning(
+                "DEMO_MANDIR_BOOTSTRAP=true but DEMO_MANDIR_ADMIN_PASSWORD is not set — "
+                "demo bootstrap will be skipped at startup."
             )
 
         if is_prod and (self.SUPER_ADMIN_BOOTSTRAP or self.DEMO_MANDIR_BOOTSTRAP):
