@@ -33,7 +33,7 @@ async def ensure_rag_indexes() -> None:
     await documents.create_index(
         [("tenant_id", 1), ("app_key", 1), ("external_id", 1)],
         unique=True,
-        partialFilterExpression={"external_id": {"$exists": True, "$ne": None}},
+        partialFilterExpression={"external_id": {"$exists": True}},
     )
 
     await chunks.create_index([("tenant_id", 1), ("app_key", 1), ("created_at", -1)])

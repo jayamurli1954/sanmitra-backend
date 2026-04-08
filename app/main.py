@@ -103,6 +103,12 @@ async def _ping_with_timeout(coro, timeout_seconds: float) -> tuple[bool, str]:
         return False, str(exc)
 
 
+@app.get("/")
+async def root():
+    """Root route — satisfies Render's default HEAD / health check."""
+    return {"status": "ok", "service": "sanmitra-backend"}
+
+
 @app.get("/health")
 async def health():
     mongo_task = _ping_with_timeout(ping_mongo(), timeout_seconds=2.5)
