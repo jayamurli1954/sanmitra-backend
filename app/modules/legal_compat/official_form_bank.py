@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 import textwrap
 from datetime import datetime, timezone
@@ -8,6 +9,8 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
+
+_form_logger = logging.getLogger(__name__)
 
 from pypdf import PdfReader, PdfWriter
 from reportlab.lib.pagesizes import A4
@@ -235,7 +238,8 @@ def _fill_pdf(payload: bytes, fields: dict[str, str]) -> BytesIO:
                     fields,
                     auto_regenerate=False,
                 )
-            except Exception:
+            except Exception as exc:
+                _form_logger.warning("PDF form field update failed on page %d: %s", idx, exc)
                 continue
         out = BytesIO()
         writer.write(out)
@@ -441,7 +445,6 @@ async def register_official_form(
     form_id = f"{_slugify(department)}-{_slugify(form_name)}-{uuid4().hex[:10]}"
     _FORM_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
     stored_file_path = _FORM_STORAGE_DIR / f"{form_id}{extension}"
-    stored_file_path.write_bytes(payload)
 
     now = _now_utc()
     doc = {
@@ -468,8 +471,28 @@ async def register_official_form(
         "updated_at": now,
     }
 
+    # Insert the DB record FIRST so a file-write failure doesn't create an orphaned file
+    # with no corresponding DB entry, and a DB failure doesn't leave an orphaned file on disk.
     collection = get_collection(_FORM_BANK_COLLECTION)
     await collection.insert_one(doc)
+
+    try:
+        stored_file_path.write_bytes(payload)
+    except Exception as exc:
+        # DB record was inserted; roll it back to keep DB and filesystem in sync.
+        _form_logger.error(
+            "File write failed for form_id=%s after DB insert; rolling back DB record: %s",
+            form_id, exc,
+        )
+        try:
+            await collection.delete_one({"form_id": form_id})
+        except Exception as rollback_exc:
+            _form_logger.error(
+                "Rollback of DB record for form_id=%s also failed: %s",
+                form_id, rollback_exc,
+            )
+        raise
+
     return _public_doc(doc)
 
 

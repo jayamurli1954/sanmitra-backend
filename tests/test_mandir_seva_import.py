@@ -15,6 +15,14 @@ class FakeCursor:
     def sort(self, _field, _direction):
         return self
 
+    def skip(self, value):
+        self.docs = self.docs[value:]
+        return self
+
+    def limit(self, value):
+        self.docs = self.docs[:value]
+        return self
+
     async def to_list(self, length=None):
         if length is None:
             return list(self.docs)

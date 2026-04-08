@@ -1,7 +1,10 @@
 import asyncio
+import logging
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+_startup_logger = logging.getLogger(__name__)
 
 from app.accounting.models.base import Base
 from app.api.legacy_alias_router import router as legacy_alias_router
@@ -30,7 +33,12 @@ app = FastAPI(title=settings.APP_NAME, version=settings.APP_VERSION)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.ALLOWED_ORIGINS,
-    allow_origin_regex=r"https://[a-z0-9-]+\.vercel\.app",
+    # Restrict to known SanMitra Vercel apps only; the broad *.vercel.app wildcard
+    # would allow any Vercel deployment to make credentialed cross-origin requests.
+    allow_origin_regex=(
+        r"https://(mandirmitra|mandir-mitra-alpha|legalmitra|gruhamitra|invest-mitra)"
+        r"(-[a-z0-9]+)?\.vercel\.app"
+    ),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -57,15 +65,15 @@ async def on_startup() -> None:
         await ensure_investment_indexes()
         await ensure_onboarding_indexes()
         await ensure_rag_indexes()
-    except Exception:
+    except Exception as exc:
         # Keep app booting even if Mongo is unavailable; health endpoint will show degraded state.
-        pass
+        _startup_logger.error("MongoDB startup initialisation failed: %s", exc, exc_info=True)
 
     try:
         await start_legal_sync_worker()
-    except Exception:
+    except Exception as exc:
         # Worker is best-effort; API should still boot even if background sync is unavailable.
-        pass
+        _startup_logger.warning("Legal sync worker failed to start: %s", exc, exc_info=True)
 
     try:
         await init_postgres()
@@ -74,9 +82,9 @@ async def on_startup() -> None:
 
         if settings.PG_AUTO_CREATE_TABLES:
             await create_postgres_tables(Base.metadata)
-    except Exception:
+    except Exception as exc:
         # Keep app booting even if PostgreSQL is unavailable; health endpoint will show degraded state.
-        pass
+        _startup_logger.error("PostgreSQL startup initialisation failed: %s", exc, exc_info=True)
 
 
 @app.on_event("shutdown")
@@ -104,15 +112,18 @@ async def health():
     mongo_ok, mongo_detail = mongo_result
     pg_ok, pg_detail = pg_result
     overall = "ok" if mongo_ok or pg_ok else "degraded"
-    return {
+    response: dict = {
         "status": overall,
         "version": settings.APP_VERSION,
-        "environment": settings.ENVIRONMENT,
         "db": {
             "mongo": {"ok": mongo_ok, "detail": mongo_detail},
             "postgres": {"ok": pg_ok, "detail": pg_detail},
         },
     }
+    # Expose environment only in non-production to avoid leaking deployment topology.
+    if settings.ENVIRONMENT not in {"production", "prod"}:
+        response["environment"] = settings.ENVIRONMENT
+    return response
 
 
 

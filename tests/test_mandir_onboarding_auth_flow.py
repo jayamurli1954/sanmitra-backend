@@ -51,17 +51,41 @@ class FakeCollection:
 
         return SimpleNamespace(matched_count=0)
 
+    async def find_one_and_update(self, filters, update, upsert=False, return_document=True):
+        """Simulate atomic findOneAndUpdate (used by the temple ID counter)."""
+        inc = update.get("$inc", {})
+        for doc in self.docs:
+            if _matches(doc, filters):
+                for key, delta in inc.items():
+                    doc[key] = doc.get(key, 0) + delta
+                return dict(doc)
+
+        if upsert:
+            created = {}
+            # Resolve _id from filters
+            for key, value in filters.items():
+                created[key] = value
+            for key, delta in inc.items():
+                created[key] = created.get(key, 0) + delta
+            self.docs.append(created)
+            return dict(created)
+
+        return None
+
 
 class FakeCollections:
     def __init__(self):
         self.temples = FakeCollection()
         self.onboarding = FakeCollection()
+        self.counters = FakeCollection()
 
     def __call__(self, name):
         if name == mandir_service.MANDIR_TEMPLES_COLLECTION:
             return self.temples
         if name == mandir_service.MANDIR_ONBOARDING_COLLECTION:
             return self.onboarding
+        if name == mandir_service._MANDIR_COUNTERS_COLLECTION:
+            return self.counters
         raise AssertionError(f"Unexpected collection name: {name}")
 
 
@@ -89,6 +113,11 @@ def _matches_query(doc: dict, filters: dict) -> bool:
 async def test_first_login_onboarding_email_flow_creates_tenant_admin(monkeypatch):
     fake_collections = FakeCollections()
     monkeypatch.setattr(mandir_service, "get_collection", fake_collections)
+
+    async def _noop_indexes():
+        return None
+
+    monkeypatch.setattr(mandir_service, "ensure_mandir_compat_indexes", _noop_indexes)
 
     async def fake_get_tenant(_tenant_id: str):
         return None
@@ -169,6 +198,11 @@ def test_google_first_login_requires_google_id_token():
 async def test_first_login_onboarding_google_flow_records_google_meta(monkeypatch):
     fake_collections = FakeCollections()
     monkeypatch.setattr(mandir_service, "get_collection", fake_collections)
+
+    async def _noop_indexes():
+        return None
+
+    monkeypatch.setattr(mandir_service, "ensure_mandir_compat_indexes", _noop_indexes)
 
     async def fake_get_tenant(_tenant_id: str):
         return None

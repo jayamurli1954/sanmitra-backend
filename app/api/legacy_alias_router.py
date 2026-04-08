@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, Query
@@ -74,7 +74,7 @@ async def legacy_dashboard_summary(
     return {
         "tenant_id": tenant_id,
         "status": "ok",
-        "generated_at": datetime.utcnow().isoformat(),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "widgets": {
             "pending_tasks": 0,
             "notifications": 0,

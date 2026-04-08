@@ -18,8 +18,6 @@ from app.modules.mandir_compat.schemas import MandirFirstLoginOnboardingRequest
 MANDIR_TEMPLES_COLLECTION = "mandir_temples"
 MANDIR_ONBOARDING_COLLECTION = "mandir_onboarding_events"
 
-_MANDIR_INDEXES_READY = False
-
 
 def _slugify(value: str) -> str:
     normalized = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
@@ -54,53 +52,70 @@ async def _allocate_tenant_id(base_hint: str) -> str:
 
 
 async def ensure_mandir_compat_indexes() -> None:
-    global _MANDIR_INDEXES_READY
-    if _MANDIR_INDEXES_READY:
-        return
-
     temples = get_collection(MANDIR_TEMPLES_COLLECTION)
     await temples.create_index("tenant_id", unique=True)
     await temples.create_index("temple_id", unique=True, sparse=True)
     await temples.create_index([("app_key", 1), ("updated_at", -1)])
+    # Compound indexes for frequent query patterns (tenant + app + time).
+    await temples.create_index([("tenant_id", 1), ("app_key", 1), ("updated_at", -1)])
 
     onboarding_events = get_collection(MANDIR_ONBOARDING_COLLECTION)
     await onboarding_events.create_index("onboarding_id", unique=True)
     await onboarding_events.create_index([("tenant_id", 1), ("created_at", -1)])
     await onboarding_events.create_index([("admin_email", 1), ("created_at", -1)])
+    await onboarding_events.create_index([("tenant_id", 1), ("app_key", 1), ("created_at", -1)])
 
-    _MANDIR_INDEXES_READY = True
+    # Compound indexes for high-frequency operational collections.
+    donations = get_collection("mandir_donations")
+    await donations.create_index([("tenant_id", 1), ("app_key", 1), ("created_at", -1)])
+    await donations.create_index([("tenant_id", 1), ("app_key", 1), ("donation_id", 1)], unique=True, sparse=True)
+
+    devotees = get_collection("mandir_devotees")
+    await devotees.create_index([("tenant_id", 1), ("app_key", 1), ("created_at", -1)])
+    await devotees.create_index([("tenant_id", 1), ("app_key", 1), ("phone", 1)])
+
+    sevas = get_collection("mandir_sevas")
+    await sevas.create_index([("tenant_id", 1), ("app_key", 1), ("created_at", -1)])
+    await sevas.create_index([("tenant_id", 1), ("app_key", 1), ("is_active", 1), ("created_at", -1)])
+
+    # Seed the atomic temple ID counter from the current max if the counter doc is missing.
+    counters = get_collection(_MANDIR_COUNTERS_COLLECTION)
+    existing_counter = await counters.find_one({"_id": "temple_id_seq"})
+    if not existing_counter:
+        try:
+            latest = await temples.find_one({"temple_id": {"$type": "int"}}, sort=[("temple_id", -1)])
+            current_max = _to_positive_int((latest or {}).get("temple_id")) or 0
+            await counters.update_one(
+                {"_id": "temple_id_seq"},
+                {"$setOnInsert": {"seq": current_max}},
+                upsert=True,
+            )
+        except Exception:
+            pass
+
+
+_MANDIR_COUNTERS_COLLECTION = "mandir_counters"
+
+MAX_TEMPLE_ID_ATTEMPTS = 2000
 
 
 async def _allocate_temple_numeric_id() -> int:
-    temples = get_collection(MANDIR_TEMPLES_COLLECTION)
-    next_id = 1
+    """Atomically allocate the next temple numeric ID using a MongoDB counter document.
 
-    try:
-        latest = await temples.find_one({"temple_id": {"$type": "int"}}, sort=[("temple_id", -1)])
-        latest_id = _to_positive_int((latest or {}).get("temple_id"))
-        if latest_id:
-            next_id = latest_id + 1
-    except Exception:
-        docs = getattr(temples, "docs", None)
-        if isinstance(docs, list):
-            max_id = 0
-            for doc in docs:
-                parsed = _to_positive_int(doc.get("temple_id") or doc.get("id"))
-                if parsed and parsed > max_id:
-                    max_id = parsed
-            next_id = max_id + 1 if max_id > 0 else 1
-
-    for _ in range(2000):
-        try:
-            taken = await temples.find_one({"$or": [{"temple_id": next_id}, {"id": next_id}]})
-            if not taken:
-                return next_id
-            next_id += 1
-            continue
-        except Exception:
-            return next_id
-
-    raise HTTPException(status_code=500, detail="Could not allocate temple id")
+    Uses findOneAndUpdate with $inc so concurrent requests cannot get the same ID,
+    eliminating the race condition present in a loop-and-check approach.
+    """
+    counters = get_collection(_MANDIR_COUNTERS_COLLECTION)
+    result = await counters.find_one_and_update(
+        {"_id": "temple_id_seq"},
+        {"$inc": {"seq": 1}},
+        upsert=True,
+        return_document=True,  # pymongo ReturnDocument.AFTER equivalent for motor
+    )
+    new_id = int((result or {}).get("seq") or 1)
+    if new_id < 1:
+        raise HTTPException(status_code=500, detail="Could not allocate temple id: counter invalid")
+    return new_id
 
 
 async def ensure_temple_numeric_id(tenant_id: str) -> int:

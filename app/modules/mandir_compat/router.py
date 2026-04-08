@@ -3,7 +3,7 @@ from __future__ import annotations
 import calendar
 import json
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from io import StringIO
 import csv
 import httpx
@@ -533,19 +533,29 @@ async def _ensure_default_mandir_sql_accounts(session: AsyncSession, tenant_id: 
     )
     await _normalize_mandir_income_accounts(session, tenant_id)
 
-async def _ensure_default_mandir_sql_accounts_safe(session: AsyncSession, tenant_id: str) -> None:
+async def _ensure_default_mandir_sql_accounts_safe(
+    session: AsyncSession, tenant_id: str, *, raise_on_failure: bool = False
+) -> None:
     if not hasattr(session, "execute"):
         return
     try:
         await _ensure_default_mandir_sql_accounts(session, tenant_id)
     except Exception as exc:
-        # Reporting endpoints should not fail hard if background COA normalization races.
         rollback = getattr(session, "rollback", None)
         if callable(rollback):
             try:
                 await rollback()
             except Exception:
                 pass
+        if raise_on_failure:
+            logger.error(
+                "COA normalization failed for tenant %s — aborting posting: %s",
+                tenant_id, exc, exc_info=True,
+            )
+            raise HTTPException(
+                status_code=503,
+                detail="Accounting setup is incomplete. Please retry in a moment or contact support.",
+            ) from exc
         logger.warning("Skipped COA normalization for tenant %s due to: %s", tenant_id, exc)
         return
 
@@ -709,7 +719,7 @@ async def _upsert_mandir_account_docs(tenant_id: str, app_key: str, seed_rows: l
     }
 
     prepared_rows = _prepare_mandir_account_docs(seed_rows, tenant_id, app_key)
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     created = 0
     reactivated = 0
     updated = 0
@@ -888,7 +898,7 @@ def _resolve_report_date_window(
         return from_date, to_date
 
     if month is not None or year is not None:
-        resolved_year = year or datetime.utcnow().year
+        resolved_year = year or datetime.now(timezone.utc).year
         if month is None:
             start = date(resolved_year, 1, 1)
             end = date(resolved_year, 12, 31)
@@ -932,7 +942,7 @@ async def _dashboard_posted_stats(
     tenant_id: str,
     app_key: str,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    today = datetime.utcnow().date()
+    today = datetime.now(timezone.utc).date()
     start_of_year = date(today.year, 1, 1)
     try:
         donations = await posted_donations(
@@ -942,7 +952,8 @@ async def _dashboard_posted_stats(
             from_date=start_of_year,
             to_date=today,
         )
-    except Exception:
+    except Exception as exc:
+        logger.warning("Dashboard: failed to fetch posted donations for tenant=%s: %s", tenant_id, exc)
         donations = []
 
     try:
@@ -953,7 +964,8 @@ async def _dashboard_posted_stats(
             from_date=start_of_year,
             to_date=today,
         )
-    except Exception:
+    except Exception as exc:
+        logger.warning("Dashboard: failed to fetch posted sevas for tenant=%s: %s", tenant_id, exc)
         sevas = []
 
     return donations, sevas
@@ -964,7 +976,7 @@ def _canonical_seva_name(payload: dict[str, Any]) -> str:
 
 
 def _build_seva_item(payload: dict[str, Any], *, tenant_id: str, app_key: str) -> dict[str, Any]:
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     name = _canonical_seva_name(payload)
     advance_days = _safe_optional_int(payload.get("advance_booking_days"))
 
@@ -1195,7 +1207,7 @@ async def dashboard_stats(
     tenant_id = resolve_tenant_id(current_user, x_tenant_id)
     app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     today = now.date().isoformat()
     month = now.strftime("%Y-%m")
     year = now.year
@@ -1297,7 +1309,8 @@ async def list_donations(
     try:
         col = get_collection("mandir_donations")
         rows = await col.find({"tenant_id": tenant_id, "app_key": app_key}).sort("created_at", -1).limit(limit).to_list(length=limit)
-    except Exception:
+    except Exception as exc:
+        logger.error("Failed to list donations for tenant=%s: %s", tenant_id, exc, exc_info=True)
         rows = []
 
     return [_sanitize_mongo_doc(row) for row in rows]
@@ -1314,10 +1327,10 @@ async def create_donation(
 ):
     tenant_id = resolve_tenant_id(current_user, x_tenant_id)
     app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
-    await _ensure_default_mandir_sql_accounts_safe(session, tenant_id)
+    await _ensure_default_mandir_sql_accounts_safe(session, tenant_id, raise_on_failure=True)
 
     donation_id = str(uuid4())
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     devotee_phone = _normalize_phone(payload.get("devotee_phone") or payload.get("phone"))
 
     amount = _safe_float(payload.get("amount"), 0.0)
@@ -1366,7 +1379,7 @@ async def create_donation(
         try:
             income_acc_id = await _resolve_mandir_income_account(session, tenant_id, "General Donations")
             journal_payload = JournalPostRequest(
-                entry_date=datetime.utcnow().date(),
+                entry_date=datetime.now(timezone.utc).date(),
                 description=f"{category} from {donation['devotee']['name']}",
                 reference=f"DON-{donation_id[:8].upper()}",
                 lines=[
@@ -1401,7 +1414,7 @@ async def reconcile_donation_posting(
     """
     tenant_id = resolve_tenant_id(current_user, x_tenant_id)
     app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
-    await _ensure_default_mandir_sql_accounts_safe(session, tenant_id)
+    await _ensure_default_mandir_sql_accounts_safe(session, tenant_id, raise_on_failure=True)
 
     col = get_collection("mandir_donations")
     try:
@@ -1458,7 +1471,7 @@ async def reconcile_donation_posting(
             devotee_name = str(devotee.get("name") or doc.get("devotee_name") or "Devotee")
 
             created_raw = str(doc.get("created_at") or "").strip()
-            entry_date = datetime.utcnow().date()
+            entry_date = datetime.now(timezone.utc).date()
             if created_raw:
                 try:
                     entry_date = datetime.fromisoformat(created_raw.replace("Z", "+00:00")).date()
@@ -1589,6 +1602,8 @@ async def cleanup_donation_entry(
 @router.get("/devotees")
 @router.get("/devotees/")
 async def list_devotees(
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
     current_user: dict = Depends(get_current_user),
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
     x_app_key: str | None = Header(default=None, alias="X-App-Key"),
@@ -1598,9 +1613,16 @@ async def list_devotees(
 
     try:
         col = get_collection("mandir_devotees")
-        rows = await col.find({"tenant_id": tenant_id, "app_key": app_key}).sort("created_at", -1).to_list(length=1000)
+        rows = await (
+            col.find({"tenant_id": tenant_id, "app_key": app_key})
+            .sort("created_at", -1)
+            .skip(skip)
+            .limit(limit)
+            .to_list(length=limit)
+        )
         return [_sanitize_mongo_doc(row) for row in rows]
-    except Exception:
+    except Exception as exc:
+        logger.error("Failed to list devotees for tenant=%s: %s", tenant_id, exc, exc_info=True)
         return []
 
 
@@ -1628,14 +1650,15 @@ async def create_devotee(
         "city": str(payload.get("city") or "") or None,
         "state": str(payload.get("state") or "") or None,
         "pincode": str(payload.get("pincode") or "") or None,
-        "created_at": datetime.utcnow().isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
     }
 
     try:
         col = get_collection("mandir_devotees")
         await col.insert_one(devotee)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.error("Failed to insert devotee for tenant=%s: %s", tenant_id, exc, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to save devotee") from exc
 
     return _sanitize_mongo_doc(devotee)
 
@@ -1658,7 +1681,8 @@ async def search_devotee_by_mobile(
         col = get_collection("mandir_devotees")
         docs = await col.find({"tenant_id": tenant_id, "app_key": app_key, "phone": normalized}).limit(5).to_list(length=5)
         return [_sanitize_mongo_doc(doc) for doc in docs]
-    except Exception:
+    except Exception as exc:
+        logger.error("Failed to search devotees by mobile for tenant=%s: %s", tenant_id, exc, exc_info=True)
         return []
 
 
@@ -1666,6 +1690,8 @@ async def search_devotee_by_mobile(
 @router.get("/sevas")
 async def list_sevas(
     include_inactive: bool = Query(default=True),
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=100, ge=1, le=500),
     current_user: dict = Depends(get_current_user),
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
     x_app_key: str | None = Header(default=None, alias="X-App-Key"),
@@ -1683,9 +1709,16 @@ async def list_sevas(
         query: dict[str, Any] = {"tenant_id": tenant_id, "app_key": app_key}
         if not include_inactive:
             query["is_active"] = True
-        rows = await col.find(query).sort("created_at", -1).to_list(length=1000)
+        rows = await (
+            col.find(query)
+            .sort("created_at", -1)
+            .skip(skip)
+            .limit(limit)
+            .to_list(length=limit)
+        )
         return [_serialize_seva_doc(row) for row in rows]
-    except Exception:
+    except Exception as exc:
+        logger.error("Failed to list sevas for tenant=%s: %s", tenant_id, exc, exc_info=True)
         return []
 
 
@@ -1737,7 +1770,7 @@ async def update_seva(
     patch.pop("app_key", None)
     if not patch:
         raise HTTPException(status_code=400, detail="No updatable seva fields provided")
-    patch["updated_at"] = datetime.utcnow().isoformat()
+    patch["updated_at"] = datetime.now(timezone.utc).isoformat()
 
     col = get_collection("mandir_sevas")
     try:
@@ -1901,7 +1934,7 @@ async def get_current_temple(
         return doc
 
     assigned_temple_id = await ensure_temple_numeric_id(tenant_id)
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     fallback = {
         "id": assigned_temple_id,
         "temple_id": assigned_temple_id,
@@ -1928,7 +1961,7 @@ async def update_current_temple(
     tenant_id = await _resolve_tenant_for_mandir_request(current_user, x_tenant_id, temple_id)
     assigned_temple_id = await ensure_temple_numeric_id(tenant_id)
     col = get_collection("mandir_temples")
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     update = {k: v for k, v in payload.items() if k not in {"id", "_id", "tenant_id", "temple_id"}}
     update["updated_at"] = now
 
@@ -2123,7 +2156,7 @@ async def mandir_closing_summary(_current_user: dict = Depends(get_current_user)
 
 @router.get("/financial-closing/financial-years")
 async def mandir_financial_years(_current_user: dict = Depends(get_current_user)):
-    y = datetime.utcnow().year
+    y = datetime.now(timezone.utc).year
     return [{"financial_year": f"{y}-{y+1}", "is_current": True}]
 
 
@@ -2628,8 +2661,26 @@ async def mandir_temples(
 @router.post("/onboarding/first-login", response_model=MandirFirstLoginOnboardingResponse)
 async def mandir_temples_onboard(
     payload: MandirFirstLoginOnboardingRequest,
+    request: Request,
     x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+    x_onboarding_token: str | None = Header(default=None, alias="X-Onboarding-Token"),
 ):
+    from app.config import get_settings as _get_settings
+    _settings = _get_settings()
+    required_secret = _settings.MANDIR_ONBOARDING_SECRET
+    if required_secret:
+        provided = (x_onboarding_token or "").strip()
+        if not provided or provided != required_secret:
+            logger.warning(
+                "Onboarding attempt rejected: missing/invalid X-Onboarding-Token from %s",
+                request.client.host if request.client else "unknown",
+            )
+            raise HTTPException(status_code=403, detail="Invalid or missing onboarding token")
+    else:
+        logger.info(
+            "Onboarding endpoint called without secret enforcement (MANDIR_ONBOARDING_SECRET not set). "
+            "Set this env var in production to protect this endpoint."
+        )
     app_key = resolve_app_key((x_app_key or "mandirmitra").strip())
     return await create_mandir_first_login_onboarding(payload, app_key=app_key)
 
@@ -2682,7 +2733,7 @@ async def mandir_temples_module_config_update(
         "module_panchang_enabled",
     }
     update = {key: bool(payload.get(key)) for key in allowed_keys if key in payload}
-    update["updated_at"] = datetime.utcnow().isoformat()
+    update["updated_at"] = datetime.now(timezone.utc).isoformat()
     update["id"] = assigned_temple_id
     update["temple_id"] = assigned_temple_id
 
@@ -2692,7 +2743,7 @@ async def mandir_temples_module_config_update(
             "$set": update,
             "$setOnInsert": {
                 "tenant_id": tenant_id,
-                "created_at": datetime.utcnow().isoformat(),
+                "created_at": datetime.now(timezone.utc).isoformat(),
             },
         },
         upsert=True,
@@ -2739,10 +2790,10 @@ async def create_seva_booking(
 ):
     tenant_id = resolve_tenant_id(current_user, x_tenant_id)
     app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
-    await _ensure_default_mandir_sql_accounts_safe(session, tenant_id)
+    await _ensure_default_mandir_sql_accounts_safe(session, tenant_id, raise_on_failure=True)
 
     booking_id = str(uuid4())
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     amount = _safe_float(payload.get("amount_paid") or payload.get("amount"), 0.0)
     payment_mode = str(payload.get("payment_mode") or payload.get("payment_method") or "Cash")
     seva_id = payload.get("seva_id")
@@ -2785,7 +2836,7 @@ async def create_seva_booking(
             income_acc_id = await _resolve_mandir_income_account(session, tenant_id, "Seva Income - General")
             devotee_names = str(payload.get("devotee_names") or "Devotee")
             journal_payload = JournalPostRequest(
-                entry_date=datetime.utcnow().date(),
+                entry_date=datetime.now(timezone.utc).date(),
                 description=f"Seva Booking ({seva_name}) - {devotee_names}",
                 reference=f"SEV-{booking_id[:8].upper()}",
                 lines=[

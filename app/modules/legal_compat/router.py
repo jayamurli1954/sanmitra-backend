@@ -1,10 +1,13 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from html import unescape
+import logging
 import re
 import textwrap
-from urllib.parse import quote_plus, urlparse
+from urllib.parse import quote, quote_plus, urlparse
 import xml.etree.ElementTree as ET
+
+_legal_logger = logging.getLogger(__name__)
 
 import httpx
 from io import BytesIO
@@ -39,6 +42,21 @@ router = APIRouter(tags=["legal-compat"])
 
 _DEFAULT_TENANT_ID = "seed-tenant-1"
 _DEFAULT_APP_KEY = "legalmitra"
+
+# Minimum role required to call any LegalMitra endpoint.
+_any_authenticated = require_roles([Role.viewer, Role.operator, Role.accountant, Role.tenant_admin, Role.super_admin])
+
+
+def _safe_content_disposition(filename: str) -> str:
+    """Return a RFC 5987-encoded Content-Disposition header value.
+
+    Prevents header injection via newlines or non-ASCII characters in filenames
+    that originate from user-supplied IDs or data.
+    """
+    # Strip any control characters (including CR/LF that could inject headers).
+    safe_name = re.sub(r"[\x00-\x1f\x7f]", "", filename)
+    encoded = quote(safe_name, safe="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.")
+    return f"attachment; filename*=UTF-8''{encoded}"
 
 
 class LegacyLegalResearchRequest(BaseModel):
@@ -679,10 +697,11 @@ def _render_template_body(body_lines: list[str], fields: dict[str, Any]) -> str:
 @router.get("/major-cases")
 async def major_cases(
     force_web: bool = Query(default=False),
+    current_user: dict = Depends(_any_authenticated),
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
     x_app_key: str | None = Header(default=None, alias="X-App-Key"),
 ):
-    tenant_id = _resolve_compat_tenant_id(x_tenant_id)
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
     app_key = _resolve_compat_app_key(x_app_key)
 
     if force_web:
@@ -742,7 +761,8 @@ async def major_cases(
             )
             if len(cases) >= 10:
                 break
-    except Exception:
+    except Exception as exc:
+        _legal_logger.error("Major-cases DB query failed for tenant %s: %s", tenant_id, exc, exc_info=True)
         cases = []
 
     if len(cases) < 10:
@@ -758,10 +778,11 @@ async def major_cases(
 @router.get("/legal-news")
 async def legal_news(
     force_web: bool = Query(default=False),
+    current_user: dict = Depends(_any_authenticated),
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
     x_app_key: str | None = Header(default=None, alias="X-App-Key"),
 ):
-    tenant_id = _resolve_compat_tenant_id(x_tenant_id)
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
     app_key = _resolve_compat_app_key(x_app_key)
 
     if force_web:
@@ -818,7 +839,8 @@ async def legal_news(
             )
             if len(news) >= 10:
                 break
-    except Exception:
+    except Exception as exc:
+        _legal_logger.error("Legal-news DB query failed for tenant %s: %s", tenant_id, exc, exc_info=True)
         news = []
 
     if len(news) < 10:
@@ -835,10 +857,11 @@ async def legal_news(
 async def legal_research(
     payload: LegacyLegalResearchRequest,
     background_tasks: BackgroundTasks,
+    current_user: dict = Depends(_any_authenticated),
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
     x_app_key: str | None = Header(default=None, alias="X-App-Key"),
 ):
-    tenant_id = _resolve_compat_tenant_id(x_tenant_id)
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
     app_key = _resolve_compat_app_key(x_app_key)
 
     rag_payload = RagQueryRequest(
@@ -872,10 +895,12 @@ async def legal_research(
 async def legal_sync_queue(
     status: str = Query(default="pending", max_length=40),
     limit: int = Query(default=25, ge=1, le=200),
+    # Restrict to admin roles — sync queue exposes internal job state.
+    current_user: dict = Depends(require_roles([Role.super_admin, Role.tenant_admin])),
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
     x_app_key: str | None = Header(default=None, alias="X-App-Key"),
 ):
-    tenant_id = _resolve_compat_tenant_id(x_tenant_id)
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
     app_key = _resolve_compat_app_key(x_app_key)
 
     items = await list_sync_queue(tenant_id=tenant_id, app_key=app_key, status=status, limit=limit)
@@ -908,10 +933,11 @@ async def legal_sync_run_once(
 @router.post("/search-cases")
 async def search_cases(
     payload: LegacyCaseSearchRequest,
+    current_user: dict = Depends(_any_authenticated),
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
     x_app_key: str | None = Header(default=None, alias="X-App-Key"),
 ):
-    tenant_id = _resolve_compat_tenant_id(x_tenant_id)
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
     app_key = _resolve_compat_app_key(x_app_key)
 
     legal_filters = RagLegalFilter(court_name=payload.court.lower()) if payload.court else None
@@ -940,10 +966,11 @@ async def search_cases(
 @router.post("/search-statute")
 async def search_statute(
     payload: LegacyStatuteSearchRequest,
+    current_user: dict = Depends(_any_authenticated),
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
     x_app_key: str | None = Header(default=None, alias="X-App-Key"),
 ):
-    tenant_id = _resolve_compat_tenant_id(x_tenant_id)
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
     app_key = _resolve_compat_app_key(x_app_key)
 
     q = f"{payload.act_name}"
@@ -977,7 +1004,10 @@ async def search_statute(
 
 
 @router.post("/draft-document")
-async def draft_document(payload: dict[str, Any]):
+async def draft_document(
+    payload: dict[str, Any],
+    current_user: dict = Depends(_any_authenticated),
+):
     doc_type = str(payload.get("document_type") or "legal notice")
     facts = str(payload.get("facts") or "")
     parties = payload.get("parties") or {}
@@ -1053,7 +1083,8 @@ async def v2_templates(
             app_key=app_key,
             limit=120,
         )
-    except Exception:
+    except Exception as exc:
+        _legal_logger.warning("list_official_forms failed for tenant %s: %s", tenant_id, exc, exc_info=True)
         official_items = []
 
     for item in official_items:
@@ -1074,7 +1105,8 @@ async def v2_template_categories(
 
     try:
         official_items = await list_official_forms(tenant_id=tenant_id, app_key=app_key, limit=500)
-    except Exception:
+    except Exception as exc:
+        _legal_logger.warning("list_official_forms (categories) failed for tenant %s: %s", tenant_id, exc, exc_info=True)
         official_items = []
 
     if official_items:
@@ -1228,7 +1260,7 @@ async def v2_template_render_pdf(
         return StreamingResponse(
             file_bytes,
             media_type="application/pdf",
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+            headers={"Content-Disposition": _safe_content_disposition(filename)},
         )
 
     template = _find_template(payload.template_id)
@@ -1242,7 +1274,7 @@ async def v2_template_render_pdf(
     return StreamingResponse(
         file_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": _safe_content_disposition(filename)},
     )
 
 
@@ -1352,7 +1384,7 @@ async def v2_official_forms_render_pdf(
     return StreamingResponse(
         file_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": _safe_content_disposition(filename)},
     )
 
 @router.get("/templates/categories")
@@ -1399,17 +1431,19 @@ async def recommended_models_legacy():
 @router.get("/diary")
 async def list_professional_diary(
     limit: int = Query(default=20, ge=1, le=100),
+    current_user: dict = Depends(_any_authenticated),
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
     x_app_key: str | None = Header(default=None, alias="X-App-Key"),
 ):
-    tenant_id = _resolve_compat_tenant_id(x_tenant_id)
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
     app_key = _resolve_compat_app_key(x_app_key)
 
     try:
         entries_col = get_collection("legal_diary_entries")
         cursor = entries_col.find({"tenant_id": tenant_id, "app_key": app_key}).sort("created_at", -1).limit(limit)
         entries = await cursor.to_list(length=limit)
-    except Exception:
+    except Exception as exc:
+        _legal_logger.error("Diary list failed for tenant %s: %s", tenant_id, exc, exc_info=True)
         entries = []
 
     items = [
@@ -1429,14 +1463,15 @@ async def list_professional_diary(
 @router.post("/diary")
 async def create_professional_diary(
     payload: dict[str, Any],
+    current_user: dict = Depends(_any_authenticated),
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
     x_app_key: str | None = Header(default=None, alias="X-App-Key"),
 ):
-    tenant_id = _resolve_compat_tenant_id(x_tenant_id)
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
     app_key = _resolve_compat_app_key(x_app_key)
 
-    entry_id = str(payload.get("entry_id") or f"diary-{datetime.now().strftime('%Y%m%d%H%M%S%f')}")
-    now = datetime.now()
+    entry_id = str(payload.get("entry_id") or f"diary-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}")
+    now = datetime.now(timezone.utc)
     doc = {
         "entry_id": entry_id,
         "tenant_id": tenant_id,
@@ -1451,9 +1486,8 @@ async def create_professional_diary(
     try:
         entries_col = get_collection("legal_diary_entries")
         await entries_col.insert_one(doc)
-    except Exception:
-        # Preserve legacy UX even if datastore is unavailable in local/dev mode.
-        pass
+    except Exception as exc:
+        _legal_logger.error("Diary insert failed for tenant %s: %s", tenant_id, exc, exc_info=True)
 
     return {
         "entry_id": entry_id,

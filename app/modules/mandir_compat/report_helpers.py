@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
 from datetime import date, datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any
+
+_report_logger = logging.getLogger(__name__)
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -57,6 +60,15 @@ def _as_float(value: Any, default: float = 0.0) -> float:
     try:
         return float(Decimal(str(value)))
     except Exception:
+        return default
+
+
+def _safe_decimal(value: Any, default: Decimal = Decimal("0")) -> Decimal:
+    """Convert an arbitrary value to Decimal, returning *default* on any parse error."""
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, ValueError, TypeError) as exc:
+        _report_logger.warning("Could not convert %r to Decimal: %s", value, exc)
         return default
 
 
@@ -358,7 +370,7 @@ async def donation_category_wise_report(
         category = str(donation.get('category') or 'Uncategorized')
         bucket = grouped.setdefault(category, {'category': category, 'count': 0, 'amount': Decimal('0')})
         bucket['count'] += 1
-        bucket['amount'] += Decimal(str(donation.get('amount') or 0))
+        bucket['amount'] += _safe_decimal(donation.get('amount') or 0)
 
     rows = [
         {
@@ -532,7 +544,7 @@ async def donation_daily_report(
         day_key = str((_parse_iso_date(donation.get('date')) or from_date).isoformat())
         bucket = grouped.setdefault(day_key, {'date': day_key, 'count': 0, 'amount': Decimal('0')})
         bucket['count'] += 1
-        bucket['amount'] += Decimal(str(donation.get('amount') or 0))
+        bucket['amount'] += _safe_decimal(donation.get('amount') or 0)
     rows = [
         {'date': bucket['date'], 'count': bucket['count'], 'amount': _as_float(bucket['amount'], 0.0)}
         for bucket in grouped.values()
@@ -564,7 +576,7 @@ async def donation_monthly_report(
         month_key = f"{d.year:04d}-{d.month:02d}"
         bucket = grouped.setdefault(month_key, {'month': month_key, 'count': 0, 'amount': Decimal('0')})
         bucket['count'] += 1
-        bucket['amount'] += Decimal(str(donation.get('amount') or 0))
+        bucket['amount'] += _safe_decimal(donation.get('amount') or 0)
     rows = [
         {'month': bucket['month'], 'count': bucket['count'], 'amount': _as_float(bucket['amount'], 0.0)}
         for bucket in grouped.values()
@@ -704,16 +716,16 @@ async def ledger_report(
     for line in all_lines:
         line_date = _parse_iso_date(line.get('entry_date'))
         if from_date is not None and line_date is not None and line_date < from_date:
-            opening_balance = Decimal(str(line.get('running_balance', 0)))
+            opening_balance = _safe_decimal(line.get('running_balance', 0))
 
     closing_balance = opening_balance
     if filtered:
-        closing_balance = Decimal(str(filtered[-1].get('running_balance', opening_balance)))
+        closing_balance = _safe_decimal(filtered[-1].get('running_balance', opening_balance))
     elif all_lines:
         last_line = all_lines[-1]
         line_date = _parse_iso_date(last_line.get('entry_date'))
         if to_date is None or (line_date is not None and line_date <= to_date):
-            closing_balance = Decimal(str(last_line.get('running_balance', opening_balance)))
+            closing_balance = _safe_decimal(last_line.get('running_balance', opening_balance))
 
     entries = []
     for line in filtered:
@@ -779,8 +791,8 @@ async def cash_book_report(
     total_receipts = Decimal('0')
     total_payments = Decimal('0')
     for item in report['entries']:
-        receipt = Decimal(str(item['debit_amount']))
-        payment = Decimal(str(item['credit_amount']))
+        receipt = _safe_decimal(item['debit_amount'])
+        payment = _safe_decimal(item['credit_amount'])
         total_receipts += receipt
         total_payments += payment
         entries.append(
@@ -821,8 +833,8 @@ async def bank_book_report(
     total_deposits = Decimal('0')
     total_withdrawals = Decimal('0')
     for item in report['entries']:
-        deposit = Decimal(str(item['debit_amount']))
-        withdrawal = Decimal(str(item['credit_amount']))
+        deposit = _safe_decimal(item['debit_amount'])
+        withdrawal = _safe_decimal(item['credit_amount'])
         total_deposits += deposit
         total_withdrawals += withdrawal
         entries.append(
@@ -861,8 +873,8 @@ async def day_book_report(session: AsyncSession, *, tenant_id: str, date_value: 
     total_payments = Decimal('0')
 
     for entry in cash_report['entries']:
-        receipt = Decimal(str(entry['receipt_amount']))
-        payment = Decimal(str(entry['payment_amount']))
+        receipt = _safe_decimal(entry['receipt_amount'])
+        payment = _safe_decimal(entry['payment_amount'])
         if receipt > 0:
             total_receipts += receipt
             receipts.append(
@@ -919,7 +931,7 @@ async def category_income_report(
                     'transaction_count': 0,
                 },
             )
-            item['amount'] += Decimal(str(row.get('amount') or 0))
+            item['amount'] += _safe_decimal(row.get('amount') or 0)
             item['transaction_count'] += 1
         total = sum((item['amount'] for item in grouped.values()), Decimal('0'))
         result: list[dict[str, Any]] = []
@@ -976,7 +988,7 @@ async def top_donors_report(
                 'categories': set(),
             },
         )
-        item['total_donated'] += Decimal(str(donation.get('amount') or 0))
+        item['total_donated'] += _safe_decimal(donation.get('amount') or 0)
         item['donation_count'] += 1
         item['categories'].add(str(donation.get('category') or 'General Donation'))
         if donation.get('created_at'):

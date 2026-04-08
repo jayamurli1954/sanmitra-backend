@@ -1,5 +1,5 @@
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
 
 from sqlalchemy import Select, and_, func, select
@@ -478,7 +478,7 @@ async def upsert_coa_mappings(
                 status=item.status,
                 notes=item.notes,
                 mapped_by=mapped_by,
-                mapped_at=datetime.utcnow(),
+                mapped_at=datetime.now(timezone.utc),
             )
             session.add(existing)
             existing_by_source_id[source_account.id] = existing
@@ -487,7 +487,7 @@ async def upsert_coa_mappings(
             existing.status = item.status
             existing.notes = item.notes
             existing.mapped_by = mapped_by
-            existing.mapped_at = datetime.utcnow()
+            existing.mapped_at = datetime.now(timezone.utc)
 
         touched_mappings.append(existing)
 
@@ -696,7 +696,7 @@ async def approve_coa_mappings(
         raise AccountingValidationError("No mappings found for approval scope")
 
     approved_count = 0
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
     for mapping in mappings:
         if mapping.status != "active":

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import hmac
 import logging
 import re
 import xml.etree.ElementTree as ET
@@ -133,7 +134,9 @@ def _extract_court_name(title: str, summary: str) -> str | None:
 
 def _external_id(*, tenant_id: str, app_key: str, query: str, title: str, source_url: str) -> str:
     seed = f"{tenant_id}|{app_key}|{query.strip().lower()}|{title.strip().lower()}|{(source_url or '').strip().lower()}"
-    return f"legal-sync-{hashlib.sha1(seed.encode('utf-8')).hexdigest()[:40]}"
+    secret = (get_settings().JWT_SECRET or "sanmitra-sync-dev-secret").encode("utf-8")
+    digest = hmac.new(secret, seed.encode("utf-8"), hashlib.sha256).hexdigest()
+    return f"legal-sync-{digest[:40]}"
 
 
 def _build_payload(*, tenant_id: str, app_key: str, query: str, item: dict[str, Any]) -> RagIngestRequest:

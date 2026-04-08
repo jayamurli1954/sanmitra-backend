@@ -1,9 +1,12 @@
+import logging
 import os
 from functools import lru_cache
 
 from dotenv import load_dotenv
 
 load_dotenv()
+
+_config_logger = logging.getLogger(__name__)
 
 
 class Settings:
@@ -26,6 +29,8 @@ class Settings:
     PG_AUTO_CREATE_TABLES = os.getenv("PG_AUTO_CREATE_TABLES", "true").lower() in {"1", "true", "yes", "on"}
 
     JWT_SECRET = os.getenv("JWT_SECRET", "")
+    # Validated at startup — see validate() below.
+    OTP_PEPPER = os.getenv("OTP_PEPPER", "")
     JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
     ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
     REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "7"))
@@ -50,7 +55,7 @@ class Settings:
     AUTH_RESET_TOKEN_TTL_MINUTES = int(os.getenv("AUTH_RESET_TOKEN_TTL_MINUTES", "30"))
     AUTH_EMAIL_DEBUG_RETURN_LINK = os.getenv(
         "AUTH_EMAIL_DEBUG_RETURN_LINK",
-        "true" if ENVIRONMENT != "production" else "false",
+        "true" if ENVIRONMENT not in {"production", "prod"} else "false",
     ).lower() in {"1", "true", "yes", "on"}
     SMTP_HOST = os.getenv("SMTP_HOST", "").strip()
     SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
@@ -81,6 +86,10 @@ class Settings:
     TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "").strip()
     TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "").strip()
     TWILIO_FROM_NUMBER = os.getenv("TWILIO_FROM_NUMBER", "").strip()
+
+    # Token required in X-Onboarding-Token header on the public first-login onboarding endpoint.
+    # If left empty, the endpoint is open (dev/demo convenience); set in production.
+    MANDIR_ONBOARDING_SECRET = os.getenv("MANDIR_ONBOARDING_SECRET", "").strip()
 
     DEFAULT_APP_KEY = os.getenv("DEFAULT_APP_KEY", "mandirmitra").strip().lower()
     ALLOWED_APP_KEYS = [
@@ -130,19 +139,22 @@ class Settings:
     RAG_EMBEDDING_OPENAI_MODEL = os.getenv("RAG_EMBEDDING_OPENAI_MODEL", "text-embedding-3-small").strip()
     RAG_EMBEDDING_OPENAI_API_KEY = os.getenv("RAG_EMBEDDING_OPENAI_API_KEY", "").strip()
 
+    _IS_PRODUCTION = ENVIRONMENT in {"production", "prod"}
+
     SUPER_ADMIN_BOOTSTRAP = os.getenv(
         "SUPER_ADMIN_BOOTSTRAP",
-        "true" if ENVIRONMENT != "production" else "false",
+        "false" if _IS_PRODUCTION else "true",
     ).lower() in {"1", "true", "yes", "on"}
     SUPER_ADMIN_EMAIL = os.getenv("SUPER_ADMIN_EMAIL", "superadmin@sanmitra.local")
-    SUPER_ADMIN_PASSWORD = os.getenv("SUPER_ADMIN_PASSWORD", "superadmin123")
+    # No default password — must be set explicitly when SUPER_ADMIN_BOOTSTRAP=true.
+    SUPER_ADMIN_PASSWORD = os.getenv("SUPER_ADMIN_PASSWORD", "")
     SUPER_ADMIN_FULL_NAME = os.getenv("SUPER_ADMIN_FULL_NAME", "SanMitra Super Admin")
     SUPER_ADMIN_TENANT_ID = os.getenv("SUPER_ADMIN_TENANT_ID", "seed-tenant-1")
 
     # Demo Mandir bootstrap (non-production convenience seed)
     DEMO_MANDIR_BOOTSTRAP = os.getenv(
         "DEMO_MANDIR_BOOTSTRAP",
-        "true" if ENVIRONMENT != "production" else "false",
+        "false" if _IS_PRODUCTION else "true",
     ).lower() in {"1", "true", "yes", "on"}
     DEMO_MANDIR_TENANT_ID = os.getenv("DEMO_MANDIR_TENANT_ID", "demo-mandir-tenant")
     DEMO_MANDIR_TEMPLE_NAME = os.getenv("DEMO_MANDIR_TEMPLE_NAME", "Demo Temple")
@@ -152,11 +164,77 @@ class Settings:
     DEMO_MANDIR_TEMPLE_EMAIL = os.getenv("DEMO_MANDIR_TEMPLE_EMAIL", "temple.demo@sanmitra.local")
     DEMO_MANDIR_ADMIN_FULL_NAME = os.getenv("DEMO_MANDIR_ADMIN_FULL_NAME", "Demo Temple Admin")
     DEMO_MANDIR_ADMIN_EMAIL = os.getenv("DEMO_MANDIR_ADMIN_EMAIL", "demo.admin@sanmitra.local")
-    DEMO_MANDIR_ADMIN_PASSWORD = os.getenv("DEMO_MANDIR_ADMIN_PASSWORD", "DemoTemple@123")
+    # No default password — must be set explicitly when DEMO_MANDIR_BOOTSTRAP=true.
+    DEMO_MANDIR_ADMIN_PASSWORD = os.getenv("DEMO_MANDIR_ADMIN_PASSWORD", "")
     DEMO_MANDIR_ADMIN_PHONE = os.getenv("DEMO_MANDIR_ADMIN_PHONE", "+91-9000000001")
+
+
+    def validate(self) -> None:
+        """Fail fast on dangerous mis-configuration before the app accepts traffic."""
+        is_prod = self._IS_PRODUCTION
+
+        if not self.JWT_SECRET:
+            if is_prod:
+                raise ValueError(
+                    "JWT_SECRET must be set in production. "
+                    "Generate one with: python -c \"import secrets; print(secrets.token_hex(64))\""
+                )
+            _config_logger.warning(
+                "JWT_SECRET is not set. Tokens are signed with an empty secret. "
+                "Set JWT_SECRET before deploying to production."
+            )
+
+        if is_prod and self.AUTH_EMAIL_DEBUG_RETURN_LINK:
+            raise ValueError(
+                "AUTH_EMAIL_DEBUG_RETURN_LINK must be disabled in production "
+                "(it returns one-time tokens in API responses)."
+            )
+
+        if is_prod and self.MOBILE_OTP_DEBUG_RETURN_CODE:
+            raise ValueError(
+                "MOBILE_OTP_DEBUG_RETURN_CODE must be disabled in production "
+                "(it returns OTP codes in API responses)."
+            )
+
+        if self.SUPER_ADMIN_BOOTSTRAP and not self.SUPER_ADMIN_PASSWORD:
+            raise ValueError(
+                "SUPER_ADMIN_PASSWORD must be set when SUPER_ADMIN_BOOTSTRAP=true."
+            )
+
+        if self.DEMO_MANDIR_BOOTSTRAP and not self.DEMO_MANDIR_ADMIN_PASSWORD:
+            raise ValueError(
+                "DEMO_MANDIR_ADMIN_PASSWORD must be set when DEMO_MANDIR_BOOTSTRAP=true."
+            )
+
+        if is_prod and (self.SUPER_ADMIN_BOOTSTRAP or self.DEMO_MANDIR_BOOTSTRAP):
+            _config_logger.warning(
+                "Bootstrap flags (SUPER_ADMIN_BOOTSTRAP / DEMO_MANDIR_BOOTSTRAP) are enabled "
+                "in a production environment. Ensure this is intentional."
+            )
+
+        if not self.OTP_PEPPER:
+            if is_prod:
+                raise ValueError(
+                    "OTP_PEPPER must be set in production. "
+                    "Generate one with: python -c \"import secrets; print(secrets.token_hex(32))\""
+                )
+            _config_logger.warning(
+                "OTP_PEPPER is not set. OTP hashes will use JWT_SECRET as fallback. "
+                "Set OTP_PEPPER before deploying to production."
+            )
+
+        # DB pool recycle: warn if > 5 minutes (Render/RDS drop idle connections ~300s)
+        if self.PG_POOL_RECYCLE_SECONDS > 300:
+            _config_logger.warning(
+                "PG_POOL_RECYCLE_SECONDS=%d is high. Consider setting it to <=300 to avoid "
+                "stale connection errors on Render/RDS (which drops idle connections ~300s).",
+                self.PG_POOL_RECYCLE_SECONDS,
+            )
 
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    s = Settings()
+    s.validate()
+    return s
 

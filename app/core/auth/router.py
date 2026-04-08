@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import secrets
 import smtplib
 from datetime import datetime, timedelta, timezone
@@ -8,6 +9,8 @@ from typing import Any
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+
+_auth_logger = logging.getLogger(__name__)
 from app.config import get_settings
 
 from app.core.auth.dependencies import get_current_user
@@ -311,8 +314,10 @@ async def register_request(payload: dict, request: Request):
         body=body,
     )
 
-    if not sent and not settings.AUTH_EMAIL_DEBUG_RETURN_LINK:
-        raise HTTPException(status_code=503, detail=f"Activation email could not be sent: {error}")
+    if not sent:
+        _auth_logger.error("Activation email delivery failed for %s: %s", email, error)
+        if not settings.AUTH_EMAIL_DEBUG_RETURN_LINK:
+            raise HTTPException(status_code=503, detail="Activation email could not be sent. Please try again later.")
 
     response: dict[str, Any] = {
         "status": "sent",
@@ -321,6 +326,7 @@ async def register_request(payload: dict, request: Request):
     if settings.AUTH_EMAIL_DEBUG_RETURN_LINK:
         response["activation_link_debug"] = activation_link
         if error:
+            # Only expose delivery error detail in debug mode (non-production).
             response["email_delivery_error"] = error
 
     return response
@@ -409,8 +415,10 @@ async def forgot_password(payload: dict, request: Request):
         body=body,
     )
 
-    if not sent and not settings.AUTH_EMAIL_DEBUG_RETURN_LINK:
-        raise HTTPException(status_code=503, detail=f"Password reset email could not be sent: {error}")
+    if not sent:
+        _auth_logger.error("Password reset email delivery failed for %s: %s", email, error)
+        if not settings.AUTH_EMAIL_DEBUG_RETURN_LINK:
+            raise HTTPException(status_code=503, detail="Password reset email could not be sent. Please try again later.")
 
     if settings.AUTH_EMAIL_DEBUG_RETURN_LINK:
         response["reset_link_debug"] = reset_link
@@ -435,9 +443,15 @@ async def reset_password(payload: dict):
 
     doc = await _load_valid_email_action(action="password_reset", token=token)
     email = str(doc.get("email") or "").strip().lower()
+    meta = dict(doc.get("meta") or {})
+    token_user_id = str(meta.get("user_id") or "").strip()
 
     users = get_collection("core_users")
-    user = await users.find_one({"email": email, "is_active": True})
+    # Look up by user_id from the token meta to prevent cross-tenant email replay.
+    if token_user_id:
+        user = await users.find_one({"user_id": token_user_id, "email": email, "is_active": True})
+    else:
+        user = await users.find_one({"email": email, "is_active": True})
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 

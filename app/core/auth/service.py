@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import re
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -7,6 +8,8 @@ from typing import Any
 
 from fastapi import HTTPException
 import httpx
+
+_service_logger = logging.getLogger(__name__)
 
 from app.config import get_settings
 from app.core.auth.security import create_access_token, create_refresh_token, decode_token, verify_password
@@ -57,7 +60,13 @@ def _hash_token(token: str) -> str:
 
 def _otp_hash(mobile: str, otp: str) -> str:
     settings = get_settings()
-    pepper = settings.JWT_SECRET or "sanmitra"
+    # Use a dedicated OTP_PEPPER env var to keep OTP hashing independent of JWT signing.
+    # Fall back to JWT_SECRET only if OTP_PEPPER is not configured (dev/test convenience).
+    pepper = settings.OTP_PEPPER or settings.JWT_SECRET
+    if not pepper:
+        # Last-resort fallback so dev environments without any secrets still work,
+        # but this path is explicitly warned about in Settings.validate().
+        pepper = "sanmitra-dev-pepper"
     return sha256(f"{mobile}|{otp}|{pepper}".encode("utf-8")).hexdigest()
 
 
@@ -185,18 +194,20 @@ async def _deliver_otp_via_twilio(*, mobile: str, code: str, expires_in: int) ->
                 auth=(sid, token),
             )
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Twilio OTP delivery failed: {exc}") from exc
+        _service_logger.error("Twilio HTTP request failed for %s: %s", mobile, exc, exc_info=True)
+        raise HTTPException(status_code=502, detail="OTP delivery failed. Please try again.") from exc
 
     if response.status_code >= 400:
-        detail = f"Twilio OTP delivery failed with status {response.status_code}"
+        # Log full Twilio response server-side; return a generic error to the client.
         try:
-            payload = response.json()
-            message = str(payload.get("message") or "").strip()
-            if message:
-                detail = f"{detail}: {message}"
+            twilio_msg = response.json().get("message", "")
         except Exception:
-            pass
-        raise HTTPException(status_code=502, detail=detail)
+            twilio_msg = response.text
+        _service_logger.error(
+            "Twilio OTP delivery failed for %s: status=%d message=%s",
+            mobile, response.status_code, twilio_msg,
+        )
+        raise HTTPException(status_code=502, detail="OTP delivery failed. Please try again.")
 
     message_sid = ""
     try:

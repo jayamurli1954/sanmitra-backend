@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from math import ceil
 from typing import Any
 
@@ -14,7 +14,7 @@ router = APIRouter(tags=["mitrabooks-compat"])
 
 
 def _now_iso() -> str:
-    return datetime.utcnow().isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _as_float(value: Any, default: float = 0.0) -> float:
@@ -206,7 +206,7 @@ def _invoice_doc(payload: dict[str, Any], tenant_id: str, app_key: str, company_
         "due_date": payload.get("due_date"),
         "customer_id": payload.get("customer_id"),
         "vendor_id": payload.get("vendor_id"),
-        "financial_year": str(payload.get("financial_year") or f"{datetime.utcnow().year}-{datetime.utcnow().year + 1}"),
+        "financial_year": str(payload.get("financial_year") or f"{datetime.now(timezone.utc).year}-{datetime.now(timezone.utc).year + 1}"),
         "lines": payload.get("lines") or [],
         "total_amount": total_amount,
         "paid_amount": _as_float(payload.get("paid_amount"), 0.0),
@@ -349,7 +349,7 @@ def _txn_doc(payload: dict[str, Any], tenant_id: str, app_key: str, company_id: 
         "voucher_type": str(payload.get("voucher_type") or "journal"),
         "voucher_number": str(payload.get("voucher_number") or f"VCH-{txn_id:05d}"),
         "voucher_date": str(payload.get("voucher_date") or date.today().isoformat()),
-        "financial_year": str(payload.get("financial_year") or f"{datetime.utcnow().year}-{datetime.utcnow().year + 1}"),
+        "financial_year": str(payload.get("financial_year") or f"{datetime.now(timezone.utc).year}-{datetime.now(timezone.utc).year + 1}"),
         "status": str(payload.get("status") or "draft"),
         "total_debit": _as_float(payload.get("total_debit"), 0.0),
         "total_credit": _as_float(payload.get("total_credit"), 0.0),
