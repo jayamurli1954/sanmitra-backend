@@ -727,13 +727,23 @@ async def ledger_report(
         if to_date is None or (line_date is not None and line_date <= to_date):
             closing_balance = _safe_decimal(last_line.get('running_balance', opening_balance))
 
+    def _to_date_str(value: Any) -> str | None:
+        """Guarantee a JSON-safe ISO date string regardless of whether *value*
+        comes back from SQLAlchemy as a ``date`` object or an ISO string."""
+        if value is None:
+            return None
+        if hasattr(value, 'isoformat'):
+            return value.isoformat()[:10]
+        raw = str(value).strip()
+        return raw[:10] if raw else None
+
     entries = []
     for line in filtered:
         debit = _as_float(line.get('debit'), 0.0)
         credit = _as_float(line.get('credit'), 0.0)
         entries.append(
             {
-                'date': line.get('entry_date'),
+                'date': _to_date_str(line.get('entry_date')),
                 'entry_number': f"JE-{line.get('journal_id')}",
                 'narration': line.get('description') or line.get('reference') or '',
                 'description': line.get('description') or line.get('reference') or '',
@@ -743,13 +753,16 @@ async def ledger_report(
             }
         )
 
+    first_entry_date = _to_date_str(filtered[0].get('entry_date')) if filtered else None
+    last_entry_date = _to_date_str(filtered[-1].get('entry_date')) if filtered else None
+
     return {
         'account_id': account.id,
         'account_code': _fallback_account_code(account.code, account.name, account.id),
         'account_name': account.name,
         'account_type': account.type,
-        'from_date': from_date.isoformat() if from_date else (filtered[0].get('entry_date') if filtered else None),
-        'to_date': to_date.isoformat() if to_date else (filtered[-1].get('entry_date') if filtered else None),
+        'from_date': from_date.isoformat() if from_date else first_entry_date,
+        'to_date': to_date.isoformat() if to_date else last_entry_date,
         'opening_balance': _as_float(opening_balance, 0.0),
         'closing_balance': _as_float(closing_balance, 0.0),
         'entries': entries,

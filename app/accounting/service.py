@@ -823,10 +823,18 @@ async def get_ledger_lines(session: AsyncSession, *, tenant_id: str, account_id:
         debit = Decimal(row.debit)
         credit = Decimal(row.credit)
         running += debit - credit
+        entry_date_val = row.entry_date
+        entry_date_str = (
+            entry_date_val.isoformat()
+            if hasattr(entry_date_val, "isoformat")
+            else str(entry_date_val)[:10]
+            if entry_date_val is not None
+            else None
+        )
         output.append(
             {
                 "journal_id": row.journal_id,
-                "entry_date": row.entry_date,
+                "entry_date": entry_date_str,
                 "reference": row.reference,
                 "description": row.description,
                 "debit": debit,
