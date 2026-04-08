@@ -35,8 +35,23 @@ class FakeCollection:
         return FakeCursor([dict(doc) for doc in self.docs if matches(doc)])
 
 
+_POSTED_KEYS = {'don_don-1', 'sev_sev-1'}
+
+
+class FakeResult:
+    """Mimics the SQLAlchemy result object returned by session.execute()."""
+    def __init__(self, rows):
+        self._rows = rows
+
+    def fetchall(self):
+        return self._rows
+
+
 class DummySession:
-    pass
+    """Fake AsyncSession — returns the known posted idempotency keys for any IN query."""
+
+    async def execute(self, _stmt):
+        return FakeResult([(key,) for key in _POSTED_KEYS])
 
 
 @pytest.fixture()
@@ -81,14 +96,10 @@ def report_client(monkeypatch):
             raise AssertionError(f'Unexpected collection: {name}')
         return collections[name]
 
-    async def fake_journal_exists(_session, _tenant_id, idempotency_key):
-        return idempotency_key in {'don_don-1', 'sev_sev-1'}
-
     async def fake_session():
         yield DummySession()
 
     monkeypatch.setattr(report_helpers, 'get_collection', fake_get_collection)
-    monkeypatch.setattr(report_helpers, '_journal_entry_exists', fake_journal_exists)
     app.dependency_overrides[get_current_user] = lambda: {
         'tenant_id': 'tenant-1',
         'role': 'tenant_admin',

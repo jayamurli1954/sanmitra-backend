@@ -195,14 +195,6 @@ def _normalize_status(value: Any, *, default: str = "Completed") -> str:
     }
     return mapping.get(raw, raw.replace("_", " ").title())
 
-async def _journal_entry_exists(session: AsyncSession, tenant_id: str, idempotency_key: str) -> bool:
-    stmt = select(JournalEntry.id).where(
-        JournalEntry.tenant_id == tenant_id,
-        JournalEntry.idempotency_key == idempotency_key,
-    )
-    return (await session.execute(stmt)).scalar_one_or_none() is not None
-
-
 async def _posted_docs(
     session: AsyncSession,
     *,
@@ -220,7 +212,8 @@ async def _posted_docs(
     except Exception:
         return []
 
-    out: list[dict[str, Any]] = []
+    # Step 1: apply date filter and collect candidate docs + their idempotency keys
+    candidates: list[tuple[dict[str, Any], str]] = []
     for doc in docs:
         doc_id = str(doc.get(id_field) or doc.get('id') or doc.get('_id') or '').strip()
         if not doc_id:
@@ -233,12 +226,22 @@ async def _posted_docs(
         if to_date and created_date and created_date > to_date:
             continue
 
-        if not await _journal_entry_exists(session, tenant_id, f'{idempotency_prefix}{doc_id}'):
-            continue
+        candidates.append((doc, f'{idempotency_prefix}{doc_id}'))
 
-        out.append(doc)
+    if not candidates:
+        return []
 
-    return out
+    # Step 2: single batch query — replaces N+1 per-document queries
+    keys = [key for _, key in candidates]
+    stmt = select(JournalEntry.idempotency_key).where(
+        JournalEntry.tenant_id == tenant_id,
+        JournalEntry.idempotency_key.in_(keys),
+    )
+    result = await session.execute(stmt)
+    posted_keys: set[str] = {row[0] for row in result.fetchall()}
+
+    # Step 3: keep only docs whose journal entry was found
+    return [doc for doc, key in candidates if key in posted_keys]
 
 
 async def posted_donations(
