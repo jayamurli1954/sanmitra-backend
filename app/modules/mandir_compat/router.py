@@ -97,6 +97,32 @@ _MANDIR_INCOME_LEGACY_CODES: dict[str, set[str]] = {
     'seva': {'4100'},
 }
 
+_MANDIR_LEGACY_ACCOUNT_CODE_MAP: dict[str, str] = {
+    "1001": "11001",
+    "1002": "12001",
+    "4000": "44001",
+    "4100": "42002",
+}
+
+
+def _normalize_mandir_account_code(code: Any, *, account_name: Any = None) -> str:
+    raw_code = str(code or "").strip()
+    if not raw_code:
+        return ""
+
+    mapped = _MANDIR_LEGACY_ACCOUNT_CODE_MAP.get(raw_code)
+    if mapped:
+        return mapped
+
+    if raw_code.isdigit() and len(raw_code) < 5:
+        normalized_name = str(account_name or "").strip().lower()
+        if "cash" in normalized_name or "hundi" in normalized_name:
+            return "11001"
+        if "bank" in normalized_name:
+            return "12001"
+
+    return raw_code
+
 
 def _normalize_income_category(value: Any) -> str:
     return ' '.join(str(value or '').strip().lower().split())
@@ -248,6 +274,7 @@ async def _resolve_mandir_payment_account_id(
         code_candidate = raw_value
         if " - " in raw_value:
             code_candidate = raw_value.split(" - ", 1)[0].strip()
+        code_candidate = _normalize_mandir_account_code(code_candidate)
 
         if code_candidate.isdigit():
             by_code_stmt = select(Account.id).where(
@@ -383,8 +410,11 @@ def _mandir_seed_accounts() -> list[dict[str, Any]]:
 def _mandir_account_view(doc: dict[str, Any]) -> dict[str, Any]:
     account_id = doc.get("account_id") or doc.get("_id")
     account_id_str = str(account_id or "")
-    account_code = str(doc.get("account_code") or account_id_str)
     account_name = str(doc.get("account_name") or doc.get("name") or "Account")
+    account_code = _normalize_mandir_account_code(
+        doc.get("account_code") or account_id_str,
+        account_name=account_name,
+    )
     account_type = str(doc.get("account_type") or "asset")
 
     cash_bank_nature = str(doc.get("cash_bank_nature") or "").lower()
@@ -425,18 +455,19 @@ async def _sync_mandir_sql_accounts_from_seed(
 
     valid_types = {"asset", "liability", "equity", "income", "expense"}
     valid_classifications = {"personal", "real", "nominal"}
+    def _index_existing_accounts(rows: list[Account]) -> tuple[dict[str, Account], dict[tuple[str, str], list[Account]]]:
+        by_code: dict[str, Account] = {}
+        by_key: dict[tuple[str, str], list[Account]] = {}
+        for acc in rows:
+            code = str(acc.code or "").strip()
+            if code:
+                by_code[code] = acc
+            key = (" ".join(str(acc.name or "").strip().lower().split()), str(acc.type or "").strip().lower())
+            by_key.setdefault(key, []).append(acc)
+        return by_code, by_key
 
     existing_accounts = await list_accounts(session, tenant_id=tenant_id)
-    existing_by_code: dict[str, Account] = {}
-    existing_by_key: dict[tuple[str, str], list[Account]] = {}
-
-    for acc in existing_accounts:
-        code = str(acc.code or "").strip()
-        if code:
-            existing_by_code[code] = acc
-        key = (" ".join(str(acc.name or "").strip().lower().split()), str(acc.type or "").strip().lower())
-        existing_by_key.setdefault(key, []).append(acc)
-
+    existing_by_code, existing_by_key = _index_existing_accounts(existing_accounts)
     created = 0
     updated = 0
     dirty = False
@@ -486,6 +517,9 @@ async def _sync_mandir_sql_accounts_from_seed(
                 existing_by_key.setdefault(key, []).append(created_acc)
             except IntegrityError:
                 await session.rollback()
+                # Rollback expires ORM instances; rebuild indexes from a fresh query.
+                existing_accounts = await list_accounts(session, tenant_id=tenant_id)
+                existing_by_code, existing_by_key = _index_existing_accounts(existing_accounts)
             continue
 
         changed = False
@@ -1165,6 +1199,8 @@ async def _resolve_tenant_for_mandir_request(
 async def _payment_accounts(tenant_id: str, app_key: str) -> dict[str, list[dict[str, Any]]]:
     cash_accounts: list[dict[str, Any]] = []
     bank_accounts: list[dict[str, Any]] = []
+    seen_cash_codes: set[str] = set()
+    seen_bank_codes: set[str] = set()
 
     try:
         accounts = get_collection("accounting_accounts")
@@ -1172,16 +1208,28 @@ async def _payment_accounts(tenant_id: str, app_key: str) -> dict[str, list[dict
         docs = await accounts.find({"tenant_id": tenant_id, "app_key": app_key, "is_active": True}).to_list(length=200)
         for doc in docs:
             item = _mandir_account_view(doc)
+            account_code = str(item.get("account_code") or "").strip()
+            # Mandir COA uses 5-digit numeric account codes.
+            if account_code.isdigit() and len(account_code) < 5:
+                continue
+
             account_type = item["account_type"].lower()
             cash_bank_nature = str(item.get("cash_bank_nature") or "").lower()
             name = str(item.get("account_name") or "").lower()
             if cash_bank_nature == "cash" or account_type in {"cash", "cash_in_hand"} or ("cash" in name and item.get("is_cash_bank")):
+                if account_code and account_code in seen_cash_codes:
+                    continue
                 cash_accounts.append(item)
+                if account_code:
+                    seen_cash_codes.add(account_code)
             elif cash_bank_nature == "bank" or account_type in {"bank", "bank_account", "current_asset"} or ("bank" in name and item.get("is_cash_bank")):
+                if account_code and account_code in seen_bank_codes:
+                    continue
                 bank_accounts.append(item)
+                if account_code:
+                    seen_bank_codes.add(account_code)
     except Exception:
         pass
-
     if not cash_accounts:
         cash_accounts = [{
             "id": "cash-main",
