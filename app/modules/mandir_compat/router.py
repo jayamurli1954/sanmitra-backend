@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from decimal import Decimal
 
 from app.core.auth.dependencies import get_current_user
+from app.core.audit.service import log_audit_event
 from app.core.tenants.context import resolve_app_key, resolve_tenant_id
 from app.db.mongo import get_collection
 from app.db.postgres import get_async_session
@@ -438,7 +439,12 @@ def _mandir_account_view(doc: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _ensure_default_mandir_accounts(tenant_id: str, app_key: str) -> int:
-    result = await _upsert_mandir_account_docs(tenant_id, app_key, _mandir_seed_accounts())
+    result = await _upsert_mandir_account_docs(
+        tenant_id,
+        app_key,
+        _mandir_seed_accounts(),
+        update_existing=False,
+    )
     return result["created"]
 
 
@@ -743,7 +749,13 @@ def _prepare_mandir_account_docs(seed_rows: list[dict[str, Any]], tenant_id: str
     return prepared_rows
 
 
-async def _upsert_mandir_account_docs(tenant_id: str, app_key: str, seed_rows: list[dict[str, Any]]) -> dict[str, int]:
+async def _upsert_mandir_account_docs(
+    tenant_id: str,
+    app_key: str,
+    seed_rows: list[dict[str, Any]],
+    *,
+    update_existing: bool = True,
+) -> dict[str, int]:
     accounts = get_collection("accounting_accounts")
     existing_docs = await accounts.find({"tenant_id": tenant_id, "app_key": app_key}).to_list(length=1000)
     existing_by_code = {
@@ -774,7 +786,8 @@ async def _upsert_mandir_account_docs(tenant_id: str, app_key: str, seed_rows: l
             await accounts.insert_one(row_doc)
             created += 1
             continue
-
+        if not update_existing:
+            continue
         if not _safe_bool(existing.get("is_active"), True):
             reactivated += 1
         else:
@@ -2051,6 +2064,123 @@ async def mandir_accounts_hierarchy(_current_user: dict = Depends(get_current_us
     docs = await accounts.find({"tenant_id": tenant_id, "app_key": app_key, "is_active": True}).to_list(length=500)
     return [_mandir_account_view(doc) for doc in sorted(docs, key=lambda item: str(item.get("account_code") or item.get("account_id") or ""))]
 
+
+@router.put("/accounts/{account_id}")
+async def mandir_accounts_update(
+    account_id: str,
+    payload: dict[str, Any],
+    reason: str = Query(..., min_length=1),
+    session: AsyncSession = Depends(get_async_session),
+    _current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = resolve_tenant_id(_current_user, x_tenant_id)
+    app_key = resolve_app_key((x_app_key or _current_user.get("app_key") or "mandirmitra").strip())
+
+    reason_text = str(reason or "").strip()
+    if not reason_text:
+        raise HTTPException(status_code=400, detail="Reason is required for audit trail")
+
+    accounts = get_collection("accounting_accounts")
+    docs = await accounts.find({"tenant_id": tenant_id, "app_key": app_key}).to_list(length=1000)
+
+    raw_identifier = str(account_id or "").strip()
+    normalized_identifier = _normalize_mandir_account_code(raw_identifier)
+
+    def _matches_identifier(doc: dict[str, Any]) -> bool:
+        doc_id = str(doc.get("account_id") or "").strip()
+        doc_code = str(doc.get("account_code") or doc.get("account_id") or "").strip()
+        normalized_doc_code = _normalize_mandir_account_code(
+            doc_code,
+            account_name=doc.get("account_name") or doc.get("name"),
+        )
+        return raw_identifier in {doc_id, doc_code, normalized_doc_code} or normalized_identifier in {doc_id, doc_code, normalized_doc_code}
+
+    target_doc = next((doc for doc in docs if _matches_identifier(doc)), None)
+    if target_doc is None:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    updated_name = str(payload.get("account_name") or target_doc.get("account_name") or target_doc.get("name") or "").strip()
+    if not updated_name:
+        raise HTTPException(status_code=400, detail="Account name is required")
+
+    now = datetime.now(timezone.utc).isoformat()
+    account_code = _normalize_mandir_account_code(
+        target_doc.get("account_code") or target_doc.get("account_id") or raw_identifier,
+        account_name=target_doc.get("account_name") or target_doc.get("name"),
+    )
+
+    update_doc: dict[str, Any] = {
+        "account_name": updated_name,
+        "name": updated_name,
+        "updated_at": now,
+        "updated_by": str(_current_user.get("sub") or _current_user.get("email") or "system"),
+        "update_reason": reason_text,
+    }
+
+    if "account_name_kannada" in payload:
+        update_doc["account_name_kannada"] = _safe_optional_str(payload.get("account_name_kannada"))
+    if "description" in payload:
+        update_doc["description"] = _safe_optional_str(payload.get("description"))
+
+    update_query = {"tenant_id": tenant_id, "app_key": app_key}
+    if account_code:
+        update_query["account_code"] = account_code
+    else:
+        update_query["account_id"] = target_doc.get("account_id")
+
+    await accounts.update_one(update_query, {"$set": update_doc}, upsert=False)
+
+    if account_code:
+        try:
+            account_stmt = select(Account).where(
+                Account.tenant_id == tenant_id,
+                Account.code == account_code,
+            )
+            sql_account = (await session.execute(account_stmt)).scalar_one_or_none()
+            if sql_account is not None and str(sql_account.name or "").strip() != updated_name:
+                sql_account.name = updated_name
+                await session.commit()
+        except SQLAlchemyError as exc:
+            await session.rollback()
+            logger.warning(
+                "Failed to sync SQL account name for tenant %s code %s: %s",
+                tenant_id,
+                account_code,
+                exc,
+            )
+
+    try:
+        old_value = {
+            "account_name": target_doc.get("account_name") or target_doc.get("name"),
+            "account_name_kannada": target_doc.get("account_name_kannada"),
+            "description": target_doc.get("description"),
+        }
+        new_value = {
+            "account_name": update_doc.get("account_name"),
+            "account_name_kannada": update_doc.get("account_name_kannada", old_value.get("account_name_kannada")),
+            "description": update_doc.get("description", old_value.get("description")),
+            "reason": reason_text,
+        }
+        await log_audit_event(
+            tenant_id=tenant_id,
+            user_id=str(_current_user.get("sub") or _current_user.get("email") or "system"),
+            product="mandirmitra",
+            action="coa_account_updated",
+            entity_type="accounting_account",
+            entity_id=str(account_code or target_doc.get("account_id") or raw_identifier),
+            old_value=old_value,
+            new_value=new_value,
+        )
+    except Exception as exc:
+        logger.warning("Failed to write COA update audit log for tenant %s: %s", tenant_id, exc)
+
+    updated_doc = await accounts.find_one(update_query)
+    if not updated_doc:
+        updated_doc = {**target_doc, **update_doc, "account_code": account_code}
+
+    return _mandir_account_view(updated_doc)
 
 @router.post("/accounts/import-legacy")
 async def mandir_accounts_import_legacy(
