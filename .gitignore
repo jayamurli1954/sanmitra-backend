@@ -50,3 +50,4 @@ START_LEGALMITRA_UNIFIED.bat
 !app/modules/mandir_compat/data/
 !app/modules/mandir_compat/data/legacy_mandir_coa.json
 
+.vercel
