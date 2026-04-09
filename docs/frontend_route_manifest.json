@@ -1,0 +1,2468 @@
+{
+  "version": 1,
+  "generated_at": "2026-04-09T18:07:02.278113+00:00",
+  "route_count": 207,
+  "routes": [
+    {
+      "app": "GharMitra",
+      "method": "DELETE",
+      "path": "/accounting/accounts/{param}",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/src/services/accountingService.ts",
+          "line": 111
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "DELETE",
+      "path": "/attachments/{param}",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/attachmentService.js",
+          "line": 35
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "DELETE",
+      "path": "/flats/{param}",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/src/services/flatsService.ts",
+          "line": 139
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "DELETE",
+      "path": "/maintenance/bills/{param}/{param}",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/src/services/maintenanceService.ts",
+          "line": 183
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "DELETE",
+      "path": "/maintenance/fixed-expenses/{param}",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/src/services/maintenanceService.ts",
+          "line": 127
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "DELETE",
+      "path": "/meetings/{param}",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/src/services/meetingService.ts",
+          "line": 232
+        },
+        {
+          "file": "external-repos/GharMitra/web/src/services/meetingService.js",
+          "line": 40
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "DELETE",
+      "path": "/physical-documents/{param}",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/src/services/physicalDocumentsService.ts",
+          "line": 97
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "DELETE",
+      "path": "/resources/files/{param}",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/src/services/resourceService.ts",
+          "line": 63
+        },
+        {
+          "file": "external-repos/GharMitra/web/src/services/resourceService.js",
+          "line": 39
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "DELETE",
+      "path": "/roles/{param}",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/src/services/rolesService.ts",
+          "line": 73
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "DELETE",
+      "path": "/transactions/{param}",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/src/services/transactionsService.ts",
+          "line": 97
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/accounting/accounts",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/screens/AddAssetScreen.jsx",
+          "line": 38
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/accounting/validate-balance-sheet",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/src/services/accountingService.ts",
+          "line": 150
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/assets",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/screens/AssetRegisterScreen.jsx",
+          "line": 15
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/assets/{param}",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/screens/AssetDetailScreen.jsx",
+          "line": 17
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/attachments/journal/{param}",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/attachmentService.js",
+          "line": 26
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/attachments/{param}",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/attachmentService.js",
+          "line": 55
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/auth/me",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/authService.js",
+          "line": 76
+        },
+        {
+          "file": "external-repos/GharMitra/web/src/services/authService.js",
+          "line": 320
+        },
+        {
+          "file": "external-repos/GharMitra/web/src/services/authService.js",
+          "line": 432
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/dashboard/summary",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/screens/DashboardScreen.jsx",
+          "line": 182
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/database/backups",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/screens/SettingsScreen.jsx",
+          "line": 3673
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/database/backups/{param}/download",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/screens/SettingsScreen.jsx",
+          "line": 3718
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/financial-years",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/financialYearService.js",
+          "line": 9
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/financial-years/active",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/financialYearService.js",
+          "line": 17
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/flats",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/screens/MaintenanceScreen.jsx",
+          "line": 137
+        },
+        {
+          "file": "external-repos/GharMitra/web/src/services/flatsService.js",
+          "line": 11
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/flats/{param}",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/flatsService.js",
+          "line": 19
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/journal",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/src/services/accountingService.ts",
+          "line": 178
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/journal/{param}",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/src/services/accountingService.ts",
+          "line": 186
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/maintenance/allowed-bill-month",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/src/services/maintenanceService.ts",
+          "line": 155
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/maintenance/bills",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/screens/MaintenanceScreen.jsx",
+          "line": 71
+        },
+        {
+          "file": "external-repos/GharMitra/web/src/screens/MaintenanceScreen.jsx",
+          "line": 227
+        },
+        {
+          "file": "external-repos/GharMitra/web/src/screens/MaintenanceScreen.jsx",
+          "line": 268
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/maintenance/expense-accounts-for-period",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/screens/MaintenanceScreen.jsx",
+          "line": 97
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/meetings",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/meetingService.js",
+          "line": 10
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/meetings/{param}",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/meetingService.js",
+          "line": 16
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/meetings/{param}/details",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/meetingService.js",
+          "line": 22
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/member-onboarding",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/meetingService.js",
+          "line": 70
+        },
+        {
+          "file": "external-repos/GharMitra/web/src/services/memberOnboardingService.js",
+          "line": 38
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/member-onboarding/debug",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/screens/MembersScreen.jsx",
+          "line": 36
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/member-onboarding/my-profile",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/memberOnboardingService.js",
+          "line": 46
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/member-onboarding/{param}/checklist",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/memberOnboardingService.js",
+          "line": 62
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/messages/rooms",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/messagesService.js",
+          "line": 8
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/messages/rooms/{param}/messages",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/messagesService.js",
+          "line": 16
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/move-governance/calculate-final-bill/{param}",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/moveGovernanceService.js",
+          "line": 70
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/move-governance/generate-ndc/{param}",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/moveGovernanceService.js",
+          "line": 35
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/move-governance/personal-arrears",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/moveGovernanceService.js",
+          "line": 26
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/move-governance/police-verification-form/{param}",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/moveGovernanceService.js",
+          "line": 53
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/onboarding-imports/templates/{param}.csv",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/onboardingImportService.js",
+          "line": 5
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/payments/{param}/receipt/pdf",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/src/services/paymentService.ts",
+          "line": 189
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/physical-documents/society/{param}/summary",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/src/services/physicalDocumentsService.ts",
+          "line": 104
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/reports/balance-sheet",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/src/services/reportsService.ts",
+          "line": 24
+        },
+        {
+          "file": "external-repos/GharMitra/web/src/screens/AccountingScreen.jsx",
+          "line": 2418
+        },
+        {
+          "file": "external-repos/GharMitra/web/src/screens/AccountingScreen.jsx",
+          "line": 2549
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/reports/bank-ledger",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/src/services/reportsService.ts",
+          "line": 70
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/reports/cash-book",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/src/services/reportsService.ts",
+          "line": 56
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/reports/general-ledger",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/src/services/reportsService.ts",
+          "line": 75
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/reports/income-and-expenditure",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/src/services/reportsService.ts",
+          "line": 17
+        },
+        {
+          "file": "external-repos/GharMitra/web/src/screens/AccountingScreen.jsx",
+          "line": 2426
+        },
+        {
+          "file": "external-repos/GharMitra/web/src/screens/AccountingScreen.jsx",
+          "line": 2556
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/reports/ledger",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/screens/AccountingScreen.jsx",
+          "line": 2403
+        },
+        {
+          "file": "external-repos/GharMitra/web/src/screens/AccountingScreen.jsx",
+          "line": 2541
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/reports/member-dues",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/src/services/reportsService.ts",
+          "line": 31
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/reports/member-ledger/{param}",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/src/services/reportsService.ts",
+          "line": 44
+        },
+        {
+          "file": "external-repos/GharMitra/src/services/reportsService.ts",
+          "line": 185
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/reports/receipts-and-payments",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/src/services/reportsService.ts",
+          "line": 10
+        },
+        {
+          "file": "external-repos/GharMitra/web/src/screens/AccountingScreen.jsx",
+          "line": 2435
+        },
+        {
+          "file": "external-repos/GharMitra/web/src/screens/AccountingScreen.jsx",
+          "line": 2563
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/reports/trial-balance",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/src/services/reportsService.ts",
+          "line": 49
+        },
+        {
+          "file": "external-repos/GharMitra/web/src/screens/AccountingScreen.jsx",
+          "line": 2324
+        },
+        {
+          "file": "external-repos/GharMitra/web/src/screens/AccountingScreen.jsx",
+          "line": 2392
+        },
+        {
+          "file": "external-repos/GharMitra/web/src/screens/AccountingScreen.jsx",
+          "line": 2537
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/resources/files",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/resourceService.js",
+          "line": 31
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/settings/society",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/settingsService.js",
+          "line": 11
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/society/{param}",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/screens/DashboardScreen.jsx",
+          "line": 150
+        },
+        {
+          "file": "external-repos/GharMitra/web/src/services/membershipV2Service.js",
+          "line": 59
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/templates/{param}/download-blank",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/src/services/resourceService.ts",
+          "line": 165
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/users",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/screens/SettingsScreen.jsx",
+          "line": 2661
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/v2/me/memberships",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/membershipV2Service.js",
+          "line": 39
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/v2/societies/search",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/membershipV2Service.js",
+          "line": 12
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/v2/societies/{param}/join-requests",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/membershipV2Service.js",
+          "line": 22
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/v2/societies/{param}/units",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/membershipV2Service.js",
+          "line": 44
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "PATCH",
+      "path": "/complaints/{param}",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/complaintsService.js",
+          "line": 20
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "PATCH",
+      "path": "/meetings/{param}",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/meetingService.js",
+          "line": 34
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "PATCH",
+      "path": "/member-onboarding/{param}",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/memberOnboardingService.js",
+          "line": 54
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "PATCH",
+      "path": "/member-onboarding/{param}/checklist",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/memberOnboardingService.js",
+          "line": 70
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "PATCH",
+      "path": "/settings/society",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/settingsService.js",
+          "line": 19
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "PATCH",
+      "path": "/users/{param}/role",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/screens/SettingsScreen.jsx",
+          "line": 2696
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/accounting/initialize-chart-of-accounts",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/src/services/accountingService.ts",
+          "line": 51
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/assets",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/screens/AddAssetScreen.jsx",
+          "line": 80
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/assets/{param}/scrap",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/screens/AssetDetailScreen.jsx",
+          "line": 39
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/attachments/upload/{param}",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/attachmentService.js",
+          "line": 13
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/auth/register",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/authService.js",
+          "line": 313
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/auth/reset-password",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/screens/ProfileScreen.jsx",
+          "line": 92
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/complaints",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/complaintsService.js",
+          "line": 15
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/database/backup",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/screens/SettingsScreen.jsx",
+          "line": 3688
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/database/backup-on-logout",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/authService.js",
+          "line": 374
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/database/restore",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/screens/SettingsScreen.jsx",
+          "line": 3706
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/financial-years",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/financialYearService.js",
+          "line": 25
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/financial-years/{param}/final-close",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/src/services/financialYearService.ts",
+          "line": 211
+        },
+        {
+          "file": "external-repos/GharMitra/web/src/services/financialYearService.js",
+          "line": 41
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/financial-years/{param}/provisional-close",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/financialYearService.js",
+          "line": 33
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/flats",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/flatsService.js",
+          "line": 27
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/journal",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/src/services/accountingService.ts",
+          "line": 167
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/maintenance/generate-bills",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/screens/MaintenanceScreen.jsx",
+          "line": 219
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/maintenance/post-bills",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/screens/MaintenanceScreen.jsx",
+          "line": 257
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/maintenance/regenerate-bill",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/screens/MaintenanceScreen.jsx",
+          "line": 1463
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/maintenance/reverse-bill",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/screens/MaintenanceScreen.jsx",
+          "line": 1223
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/meetings",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/meetingService.js",
+          "line": 28
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/meetings/{param}/attendance",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/meetingService.js",
+          "line": 45
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/meetings/{param}/minutes",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/meetingService.js",
+          "line": 51
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/meetings/{param}/resolutions",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/meetingService.js",
+          "line": 57
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/meetings/{param}/send-notice",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/meetingService.js",
+          "line": 63
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/member-onboarding",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/memberOnboardingService.js",
+          "line": 11
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/member-onboarding/bulk-import",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/src/services/usersService.ts",
+          "line": 63
+        },
+        {
+          "file": "external-repos/GharMitra/web/src/services/memberOnboardingService.js",
+          "line": 22
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/messages/rooms",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/messagesService.js",
+          "line": 32
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/messages/rooms/{param}/messages",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/messagesService.js",
+          "line": 24
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/move-governance/damage-claim",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/moveGovernanceService.js",
+          "line": 79
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/move-governance/transfer-flat-to-flat",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/moveGovernanceService.js",
+          "line": 18
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/move-governance/transfer-to-arrears",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/moveGovernanceService.js",
+          "line": 9
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/onboarding-imports/demo/import",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/onboardingImportService.js",
+          "line": 12
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/onboarding-imports/import/flats",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/onboardingImportService.js",
+          "line": 19
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/onboarding-imports/import/members",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/onboardingImportService.js",
+          "line": 32
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/resources/files/upload",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/resourceService.js",
+          "line": 18
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/roles/initialize",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/src/services/rolesService.ts",
+          "line": 41
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/society/register",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/src/services/societyService.ts",
+          "line": 85
+        },
+        {
+          "file": "external-repos/GharMitra/web/src/services/authService.js",
+          "line": 348
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/society/upload-document",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/screens/SettingsScreen.jsx",
+          "line": 60
+        },
+        {
+          "file": "external-repos/GharMitra/web/src/services/settingsService.js",
+          "line": 46
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/society/upload-logo",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/screens/SettingsScreen.jsx",
+          "line": 46
+        },
+        {
+          "file": "external-repos/GharMitra/web/src/services/settingsService.js",
+          "line": 30
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/transactions/{param}/reverse",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/screens/ReportsScreen.jsx",
+          "line": 233
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/v2/join-requests/{param}/approve",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/membershipV2Service.js",
+          "line": 29
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/v2/join-requests/{param}/reject",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/membershipV2Service.js",
+          "line": 34
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/v2/public/residents/complete-registration",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/membershipV2Service.js",
+          "line": 54
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/v2/public/societies/{param}/join-requests",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/membershipV2Service.js",
+          "line": 49
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/v2/societies/{param}/join-requests",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/membershipV2Service.js",
+          "line": 17
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "PUT",
+      "path": "/auth/me",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/screens/ProfileScreen.jsx",
+          "line": 63
+        }
+      ]
+    },
+    {
+      "app": "GharMitra",
+      "method": "PUT",
+      "path": "/flats/{param}",
+      "sources": [
+        {
+          "file": "external-repos/GharMitra/web/src/services/flatsService.js",
+          "line": 35
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "DELETE",
+      "path": "/api/v1/inventory/items/{param}",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Inventory.js",
+          "line": 186
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "DELETE",
+      "path": "/api/v1/sevas/{param}",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/SevaManagement.js",
+          "line": 353
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "DELETE",
+      "path": "/api/v1/temples/{param}/remove",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/TempleDirectory.js",
+          "line": 125
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/assets",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Assets.js",
+          "line": 86
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/assets/cwip",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Assets.js",
+          "line": 90
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/assets/reports/summary",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Assets.js",
+          "line": 81
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/backup-restore/status",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Settings.js",
+          "line": 254
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/bank-accounts",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/SetupWizard.js",
+          "line": 78
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/bank-reconciliation/accounts",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/accounting/BankReconciliation.js",
+          "line": 52
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/bank-reconciliation/statements/{param}/entries",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/accounting/BankReconciliation.js",
+          "line": 98
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/bank-reconciliation/statements/{param}/summary",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/accounting/BankReconciliation.js",
+          "line": 97
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/bank-reconciliation/statements/{param}/unmatched-book-entries",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/accounting/BankReconciliation.js",
+          "line": 99
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/dashboard/sacred-events/nakshatra/{param}",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Panchang.js",
+          "line": 122
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/dashboard/stats",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Dashboard.js",
+          "line": 170
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/devotees",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Devotees.js",
+          "line": 37
+        },
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Sevas.js",
+          "line": 238
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/devotees/search/by-mobile/{param}",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Dashboard.js",
+          "line": 332
+        },
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Donations.js",
+          "line": 262
+        },
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Sevas.js",
+          "line": 256
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/donations",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Devotees.js",
+          "line": 47
+        },
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Donations.js",
+          "line": 159
+        },
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Reports.js",
+          "line": 65
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/donations/categories",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/DetailedDonationReport.js",
+          "line": 57
+        },
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Donations.js",
+          "line": 145
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/donations/export/excel",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Reports.js",
+          "line": 123
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/donations/export/pdf",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Reports.js",
+          "line": 160
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/donations/payment-accounts",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Dashboard.js",
+          "line": 241
+        },
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Donations.js",
+          "line": 178
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/donations/report/daily",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Reports.js",
+          "line": 58
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/donations/report/monthly",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Reports.js",
+          "line": 61
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/donations/{param}/receipt/pdf",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/DetailedDonationReport.js",
+          "line": 96
+        },
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Donations.js",
+          "line": 574
+        },
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Donations.js",
+          "line": 598
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/financial-closing/closing-summary",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/accounting/FinancialClosing.js",
+          "line": 71
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/financial-closing/financial-years",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/accounting/FinancialClosing.js",
+          "line": 46
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/financial-closing/period-closings",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/accounting/FinancialClosing.js",
+          "line": 47
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/hr/attendance/monthly",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/HR.js",
+          "line": 53
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/hr/employees",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/HR.js",
+          "line": 49
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/hundi/masters",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Hundi.js",
+          "line": 54
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/hundi/openings",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Hundi.js",
+          "line": 58
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/inventory/items",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Inventory.js",
+          "line": 98
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/inventory/stock-balances",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Inventory.js",
+          "line": 92
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/inventory/summary",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Inventory.js",
+          "line": 91
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/onboarding-requests",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/TempleDirectory.js",
+          "line": 52
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/panchang/display-settings",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Dashboard.js",
+          "line": 190
+        },
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Panchang.js",
+          "line": 63
+        },
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/PanchangSettings.js",
+          "line": 68
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/panchang/display-settings/cities",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/PanchangSettings.js",
+          "line": 56
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/panchang/on-date",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Panchang.js",
+          "line": 143
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/panchang/today",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Dashboard.js",
+          "line": 191
+        },
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Panchang.js",
+          "line": 64
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/pincode/lookup",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Dashboard.js",
+          "line": 401
+        },
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Sevas.js",
+          "line": 491
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/reports/donations/category-wise",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/CategoryWiseDonationReport.js",
+          "line": 52
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/reports/donations/detailed",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/DetailedDonationReport.js",
+          "line": 77
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/reports/sevas/detailed",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/DetailedSevaReport.js",
+          "line": 77
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/reports/sevas/schedule",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/SevaSchedule.js",
+          "line": 36
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/role-permissions",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/components/RolePermissionMatrix.js",
+          "line": 38
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/role-permissions/assignable",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/SetupWizard.js",
+          "line": 80
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/setup-wizard/status",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/SetupWizard.js",
+          "line": 76
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/sevas",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/SevaManagement.js",
+          "line": 156
+        },
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Sevas.js",
+          "line": 222
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/sevas/bookings/{param}/receipt/pdf",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/DetailedSevaReport.js",
+          "line": 119
+        },
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Sevas.js",
+          "line": 674
+        },
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Sevas.js",
+          "line": 698
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/sevas/dropdown-options",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Sevas.js",
+          "line": 279
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/sevas/import/template",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/SevaManagement.js",
+          "line": 168
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/sevas/lists/priests",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Sevas.js",
+          "line": 270
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/sevas/payment-accounts",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Sevas.js",
+          "line": 342
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/sevas/reschedule/pending",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/SevaRescheduleApproval.js",
+          "line": 40
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/temples",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Settings.js",
+          "line": 208
+        },
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/SetupWizard.js",
+          "line": 77
+        },
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Sevas.js",
+          "line": 189
+        },
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/TempleDirectory.js",
+          "line": 51
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/users",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/SetupWizard.js",
+          "line": 79
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/users/me",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Profile.js",
+          "line": 68
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "POST",
+      "path": "/api/v1/accounts/import-legacy",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/accounting/ChartOfAccounts.js",
+          "line": 397
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "POST",
+      "path": "/api/v1/assets/revaluation",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Assets.js",
+          "line": 112
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "POST",
+      "path": "/api/v1/backup-restore/backup",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Settings.js",
+          "line": 266
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "POST",
+      "path": "/api/v1/bank-accounts",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/SetupWizard.js",
+          "line": 165
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "POST",
+      "path": "/api/v1/bank-reconciliation/match",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/accounting/BankReconciliation.js",
+          "line": 114
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "POST",
+      "path": "/api/v1/bank-reconciliation/reconcile",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/accounting/BankReconciliation.js",
+          "line": 129
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "POST",
+      "path": "/api/v1/bank-reconciliation/statements/import",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/accounting/BankReconciliation.js",
+          "line": 74
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "POST",
+      "path": "/api/v1/devotees",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Sevas.js",
+          "line": 468
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "POST",
+      "path": "/api/v1/donations",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Dashboard.js",
+          "line": 494
+        },
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Donations.js",
+          "line": 472
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "POST",
+      "path": "/api/v1/financial-closing/close-month",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/accounting/FinancialClosing.js",
+          "line": 82
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "POST",
+      "path": "/api/v1/financial-closing/close-year",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/accounting/FinancialClosing.js",
+          "line": 102
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "POST",
+      "path": "/api/v1/inventory/items",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Inventory.js",
+          "line": 167
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "POST",
+      "path": "/api/v1/onboarding-requests/{param}/approve",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/TempleDirectory.js",
+          "line": 140
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "POST",
+      "path": "/api/v1/onboarding-requests/{param}/reject",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/TempleDirectory.js",
+          "line": 159
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "POST",
+      "path": "/api/v1/opening-balances/import",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/accounting/ChartOfAccounts.js",
+          "line": 369
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "POST",
+      "path": "/api/v1/sevas",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/SevaManagement.js",
+          "line": 336
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "POST",
+      "path": "/api/v1/sevas/bookings",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Sevas.js",
+          "line": 642
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "POST",
+      "path": "/api/v1/sevas/bookings/{param}/approve-reschedule",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/SevaRescheduleApproval.js",
+          "line": 58
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "POST",
+      "path": "/api/v1/sevas/import",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/SevaManagement.js",
+          "line": 201
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "POST",
+      "path": "/api/v1/temples/onboard",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Settings.js",
+          "line": 314
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "POST",
+      "path": "/api/v1/temples/upload",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Settings.js",
+          "line": 369
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "POST",
+      "path": "/api/v1/temples/{param}/activate",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/TempleDirectory.js",
+          "line": 105
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "POST",
+      "path": "/api/v1/temples/{param}/deactivate",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/TempleDirectory.js",
+          "line": 85
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "POST",
+      "path": "/api/v1/users",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/SetupWizard.js",
+          "line": 188
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "PUT",
+      "path": "/api/v1/inventory/items/{param}",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Inventory.js",
+          "line": 164
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "PUT",
+      "path": "/api/v1/panchang/display-settings",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/PanchangSettings.js",
+          "line": 134
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "PUT",
+      "path": "/api/v1/role-permissions/{param}",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/components/RolePermissionMatrix.js",
+          "line": 87
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "PUT",
+      "path": "/api/v1/sevas/bookings/{param}/reschedule",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/DetailedSevaReport.js",
+          "line": 101
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "PUT",
+      "path": "/api/v1/sevas/{param}",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/SevaManagement.js",
+          "line": 333
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "PUT",
+      "path": "/api/v1/temples/current",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/SetupWizard.js",
+          "line": 140
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "PUT",
+      "path": "/api/v1/temples/current{param}",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Settings.js",
+          "line": 439
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "PUT",
+      "path": "/api/v1/temples/modules/config{param}",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Settings.js",
+          "line": 408
+        }
+      ]
+    },
+    {
+      "app": "MandirMitra",
+      "method": "PUT",
+      "path": "/api/v1/users/{param}",
+      "sources": [
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Profile.js",
+          "line": 111
+        },
+        {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Profile.js",
+          "line": 159
+        }
+      ]
+    }
+  ]
+}

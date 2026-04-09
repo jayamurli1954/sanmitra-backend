@@ -1,0 +1,761 @@
+{
+  "generated_at": "2026-04-09T18:08:07.589302Z",
+  "entries": [
+    {
+      "app": "GharMitra",
+      "method": "DELETE",
+      "path": "/accounting/accounts/{param}",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "DELETE",
+      "path": "/attachments/{param}",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "DELETE",
+      "path": "/flats/{param}",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "DELETE",
+      "path": "/maintenance/bills/{param}/{param}",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "DELETE",
+      "path": "/maintenance/fixed-expenses/{param}",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "DELETE",
+      "path": "/meetings/{param}",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "DELETE",
+      "path": "/physical-documents/{param}",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "DELETE",
+      "path": "/resources/files/{param}",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "DELETE",
+      "path": "/roles/{param}",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/accounting/validate-balance-sheet",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/assets/{param}",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/attachments/journal/{param}",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/attachments/{param}",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/dashboard/summary",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/database/backups",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/database/backups/{param}/download",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/financial-years",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/financial-years/active",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/flats",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/flats/{param}",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/journal",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/journal/{param}",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/maintenance/allowed-bill-month",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/maintenance/bills",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/maintenance/expense-accounts-for-period",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/meetings",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/meetings/{param}",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/meetings/{param}/details",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/member-onboarding",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/member-onboarding/debug",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/member-onboarding/my-profile",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/member-onboarding/{param}/checklist",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/messages/rooms",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/messages/rooms/{param}/messages",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/move-governance/calculate-final-bill/{param}",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/move-governance/generate-ndc/{param}",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/move-governance/personal-arrears",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/move-governance/police-verification-form/{param}",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/onboarding-imports/templates/{param}.csv",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/payments/{param}/receipt/pdf",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/physical-documents/society/{param}/summary",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/reports/balance-sheet",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/reports/bank-ledger",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/reports/cash-book",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/reports/general-ledger",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/reports/income-and-expenditure",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/reports/ledger",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/reports/member-dues",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/reports/member-ledger/{param}",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/reports/receipts-and-payments",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/reports/trial-balance",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/resources/files",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/settings/society",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/society/{param}",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/templates/{param}/download-blank",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/v2/me/memberships",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/v2/societies/search",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/v2/societies/{param}/join-requests",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "GET",
+      "path": "/v2/societies/{param}/units",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "PATCH",
+      "path": "/complaints/{param}",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "PATCH",
+      "path": "/meetings/{param}",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "PATCH",
+      "path": "/member-onboarding/{param}",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "PATCH",
+      "path": "/member-onboarding/{param}/checklist",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "PATCH",
+      "path": "/settings/society",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "PATCH",
+      "path": "/users/{param}/role",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/accounting/initialize-chart-of-accounts",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/assets",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/assets/{param}/scrap",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/attachments/upload/{param}",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/complaints",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/database/backup",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/database/backup-on-logout",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/database/restore",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/financial-years",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/financial-years/{param}/final-close",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/financial-years/{param}/provisional-close",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/flats",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/journal",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/maintenance/generate-bills",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/maintenance/post-bills",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/maintenance/regenerate-bill",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/maintenance/reverse-bill",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/meetings",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/meetings/{param}/attendance",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/meetings/{param}/minutes",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/meetings/{param}/resolutions",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/meetings/{param}/send-notice",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/member-onboarding",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/member-onboarding/bulk-import",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/messages/rooms",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/messages/rooms/{param}/messages",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/move-governance/damage-claim",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/move-governance/transfer-flat-to-flat",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/move-governance/transfer-to-arrears",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/onboarding-imports/demo/import",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/onboarding-imports/import/flats",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/onboarding-imports/import/members",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/resources/files/upload",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/roles/initialize",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/society/register",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/society/upload-document",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/society/upload-logo",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/v2/join-requests/{param}/approve",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/v2/join-requests/{param}/reject",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/v2/public/residents/complete-registration",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/v2/public/societies/{param}/join-requests",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "POST",
+      "path": "/v2/societies/{param}/join-requests",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "PUT",
+      "path": "/auth/me",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "GharMitra",
+      "method": "PUT",
+      "path": "/flats/{param}",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "MandirMitra",
+      "method": "DELETE",
+      "path": "/api/v1/inventory/items/{param}",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "MandirMitra",
+      "method": "DELETE",
+      "path": "/api/v1/temples/{param}/remove",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/bank-reconciliation/statements/{param}/entries",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/bank-reconciliation/statements/{param}/summary",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "MandirMitra",
+      "method": "GET",
+      "path": "/api/v1/bank-reconciliation/statements/{param}/unmatched-book-entries",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "MandirMitra",
+      "method": "POST",
+      "path": "/api/v1/bank-accounts",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "MandirMitra",
+      "method": "POST",
+      "path": "/api/v1/inventory/items",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "MandirMitra",
+      "method": "POST",
+      "path": "/api/v1/sevas/bookings/{param}/approve-reschedule",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "MandirMitra",
+      "method": "POST",
+      "path": "/api/v1/temples/{param}/activate",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "MandirMitra",
+      "method": "POST",
+      "path": "/api/v1/temples/{param}/deactivate",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "MandirMitra",
+      "method": "PUT",
+      "path": "/api/v1/inventory/items/{param}",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "MandirMitra",
+      "method": "PUT",
+      "path": "/api/v1/panchang/display-settings",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "MandirMitra",
+      "method": "PUT",
+      "path": "/api/v1/role-permissions/{param}",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "MandirMitra",
+      "method": "PUT",
+      "path": "/api/v1/sevas/bookings/{param}/reschedule",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "MandirMitra",
+      "method": "PUT",
+      "path": "/api/v1/temples/current{param}",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "MandirMitra",
+      "method": "PUT",
+      "path": "/api/v1/temples/modules/config{param}",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    },
+    {
+      "app": "MandirMitra",
+      "method": "PUT",
+      "path": "/api/v1/users/{param}",
+      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
+    }
+  ]
+}

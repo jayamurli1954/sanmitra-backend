@@ -38,6 +38,11 @@ jobs:
         run: |
           python scripts/check_text_integrity.py app scripts .github/workflows
 
+      - name: Frontend Backend Route Contract
+        run: |
+          python scripts/check_frontend_backend_route_contract.py --fail-on-missing
+
       - name: Run Tests
         run: |
           python -m pytest
+
