@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "generated_at": "2026-04-09T18:07:02.278113+00:00",
-  "route_count": 207,
+  "generated_at": "2026-04-09T18:34:21.396392+00:00",
+  "route_count": 206,
   "routes": [
     {
       "app": "GharMitra",
@@ -2422,6 +2422,10 @@
       "path": "/api/v1/temples/current",
       "sources": [
         {
+          "file": "external-repos/MandirMitra/frontend/src/pages/Settings.js",
+          "line": 439
+        },
+        {
           "file": "external-repos/MandirMitra/frontend/src/pages/SetupWizard.js",
           "line": 140
         }
@@ -2430,18 +2434,7 @@
     {
       "app": "MandirMitra",
       "method": "PUT",
-      "path": "/api/v1/temples/current{param}",
-      "sources": [
-        {
-          "file": "external-repos/MandirMitra/frontend/src/pages/Settings.js",
-          "line": 439
-        }
-      ]
-    },
-    {
-      "app": "MandirMitra",
-      "method": "PUT",
-      "path": "/api/v1/temples/modules/config{param}",
+      "path": "/api/v1/temples/modules/config",
       "sources": [
         {
           "file": "external-repos/MandirMitra/frontend/src/pages/Settings.js",

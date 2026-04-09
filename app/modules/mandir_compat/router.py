@@ -592,7 +592,7 @@ async def _ensure_default_mandir_sql_accounts_safe(
                 pass
         if raise_on_failure:
             logger.error(
-                "COA normalization failed for tenant %s — aborting posting: %s",
+                "COA normalization failed for tenant %s - aborting posting: %s",
                 tenant_id, exc, exc_info=True,
             )
             raise HTTPException(
@@ -2474,9 +2474,39 @@ async def mandir_backup_now(_current_user: dict = Depends(get_current_user)):
 
 
 @router.get("/bank-accounts")
-async def mandir_bank_accounts(_current_user: dict = Depends(get_current_user)):
-    return []
+async def mandir_bank_accounts(
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    docs = await get_collection("mandir_bank_accounts").find({"tenant_id": tenant_id, "app_key": app_key}).sort("updated_at", -1).to_list(length=200)
+    return [_sanitize_mongo_doc(doc) for doc in docs]
 
+
+@router.post("/bank-accounts")
+@router.post("/bank-accounts/")
+async def mandir_create_bank_account(
+    payload: dict[str, Any],
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    now = datetime.now(timezone.utc).isoformat()
+    account_id = str(uuid4())
+    doc = {
+        "id": account_id,
+        "tenant_id": tenant_id,
+        "app_key": app_key,
+        **{k: v for k, v in payload.items() if k not in {"id", "_id", "tenant_id", "app_key"}},
+        "created_at": now,
+        "updated_at": now,
+    }
+    await get_collection("mandir_bank_accounts").insert_one(doc)
+    return _sanitize_mongo_doc(doc)
 
 @router.get("/bank-reconciliation/accounts")
 async def mandir_bank_rec_accounts(_current_user: dict = Depends(get_current_user)):
@@ -2499,9 +2529,87 @@ async def mandir_bank_rec_statements(_current_user: dict = Depends(get_current_u
 
 
 @router.post("/bank-reconciliation/statements/import")
-async def mandir_bank_rec_statements_import(_payload: dict[str, Any], _current_user: dict = Depends(get_current_user)):
-    return _ok("bank-reconciliation/statements/import")
+async def mandir_bank_rec_statements_import(
+    file: UploadFile | None = File(default=None),
+    account_id: str | None = Query(default=None),
+    statement_date: str | None = Query(default=None),
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    now = datetime.now(timezone.utc).isoformat()
+    statement_id = str(uuid4())
+    filename = str((file.filename if file else "") or "").strip() or "statement.csv"
+    doc = {
+        "id": statement_id,
+        "tenant_id": tenant_id,
+        "app_key": app_key,
+        "account_id": account_id,
+        "statement_date": statement_date,
+        "filename": filename,
+        "status": "imported",
+        "entries_count": 0,
+        "created_at": now,
+        "updated_at": now,
+    }
+    await get_collection("mandir_bank_statements").insert_one(doc)
+    return _sanitize_mongo_doc(doc)
 
+
+@router.get("/bank-reconciliation/statements/{statement_id}/summary")
+async def mandir_bank_rec_statement_summary(
+    statement_id: str,
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    statement = await get_collection("mandir_bank_statements").find_one({"id": statement_id, "tenant_id": tenant_id, "app_key": app_key})
+    if statement is None:
+        raise HTTPException(status_code=404, detail="Statement not found")
+    return {
+        "statement_id": statement_id,
+        "status": str(statement.get("status") or "imported"),
+        "total_entries": int(statement.get("entries_count") or 0),
+        "matched_entries": 0,
+        "unmatched_entries": int(statement.get("entries_count") or 0),
+        "closing_balance": 0.0,
+        "book_balance": 0.0,
+        "difference": 0.0,
+    }
+
+
+@router.get("/bank-reconciliation/statements/{statement_id}/entries")
+async def mandir_bank_rec_statement_entries(
+    statement_id: str,
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    rows = await get_collection("mandir_bank_statement_entries").find(
+        {"statement_id": statement_id, "tenant_id": tenant_id, "app_key": app_key}
+    ).sort("entry_date", 1).to_list(length=2000)
+    return [_sanitize_mongo_doc(row) for row in rows]
+
+
+@router.get("/bank-reconciliation/statements/{statement_id}/unmatched-book-entries")
+async def mandir_bank_rec_unmatched_book_entries(
+    statement_id: str,
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    rows = await get_collection("mandir_bank_unmatched_entries").find(
+        {"statement_id": statement_id, "tenant_id": tenant_id, "app_key": app_key}
+    ).sort("entry_date", 1).to_list(length=2000)
+    return [_sanitize_mongo_doc(row) for row in rows]
 
 @router.get("/dashboard/sacred-events/nakshatra/{nakshatra}")
 async def mandir_nakshatra_dates(nakshatra: str, limit: int = Query(default=8, ge=1, le=30), _current_user: dict = Depends(get_current_user)):
@@ -2570,18 +2678,148 @@ async def mandir_hundi_openings(_current_user: dict = Depends(get_current_user))
 
 
 @router.get("/inventory/items")
-async def mandir_inventory_items(_current_user: dict = Depends(get_current_user)):
-    return []
+@router.get("/inventory/items/")
+async def mandir_inventory_items(
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    docs = await get_collection("mandir_inventory_items").find({"tenant_id": tenant_id, "app_key": app_key}).sort("updated_at", -1).to_list(length=1000)
+    return [_sanitize_mongo_doc(doc) for doc in docs]
+
+
+@router.post("/inventory/items")
+@router.post("/inventory/items/")
+async def mandir_create_inventory_item(
+    payload: dict[str, Any],
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    now = datetime.now(timezone.utc).isoformat()
+    item_id = str(uuid4())
+    item = {
+        "id": item_id,
+        "tenant_id": tenant_id,
+        "app_key": app_key,
+        "code": str(payload.get("code") or "").strip(),
+        "name": str(payload.get("name") or "").strip() or "Inventory Item",
+        "category": str(payload.get("category") or "OTHER").strip() or "OTHER",
+        "unit": str(payload.get("unit") or "PIECE").strip() or "PIECE",
+        "reorder_level": int(payload.get("reorder_level") or 0),
+        "reorder_quantity": int(payload.get("reorder_quantity") or 0),
+        "description": str(payload.get("description") or "").strip(),
+        "is_active": bool(payload.get("is_active", True)),
+        "created_at": now,
+        "updated_at": now,
+    }
+    await get_collection("mandir_inventory_items").insert_one(item)
+    return _sanitize_mongo_doc(item)
+
+
+@router.put("/inventory/items/{item_id}")
+async def mandir_update_inventory_item(
+    item_id: str,
+    payload: dict[str, Any],
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    allowed = {"code", "name", "category", "unit", "reorder_level", "reorder_quantity", "description", "is_active"}
+    patch = {k: payload.get(k) for k in allowed if k in payload}
+    if "reorder_level" in patch:
+        patch["reorder_level"] = int(patch["reorder_level"] or 0)
+    if "reorder_quantity" in patch:
+        patch["reorder_quantity"] = int(patch["reorder_quantity"] or 0)
+    patch["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await get_collection("mandir_inventory_items").update_one(
+        {"id": item_id, "tenant_id": tenant_id, "app_key": app_key},
+        {"$set": patch},
+        upsert=False,
+    )
+    row = await get_collection("mandir_inventory_items").find_one({"id": item_id, "tenant_id": tenant_id, "app_key": app_key})
+    if row is None:
+        raise HTTPException(status_code=404, detail="Inventory item not found")
+    return _sanitize_mongo_doc(row)
+
+
+@router.delete("/inventory/items/{item_id}")
+async def mandir_delete_inventory_item(
+    item_id: str,
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    now = datetime.now(timezone.utc).isoformat()
+    await get_collection("mandir_inventory_items").update_one(
+        {"id": item_id, "tenant_id": tenant_id, "app_key": app_key},
+        {"$set": {"is_active": False, "updated_at": now}},
+        upsert=False,
+    )
+    return {"status": "deactivated", "id": item_id}
 
 
 @router.get("/inventory/stock-balances")
-async def mandir_inventory_stock_balances(_current_user: dict = Depends(get_current_user)):
-    return []
+@router.get("/inventory/stock-balances/")
+async def mandir_inventory_stock_balances(
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    items = await get_collection("mandir_inventory_items").find({"tenant_id": tenant_id, "app_key": app_key, "is_active": True}).to_list(length=1000)
+    rows = []
+    for item in items:
+        reorder_level = int(item.get("reorder_level") or 0)
+        on_hand_qty = float(item.get("on_hand_qty") or 0.0)
+        rows.append(
+            {
+                "item_id": str(item.get("id") or ""),
+                "item_code": str(item.get("code") or ""),
+                "item_name": str(item.get("name") or ""),
+                "unit": str(item.get("unit") or "PIECE"),
+                "on_hand_qty": on_hand_qty,
+                "reorder_level": reorder_level,
+                "reorder_required": bool(reorder_level > 0 and on_hand_qty <= reorder_level),
+            }
+        )
+    return rows
 
 
 @router.get("/inventory/summary")
-async def mandir_inventory_summary(_current_user: dict = Depends(get_current_user)):
-    return {"summary": {}}
+@router.get("/inventory/summary/")
+async def mandir_inventory_summary(
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    items = await get_collection("mandir_inventory_items").find({"tenant_id": tenant_id, "app_key": app_key, "is_active": True}).to_list(length=1000)
+    low_stock = 0
+    for item in items:
+        reorder_level = int(item.get("reorder_level") or 0)
+        on_hand_qty = float(item.get("on_hand_qty") or 0.0)
+        if reorder_level > 0 and on_hand_qty <= reorder_level:
+            low_stock += 1
+    return {
+        "totalItems": len(items),
+        "lowStockItems": low_stock,
+        "totalValue": 0.0,
+        "summary": {
+            "total_items": len(items),
+            "low_stock_items": low_stock,
+        },
+    }
 
 
 @router.get("/journal-entries")
@@ -2786,9 +3024,60 @@ async def mandir_opening_balances_import(_payload: dict[str, Any], _current_user
 
 @router.get("/panchang/display-settings")
 @router.get("/panchang/display-settings/")
-async def mandir_panchang_display_settings(_current_user: dict = Depends(get_current_user)):
-    return {"display_mode": "full", "primary_language": "English", "show_on_dashboard": True}
+async def mandir_panchang_display_settings(
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    doc = await get_collection("mandir_panchang_settings").find_one({"tenant_id": tenant_id, "app_key": app_key}) or {}
+    return {
+        "display_mode": str(doc.get("display_mode") or "full"),
+        "primary_language": str(doc.get("primary_language") or "English"),
+        "show_on_dashboard": bool(doc.get("show_on_dashboard", True)),
+        "city_name": doc.get("city_name"),
+        "latitude": doc.get("latitude"),
+        "longitude": doc.get("longitude"),
+        "timezone": doc.get("timezone"),
+    }
 
+
+@router.put("/panchang/display-settings")
+@router.put("/panchang/display-settings/")
+async def mandir_panchang_display_settings_update(
+    payload: dict[str, Any],
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    now = datetime.now(timezone.utc).isoformat()
+    allowed = {
+        "display_mode",
+        "primary_language",
+        "show_on_dashboard",
+        "city_name",
+        "latitude",
+        "longitude",
+        "timezone",
+    }
+    patch = {k: payload.get(k) for k in allowed if k in payload}
+    patch["updated_at"] = now
+    await get_collection("mandir_panchang_settings").update_one(
+        {"tenant_id": tenant_id, "app_key": app_key},
+        {
+            "$set": patch,
+            "$setOnInsert": {
+                "tenant_id": tenant_id,
+                "app_key": app_key,
+                "created_at": now,
+            },
+        },
+        upsert=True,
+    )
+    return await mandir_panchang_display_settings(current_user=current_user, x_tenant_id=x_tenant_id, x_app_key=x_app_key)
 
 @router.get("/panchang/display-settings/cities")
 async def mandir_panchang_cities(_current_user: dict = Depends(get_current_user)):
@@ -2979,14 +3268,87 @@ async def mandir_donations_export_pdf(
 
 
 @router.get("/role-permissions")
-async def mandir_role_permissions(_current_user: dict = Depends(get_current_user)):
-    return []
+async def mandir_role_permissions(
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    default_roles = [
+        {"role_key": "president", "display_name": "President", "is_enabled": True},
+        {"role_key": "secretary", "display_name": "Secretary", "is_enabled": True},
+        {"role_key": "treasurer", "display_name": "Treasurer", "is_enabled": True},
+        {"role_key": "counter_clerk", "display_name": "Counter Clerk", "is_enabled": True},
+        {"role_key": "accounts_clerk", "display_name": "Accounts Clerk", "is_enabled": True},
+        {"role_key": "priest_operator", "display_name": "Priest / Temple Operator", "is_enabled": True},
+    ]
+    docs = await get_collection("mandir_role_permissions").find({"tenant_id": tenant_id, "app_key": app_key}).to_list(length=200)
+    by_role = {str(doc.get("role_key") or ""): doc for doc in docs}
+    roles = []
+    for base in default_roles:
+        current = by_role.get(base["role_key"]) or {}
+        roles.append(
+            {
+                "role_key": base["role_key"],
+                "display_name": base["display_name"],
+                "is_enabled": bool(current.get("is_enabled", base["is_enabled"])),
+                "module_permissions": current.get("module_permissions") or {},
+                "action_permissions": current.get("action_permissions") or {},
+            }
+        )
+    return {
+        "modules": [],
+        "actions": [],
+        "roles": roles,
+        "policy_notice": "Accounting transactions should be reversed with audit reason instead of hard delete.",
+    }
+
+
+@router.put("/role-permissions/{role_key}")
+async def mandir_role_permissions_update(
+    role_key: str,
+    payload: dict[str, Any],
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    now = datetime.now(timezone.utc).isoformat()
+    doc = {
+        "tenant_id": tenant_id,
+        "app_key": app_key,
+        "role_key": str(role_key).strip().lower(),
+        "display_name": str(payload.get("display_name") or role_key).strip(),
+        "is_enabled": bool(payload.get("is_enabled", True)),
+        "module_permissions": payload.get("module_permissions") or {},
+        "action_permissions": payload.get("action_permissions") or {},
+        "updated_at": now,
+    }
+    await get_collection("mandir_role_permissions").update_one(
+        {"tenant_id": tenant_id, "app_key": app_key, "role_key": doc["role_key"]},
+        {
+            "$set": doc,
+            "$setOnInsert": {
+                "created_at": now,
+            },
+        },
+        upsert=True,
+    )
+    return {"role": doc}
 
 
 @router.get("/role-permissions/assignable")
 async def mandir_role_permissions_assignable(_current_user: dict = Depends(get_current_user)):
-    return []
-
+    return {
+        "roles": [
+            {"role_key": "treasurer", "display_name": "Treasurer"},
+            {"role_key": "counter_clerk", "display_name": "Counter Clerk"},
+            {"role_key": "accounts_clerk", "display_name": "Accounts Clerk"},
+            {"role_key": "priest_operator", "display_name": "Priest / Temple Operator"},
+        ]
+    }
 
 @router.get("/setup-wizard/status")
 async def mandir_setup_wizard_status(_current_user: dict = Depends(get_current_user)):
@@ -3030,6 +3392,103 @@ async def mandir_temples(
         }
     ]
 
+
+
+
+async def _resolve_temple_target_tenant(
+    temple_id: int,
+    *,
+    current_user: dict,
+    x_tenant_id: str | None,
+) -> str:
+    target_tenant_id = await resolve_tenant_by_temple_id(temple_id)
+    if not target_tenant_id:
+        raise HTTPException(status_code=404, detail="Temple not found")
+
+    actor_tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    if not _is_platform_super_admin(current_user) and actor_tenant_id != target_tenant_id:
+        raise HTTPException(status_code=403, detail="Forbidden for this tenant")
+
+    return target_tenant_id
+
+
+@router.post("/temples/{temple_id}/activate")
+async def mandir_activate_temple(
+    temple_id: int,
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+):
+    tenant_id = await _resolve_temple_target_tenant(temple_id, current_user=current_user, x_tenant_id=x_tenant_id)
+    now = datetime.now(timezone.utc).isoformat()
+    await get_collection("mandir_temples").update_one(
+        {"tenant_id": tenant_id},
+        {"$set": {"is_active": True, "updated_at": now}},
+        upsert=False,
+    )
+    doc = await get_collection("mandir_temples").find_one({"tenant_id": tenant_id}) or {"tenant_id": tenant_id}
+    return {"status": "activated", "temple_id": temple_id, "temple": _sanitize_mongo_doc(doc)}
+
+
+@router.post("/temples/{temple_id}/deactivate")
+async def mandir_deactivate_temple(
+    temple_id: int,
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+):
+    tenant_id = await _resolve_temple_target_tenant(temple_id, current_user=current_user, x_tenant_id=x_tenant_id)
+    now = datetime.now(timezone.utc).isoformat()
+    await get_collection("mandir_temples").update_one(
+        {"tenant_id": tenant_id},
+        {"$set": {"is_active": False, "updated_at": now}},
+        upsert=False,
+    )
+    doc = await get_collection("mandir_temples").find_one({"tenant_id": tenant_id}) or {"tenant_id": tenant_id}
+    return {"status": "deactivated", "temple_id": temple_id, "temple": _sanitize_mongo_doc(doc)}
+
+
+@router.delete("/temples/{temple_id}/remove")
+async def mandir_remove_temple(
+    temple_id: int,
+    payload: dict[str, Any] | None = None,
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+):
+    if not _is_platform_super_admin(current_user):
+        raise HTTPException(status_code=403, detail="Only platform administrators can remove temples")
+
+    target_tenant_id = await _resolve_temple_target_tenant(temple_id, current_user=current_user, x_tenant_id=x_tenant_id)
+    expected = f"DELETE {temple_id}"
+    confirm_text = str((payload or {}).get("confirm_text") or "").strip()
+    if confirm_text != expected:
+        raise HTTPException(status_code=400, detail=f"Confirmation text mismatch. Expected: {expected}")
+
+    collections_to_purge = [
+        "mandir_temples",
+        "mandir_donations",
+        "mandir_sevas",
+        "mandir_seva_bookings",
+        "mandir_bank_accounts",
+        "mandir_bank_statements",
+        "mandir_bank_statement_entries",
+        "mandir_bank_unmatched_entries",
+        "mandir_inventory_items",
+        "mandir_role_permissions",
+        "mandir_panchang_settings",
+    ]
+    deleted_counts: dict[str, int] = {}
+    for name in collections_to_purge:
+        try:
+            result = await get_collection(name).delete_many({"tenant_id": target_tenant_id})
+            deleted_counts[name] = int(getattr(result, "deleted_count", 0) or 0)
+        except Exception:
+            deleted_counts[name] = 0
+
+    return {
+        "status": "removed",
+        "temple_id": temple_id,
+        "tenant_id": target_tenant_id,
+        "deleted": deleted_counts,
+    }
 
 @router.post("/temples/onboard", response_model=MandirFirstLoginOnboardingResponse)
 @router.post("/onboarding/first-login", response_model=MandirFirstLoginOnboardingResponse)
@@ -3152,6 +3611,56 @@ async def mandir_users(_current_user: dict = Depends(get_current_user), x_tenant
     users = get_collection("core_users")
     docs = await users.find({"tenant_id": tenant_id, "is_active": True}).limit(200).to_list(length=200)
     return [{"user_id": d.get("user_id"), "email": d.get("email"), "full_name": d.get("full_name"), "role": d.get("role")} for d in docs]
+
+
+
+@router.put("/users/{user_id}")
+async def mandir_update_user_profile(
+    user_id: str,
+    payload: dict[str, Any],
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    users = get_collection("core_users")
+    query = {
+        "tenant_id": tenant_id,
+        "$or": [
+            {"user_id": user_id},
+            {"id": user_id},
+        ],
+    }
+
+    patch: dict[str, Any] = {}
+    if "full_name" in payload:
+        patch["full_name"] = str(payload.get("full_name") or "").strip()
+    if "email" in payload:
+        patch["email"] = str(payload.get("email") or "").strip().lower()
+    if "phone" in payload:
+        phone = str(payload.get("phone") or "").strip()
+        patch["phone"] = phone or None
+    patch["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+    await users.update_one(query, {"$set": patch}, upsert=False)
+    doc = await users.find_one(query)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    resolved_id = str(doc.get("user_id") or doc.get("id") or user_id)
+    return {
+        "id": resolved_id,
+        "email": str(doc.get("email") or ""),
+        "full_name": str(doc.get("full_name") or ""),
+        "phone": doc.get("phone"),
+        "role": doc.get("role"),
+        "system_role": doc.get("system_role") or doc.get("role"),
+        "role_key": doc.get("role_key"),
+        "role_label": doc.get("role_label"),
+        "module_permissions": doc.get("module_permissions") or {},
+        "action_permissions": doc.get("action_permissions") or {},
+        "is_superuser": bool(doc.get("is_superuser", False)),
+        "must_change_password": bool(doc.get("must_change_password", False)),
+    }
 
 @router.post("/sevas/bookings")
 @router.post("/sevas/bookings/")
@@ -3299,6 +3808,79 @@ async def get_seva_receipt_pdf(
     )
 
 
+
+
+@router.put("/sevas/bookings/{booking_id}/reschedule")
+async def mandir_request_seva_reschedule(
+    booking_id: str,
+    new_date: str = Query(...),
+    reason: str | None = Query(default=None),
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    now = datetime.now(timezone.utc).isoformat()
+    col = get_collection("mandir_seva_bookings")
+    await col.update_one(
+        {"id": booking_id, "tenant_id": tenant_id, "app_key": app_key},
+        {
+            "$set": {
+                "reschedule_pending": True,
+                "status": "reschedule_pending",
+                "reschedule_requested_date": new_date,
+                "reschedule_reason": str(reason or "").strip() or None,
+                "reschedule_requested_at": now,
+                "updated_at": now,
+            }
+        },
+        upsert=False,
+    )
+    doc = await col.find_one({"id": booking_id, "tenant_id": tenant_id, "app_key": app_key})
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Seva booking not found")
+    return _mandir_seva_booking_view(doc)
+
+
+@router.post("/sevas/bookings/{booking_id}/approve-reschedule")
+async def mandir_approve_seva_reschedule(
+    booking_id: str,
+    approve: bool = Query(default=True),
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    now = datetime.now(timezone.utc).isoformat()
+    col = get_collection("mandir_seva_bookings")
+    booking = await col.find_one({"id": booking_id, "tenant_id": tenant_id, "app_key": app_key})
+    if booking is None:
+        raise HTTPException(status_code=404, detail="Seva booking not found")
+
+    requested_date = str(booking.get("reschedule_requested_date") or "").strip()
+    patch: dict[str, Any] = {
+        "reschedule_pending": False,
+        "reschedule_approved": bool(approve),
+        "reschedule_decided_at": now,
+        "updated_at": now,
+    }
+    if approve and requested_date:
+        patch["booking_date"] = requested_date
+        patch["status"] = "confirmed"
+    else:
+        patch["status"] = "confirmed"
+
+    await col.update_one(
+        {"id": booking_id, "tenant_id": tenant_id, "app_key": app_key},
+        {"$set": patch},
+        upsert=False,
+    )
+
+    updated = await col.find_one({"id": booking_id, "tenant_id": tenant_id, "app_key": app_key})
+    return _mandir_seva_booking_view(updated or booking)
+
 @router.get("/sevas/reschedule/pending")
 async def mandir_seva_reschedule_pending(
     limit: int = Query(default=100, ge=1, le=500),
@@ -3321,4 +3903,13 @@ async def mandir_seva_reschedule_pending(
 @router.get("/users/me")
 async def mandir_users_me(current_user: dict = Depends(get_current_user)):
     return current_user
+
+
+
+
+
+
+
+
+
 

@@ -115,6 +115,7 @@ def normalize_frontend_path(raw: str) -> str:
     value = value.replace("\\", "/")
     value = TEMPLATE_PARAM_RE.sub("{param}", value)
     value = COLON_PARAM_RE.sub("{param}", value)
+    value = re.sub(r"(?<!/)\{param\}$", "", value)
     value = re.sub(r"/{2,}", "/", value)
 
     if not value.startswith("/"):
@@ -427,4 +428,5 @@ def summarize_by_app(usages: list[FrontendRouteUsage], unresolved: list[Frontend
         }
 
     return summary
+
 

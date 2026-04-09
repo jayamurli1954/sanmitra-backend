@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-04-09T18:08:07.589302Z",
+  "generated_at": "2026-04-09T18:34:23.922846+00:00",
   "entries": [
     {
       "app": "GharMitra",
@@ -653,108 +653,6 @@
       "app": "GharMitra",
       "method": "PUT",
       "path": "/flats/{param}",
-      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
-    },
-    {
-      "app": "MandirMitra",
-      "method": "DELETE",
-      "path": "/api/v1/inventory/items/{param}",
-      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
-    },
-    {
-      "app": "MandirMitra",
-      "method": "DELETE",
-      "path": "/api/v1/temples/{param}/remove",
-      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
-    },
-    {
-      "app": "MandirMitra",
-      "method": "GET",
-      "path": "/api/v1/bank-reconciliation/statements/{param}/entries",
-      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
-    },
-    {
-      "app": "MandirMitra",
-      "method": "GET",
-      "path": "/api/v1/bank-reconciliation/statements/{param}/summary",
-      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
-    },
-    {
-      "app": "MandirMitra",
-      "method": "GET",
-      "path": "/api/v1/bank-reconciliation/statements/{param}/unmatched-book-entries",
-      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
-    },
-    {
-      "app": "MandirMitra",
-      "method": "POST",
-      "path": "/api/v1/bank-accounts",
-      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
-    },
-    {
-      "app": "MandirMitra",
-      "method": "POST",
-      "path": "/api/v1/inventory/items",
-      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
-    },
-    {
-      "app": "MandirMitra",
-      "method": "POST",
-      "path": "/api/v1/sevas/bookings/{param}/approve-reschedule",
-      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
-    },
-    {
-      "app": "MandirMitra",
-      "method": "POST",
-      "path": "/api/v1/temples/{param}/activate",
-      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
-    },
-    {
-      "app": "MandirMitra",
-      "method": "POST",
-      "path": "/api/v1/temples/{param}/deactivate",
-      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
-    },
-    {
-      "app": "MandirMitra",
-      "method": "PUT",
-      "path": "/api/v1/inventory/items/{param}",
-      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
-    },
-    {
-      "app": "MandirMitra",
-      "method": "PUT",
-      "path": "/api/v1/panchang/display-settings",
-      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
-    },
-    {
-      "app": "MandirMitra",
-      "method": "PUT",
-      "path": "/api/v1/role-permissions/{param}",
-      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
-    },
-    {
-      "app": "MandirMitra",
-      "method": "PUT",
-      "path": "/api/v1/sevas/bookings/{param}/reschedule",
-      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
-    },
-    {
-      "app": "MandirMitra",
-      "method": "PUT",
-      "path": "/api/v1/temples/current{param}",
-      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
-    },
-    {
-      "app": "MandirMitra",
-      "method": "PUT",
-      "path": "/api/v1/temples/modules/config{param}",
-      "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
-    },
-    {
-      "app": "MandirMitra",
-      "method": "PUT",
-      "path": "/api/v1/users/{param}",
       "reason": "Baseline unresolved route from frontend scan; tracked for incremental cleanup."
     }
   ]

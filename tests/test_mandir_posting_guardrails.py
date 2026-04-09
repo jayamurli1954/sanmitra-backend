@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from types import SimpleNamespace
 
 import pytest
@@ -36,21 +37,27 @@ class FakeCollection:
     def __init__(self, docs=None):
         self.docs = list(docs or [])
 
-    def find(self, query):
-        def matches(doc):
-            return all(doc.get(k) == v for k, v in query.items())
+    @staticmethod
+    def _matches_query(doc, query):
+        for key, value in query.items():
+            if key == "$or":
+                return any(FakeCollection._matches_query(doc, branch) for branch in value)
+            if doc.get(key) != value:
+                return False
+        return True
 
-        return FakeCursor([dict(doc) for doc in self.docs if matches(doc)])
+    def find(self, query):
+        return FakeCursor([dict(doc) for doc in self.docs if self._matches_query(doc, query)])
 
     async def find_one(self, query):
         for doc in self.docs:
-            if all(doc.get(k) == v for k, v in query.items()):
+            if self._matches_query(doc, query):
                 return dict(doc)
         return None
 
     async def update_one(self, query, update, upsert=False):
         for doc in self.docs:
-            if all(doc.get(k) == v for k, v in query.items()):
+            if self._matches_query(doc, query):
                 if "$set" in update:
                     doc.update(update["$set"])
                 return SimpleNamespace(matched_count=1, modified_count=1, upserted_id=None)
@@ -74,7 +81,7 @@ class FakeCollection:
     async def delete_one(self, query):
         idx_to_delete = None
         for idx, doc in enumerate(self.docs):
-            if all(doc.get(k) == v for k, v in query.items()):
+            if self._matches_query(doc, query):
                 idx_to_delete = idx
                 break
         if idx_to_delete is not None:
@@ -342,3 +349,173 @@ def test_get_seva_receipt_pdf_returns_pdf(mandir_posting_client):
     assert response.content.startswith(b"%PDF")
     assert seva_bookings.docs[0]["receipt_number"].startswith("SEV-")
     assert seva_bookings.docs[0]["receipt_pdf_url"] == "/api/v1/sevas/bookings/book-2/receipt/pdf"
+
+
+
+@pytest.fixture()
+def mandir_compat_client(monkeypatch):
+    collections = defaultdict(FakeCollection)
+    collections["mandir_sevas"] = FakeCollection(
+        [
+            {
+                "id": "seva-1",
+                "tenant_id": "tenant-1",
+                "app_key": "mandirmitra",
+                "name": "Sarva Seve",
+                "category": "pooja",
+            }
+        ]
+    )
+    collections["core_users"] = FakeCollection(
+        [
+            {
+                "id": "user-1",
+                "user_id": "user-1",
+                "tenant_id": "tenant-1",
+                "email": "user@example.com",
+                "full_name": "Temple User",
+                "role": "tenant_admin",
+                "is_superuser": False,
+                "must_change_password": False,
+            }
+        ]
+    )
+
+    def fake_get_collection(name: str):
+        return collections[name]
+
+    async def fake_session():
+        yield DummySession()
+
+    async def noop_ensure_sql_accounts(_session, _tenant_id):
+        return None
+
+    async def fake_resolve_tenant_by_temple_id(value):
+        return "tenant-1" if int(value or 0) == 1 else None
+
+    monkeypatch.setattr(mandir_router, "get_collection", fake_get_collection)
+    monkeypatch.setattr(mandir_router, "_ensure_default_mandir_sql_accounts", noop_ensure_sql_accounts)
+    monkeypatch.setattr(mandir_router, "resolve_tenant_by_temple_id", fake_resolve_tenant_by_temple_id)
+
+    app.dependency_overrides[get_current_user] = lambda: {
+        "tenant_id": "tenant-1",
+        "id": "user-1",
+        "user_id": "user-1",
+        "role": "tenant_admin",
+        "app_key": "mandirmitra",
+        "is_superuser": False,
+    }
+    app.dependency_overrides[get_async_session] = fake_session
+
+    with TestClient(app) as client:
+        yield client, collections
+
+    app.dependency_overrides.pop(get_current_user, None)
+    app.dependency_overrides.pop(get_async_session, None)
+
+
+def test_inventory_item_crud_routes(mandir_compat_client):
+    client, _collections = mandir_compat_client
+
+    created = client.post(
+        "/api/v1/inventory/items/",
+        json={
+            "code": "PJ-OIL-01",
+            "name": "Sesame Oil",
+            "category": "POOJA_MATERIAL",
+            "unit": "LITRE",
+            "reorder_level": 3,
+            "reorder_quantity": 10,
+        },
+    )
+    assert created.status_code == 200
+    item = created.json()
+    assert item["id"]
+    assert item["name"] == "Sesame Oil"
+
+    updated = client.put(
+        f"/api/v1/inventory/items/{item['id']}",
+        json={"reorder_level": 5},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["reorder_level"] == 5
+
+    listing = client.get("/api/v1/inventory/items/")
+    assert listing.status_code == 200
+    assert len(listing.json()) == 1
+
+    deactivated = client.delete(f"/api/v1/inventory/items/{item['id']}")
+    assert deactivated.status_code == 200
+    assert deactivated.json()["status"] == "deactivated"
+
+
+def test_panchang_display_settings_put_and_get(mandir_compat_client):
+    client, _collections = mandir_compat_client
+
+    response = client.put(
+        "/api/v1/panchang/display-settings/",
+        json={
+            "city_name": "Tempe",
+            "latitude": "33.4255",
+            "longitude": "-111.94",
+            "primary_language": "English",
+            "show_on_dashboard": True,
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["city_name"] == "Tempe"
+
+    fetched = client.get("/api/v1/panchang/display-settings")
+    assert fetched.status_code == 200
+    assert fetched.json()["city_name"] == "Tempe"
+
+
+def test_seva_reschedule_request_and_approval(mandir_compat_client):
+    client, collections = mandir_compat_client
+    collections["mandir_seva_bookings"].docs.append(
+        {
+            "id": "book-200",
+            "tenant_id": "tenant-1",
+            "app_key": "mandirmitra",
+            "booking_date": "2026-04-10",
+            "seva_name": "Sarva Seve",
+            "amount_paid": 501,
+            "status": "confirmed",
+        }
+    )
+
+    requested = client.put(
+        "/api/v1/sevas/bookings/book-200/reschedule",
+        params={"new_date": "2026-04-14", "reason": "Family travel"},
+    )
+    assert requested.status_code == 200
+    assert requested.json()["status"] == "reschedule_pending"
+
+    approved = client.post(
+        "/api/v1/sevas/bookings/book-200/approve-reschedule",
+        params={"approve": True},
+    )
+    assert approved.status_code == 200
+    assert approved.json()["booking_date"] == "2026-04-14"
+    assert approved.json()["status"] == "confirmed"
+
+
+def test_update_user_profile_route(mandir_compat_client):
+    client, _collections = mandir_compat_client
+    response = client.put(
+        "/api/v1/users/user-1",
+        json={
+            "full_name": "Temple User Updated",
+            "email": "updated@example.com",
+            "phone": "9999999999",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["id"] == "user-1"
+    assert payload["full_name"] == "Temple User Updated"
+    assert payload["email"] == "updated@example.com"
+
+
+
