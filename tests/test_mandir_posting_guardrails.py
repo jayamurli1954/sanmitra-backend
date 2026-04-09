@@ -48,6 +48,23 @@ class FakeCollection:
                 return dict(doc)
         return None
 
+    async def update_one(self, query, update, upsert=False):
+        for doc in self.docs:
+            if all(doc.get(k) == v for k, v in query.items()):
+                if "$set" in update:
+                    doc.update(update["$set"])
+                return SimpleNamespace(matched_count=1, modified_count=1, upserted_id=None)
+
+        if upsert:
+            row = dict(query)
+            row.update(update.get("$set", {}))
+            row.update(update.get("$setOnInsert", {}))
+            row.setdefault("_id", FakeObjectId())
+            self.docs.append(row)
+            return SimpleNamespace(matched_count=0, modified_count=0, upserted_id=row.get("_id"))
+
+        return SimpleNamespace(matched_count=0, modified_count=0, upserted_id=None)
+
     async def insert_one(self, doc):
         row = dict(doc)
         row.setdefault("_id", FakeObjectId())
@@ -187,6 +204,9 @@ def test_create_seva_booking_uses_payment_method_fallback(mandir_posting_client,
     payload = response.json()
     assert payload["payment_mode"] == "Cash"
     assert "_id" not in payload
+    assert payload["id"]
+    assert payload["receipt_number"].startswith("SEV-")
+    assert payload["receipt_pdf_url"] == f"/api/v1/sevas/bookings/{payload['id']}/receipt/pdf"
     assert seen["mode"] == "Cash"
     assert len(seva_bookings.docs) == 1
 
@@ -241,5 +261,84 @@ def test_list_donations_sanitizes_mongo_internal_id(mandir_posting_client):
     payload = response.json()
     assert len(payload) == 1
     assert payload[0]["donation_id"] == "don-1"
+    assert payload[0]["id"] == "don-1"
+    assert payload[0]["receipt_number"].startswith("DON-")
+    assert payload[0]["receipt_pdf_url"] == "/api/v1/donations/don-1/receipt/pdf"
     assert "_id" not in payload[0]
 
+
+def test_get_donation_receipt_pdf_returns_pdf(mandir_posting_client):
+    client, donations, _seva_bookings = mandir_posting_client
+    donations.docs.append(
+        {
+            "_id": FakeObjectId(),
+            "donation_id": "don-2",
+            "tenant_id": "tenant-1",
+            "app_key": "mandirmitra",
+            "amount": 2500,
+            "category": "General Donation",
+            "payment_mode": "Bank",
+            "devotee": {"name": "S. Ramesh", "phone": "9876500000"},
+            "created_at": "2026-04-09T12:00:00+00:00",
+        }
+    )
+
+    response = client.get("/api/v1/donations/don-2/receipt/pdf")
+
+    assert response.status_code == 200
+    assert response.headers.get("content-type", "").startswith("application/pdf")
+    assert response.content.startswith(b"%PDF")
+    assert donations.docs[0]["receipt_number"].startswith("DON-")
+    assert donations.docs[0]["id"] == "don-2"
+
+
+def test_list_seva_bookings_sanitizes_mongo_internal_id(mandir_posting_client):
+    client, _donations, seva_bookings = mandir_posting_client
+    seva_bookings.docs.append(
+        {
+            "_id": FakeObjectId(),
+            "id": "book-1",
+            "tenant_id": "tenant-1",
+            "app_key": "mandirmitra",
+            "seva_name": "Sarva Seve",
+            "amount_paid": 501,
+            "booking_date": "2026-04-09",
+            "created_at": "2026-04-09T12:00:00+00:00",
+        }
+    )
+
+    response = client.get("/api/v1/sevas/bookings")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload) == 1
+    assert payload[0]["id"] == "book-1"
+    assert payload[0]["receipt_number"].startswith("SEV-")
+    assert payload[0]["receipt_pdf_url"] == "/api/v1/sevas/bookings/book-1/receipt/pdf"
+    assert "_id" not in payload[0]
+
+
+def test_get_seva_receipt_pdf_returns_pdf(mandir_posting_client):
+    client, _donations, seva_bookings = mandir_posting_client
+    seva_bookings.docs.append(
+        {
+            "_id": FakeObjectId(),
+            "id": "book-2",
+            "tenant_id": "tenant-1",
+            "app_key": "mandirmitra",
+            "seva_name": "Sarva Seve",
+            "amount_paid": 751,
+            "payment_mode": "Bank",
+            "devotee_names": "S. Ramesh",
+            "booking_date": "2026-04-09",
+            "created_at": "2026-04-09T12:00:00+00:00",
+        }
+    )
+
+    response = client.get("/api/v1/sevas/bookings/book-2/receipt/pdf")
+
+    assert response.status_code == 200
+    assert response.headers.get("content-type", "").startswith("application/pdf")
+    assert response.content.startswith(b"%PDF")
+    assert seva_bookings.docs[0]["receipt_number"].startswith("SEV-")
+    assert seva_bookings.docs[0]["receipt_pdf_url"] == "/api/v1/sevas/bookings/book-2/receipt/pdf"

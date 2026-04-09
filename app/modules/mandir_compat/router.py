@@ -4,7 +4,7 @@ import calendar
 import json
 import logging
 from datetime import date, datetime, timezone
-from io import StringIO
+from io import BytesIO, StringIO
 import csv
 import httpx
 from functools import lru_cache
@@ -14,10 +14,13 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Request, Response, UploadFile
+from fastapi.responses import StreamingResponse
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy import and_, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from decimal import Decimal
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
 
 from app.core.auth.dependencies import get_current_user
 from app.core.audit.service import log_audit_event
@@ -817,6 +820,140 @@ def _sanitize_mongo_doc(doc: dict[str, Any]) -> dict[str, Any]:
     return row
 
 
+
+def _receipt_number_for_donation(doc: dict[str, Any]) -> str:
+    existing = str(doc.get("receipt_number") or "").strip()
+    if existing:
+        return existing
+
+    donation_id = str(doc.get("donation_id") or doc.get("id") or "").strip()
+    if donation_id:
+        return f"DON-{donation_id[:8].upper()}"
+
+    return f"DON-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
+
+
+def _mandir_donation_view(doc: dict[str, Any]) -> dict[str, Any]:
+    row = _sanitize_mongo_doc(doc)
+    donation_id = str(row.get("donation_id") or row.get("id") or "").strip()
+    if donation_id and not str(row.get("id") or "").strip():
+        row["id"] = donation_id
+    if donation_id and not str(row.get("donation_id") or "").strip():
+        row["donation_id"] = donation_id
+
+    receipt_number = _receipt_number_for_donation(row)
+    row["receipt_number"] = receipt_number
+    if donation_id:
+        row["receipt_pdf_url"] = f"/api/v1/donations/{donation_id}/receipt/pdf"
+    if not row.get("donation_date") and row.get("created_at"):
+        row["donation_date"] = row.get("created_at")
+    return row
+
+
+def _generate_donation_receipt_pdf_bytes(donation: dict[str, Any], *, temple_name: str = "Temple") -> bytes:
+    buffer = BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=A4)
+    width, height = A4
+
+    def line(text: str, y: float, *, bold: bool = False, size: int = 11) -> float:
+        pdf.setFont("Helvetica-Bold" if bold else "Helvetica", size)
+        pdf.drawString(40, y, text)
+        return y - (size + 6)
+
+    amount = _safe_float(donation.get("amount"), 0.0)
+    devotee = donation.get("devotee") if isinstance(donation.get("devotee"), dict) else {}
+    devotee_name = str(devotee.get("name") or donation.get("devotee_name") or "Unknown Devotee")
+    devotee_phone = str(devotee.get("phone") or donation.get("devotee_phone") or donation.get("phone") or "")
+    payment_mode = str(donation.get("payment_mode") or "Cash")
+    created_at = str(donation.get("created_at") or "")
+    receipt_number = _receipt_number_for_donation(donation)
+    donation_id = str(donation.get("donation_id") or donation.get("id") or "")
+    category = str(donation.get("category") or "General Donation")
+
+    y = height - 50
+    y = line(f"{temple_name} Donation Receipt", y, bold=True, size=16)
+    y = line("", y)
+    y = line(f"Receipt Number: {receipt_number}", y, bold=True)
+    y = line(f"Donation ID: {donation_id}", y)
+    y = line(f"Date: {created_at}", y)
+    y = line("", y)
+    y = line(f"Devotee Name: {devotee_name}", y)
+    y = line(f"Phone: {devotee_phone}", y)
+    y = line(f"Category: {category}", y)
+    y = line(f"Payment Mode: {payment_mode}", y)
+    y = line(f"Amount: INR {amount:,.2f}", y, bold=True)
+
+    y -= 10
+    line("This is a system-generated receipt.", y, size=10)
+
+    pdf.showPage()
+    pdf.save()
+    return buffer.getvalue()
+
+
+
+def _receipt_number_for_seva(doc: dict[str, Any]) -> str:
+    existing = str(doc.get("receipt_number") or "").strip()
+    if existing:
+        return existing
+
+    booking_id = str(doc.get("id") or doc.get("booking_id") or "").strip()
+    if booking_id:
+        return f"SEV-{booking_id[:8].upper()}"
+
+    return f"SEV-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
+
+
+def _mandir_seva_booking_view(doc: dict[str, Any]) -> dict[str, Any]:
+    row = _sanitize_mongo_doc(doc)
+    booking_id = str(row.get("id") or row.get("booking_id") or "").strip()
+    if booking_id and not str(row.get("id") or "").strip():
+        row["id"] = booking_id
+    receipt_number = _receipt_number_for_seva(row)
+    row["receipt_number"] = receipt_number
+    if booking_id:
+        row["receipt_pdf_url"] = f"/api/v1/sevas/bookings/{booking_id}/receipt/pdf"
+    return row
+
+
+def _generate_seva_receipt_pdf_bytes(booking: dict[str, Any], *, temple_name: str = "Temple") -> bytes:
+    buffer = BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=A4)
+    _, height = A4
+
+    def line(text: str, y: float, *, bold: bool = False, size: int = 11) -> float:
+        pdf.setFont("Helvetica-Bold" if bold else "Helvetica", size)
+        pdf.drawString(40, y, text)
+        return y - (size + 6)
+
+    amount = _safe_float(booking.get("amount_paid") or booking.get("amount"), 0.0)
+    seva_name = str(booking.get("seva_name") or booking.get("seva") or "Seva Booking")
+    devotee_name = str(booking.get("devotee_names") or booking.get("devotee_name") or "Devotee")
+    booking_date = str(booking.get("booking_date") or booking.get("created_at") or "")
+    payment_mode = str(booking.get("payment_mode") or booking.get("payment_method") or "Cash")
+    receipt_number = _receipt_number_for_seva(booking)
+    booking_id = str(booking.get("id") or booking.get("booking_id") or "")
+
+    y = height - 50
+    y = line(f"{temple_name} Seva Receipt", y, bold=True, size=16)
+    y = line("", y)
+    y = line(f"Receipt Number: {receipt_number}", y, bold=True)
+    y = line(f"Booking ID: {booking_id}", y)
+    y = line(f"Date: {booking_date}", y)
+    y = line("", y)
+    y = line(f"Devotee Name: {devotee_name}", y)
+    y = line(f"Seva: {seva_name}", y)
+    y = line(f"Payment Mode: {payment_mode}", y)
+    y = line(f"Amount: INR {amount:,.2f}", y, bold=True)
+
+    y -= 10
+    line("This is a system-generated receipt.", y, size=10)
+
+    pdf.showPage()
+    pdf.save()
+    return buffer.getvalue()
+
+
 def _normalize_pincode(value: Any) -> str:
     digits = "".join(ch for ch in str(value or "") if ch.isdigit())
     return digits[:6]
@@ -1374,7 +1511,7 @@ async def list_donations(
         logger.error("Failed to list donations for tenant=%s: %s", tenant_id, exc, exc_info=True)
         rows = []
 
-    return [_sanitize_mongo_doc(row) for row in rows]
+    return [_mandir_donation_view(row) for row in rows]
 
 
 @router.post("/donations")
@@ -1418,6 +1555,10 @@ async def create_donation(
         "created_at": now,
     }
 
+    donation["id"] = donation_id
+    donation["receipt_number"] = _receipt_number_for_donation(donation)
+    donation["receipt_pdf_url"] = f"/api/v1/donations/{donation_id}/receipt/pdf"
+
     col = get_collection("mandir_donations")
     try:
         await col.insert_one(donation)
@@ -1459,7 +1600,62 @@ async def create_donation(
             await col.delete_one({"donation_id": donation_id, "tenant_id": tenant_id, "app_key": app_key})
             raise HTTPException(status_code=500, detail=f"Failed to post donation journal: {exc}") from exc
 
-    return _sanitize_mongo_doc(donation)
+    return _mandir_donation_view(donation)
+
+
+@router.get("/donations/{donation_id}/receipt/pdf")
+async def get_donation_receipt_pdf(
+    donation_id: str,
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+
+    col = get_collection("mandir_donations")
+    donation = await col.find_one({"tenant_id": tenant_id, "app_key": app_key, "donation_id": donation_id})
+    if donation is None:
+        donation = await col.find_one({"tenant_id": tenant_id, "app_key": app_key, "id": donation_id})
+    if donation is None:
+        raise HTTPException(status_code=404, detail="Donation not found")
+
+    donation_id_text = str(donation.get("donation_id") or donation.get("id") or donation_id).strip()
+    donation["donation_id"] = donation_id_text
+    donation["id"] = donation_id_text
+    receipt_number = _receipt_number_for_donation(donation)
+    donation["receipt_number"] = receipt_number
+    donation["receipt_pdf_url"] = f"/api/v1/donations/{donation_id_text}/receipt/pdf"
+
+    await col.update_one(
+        {"tenant_id": tenant_id, "app_key": app_key, "donation_id": donation_id_text},
+        {
+            "$set": {
+                "id": donation_id_text,
+                "receipt_number": receipt_number,
+                "receipt_pdf_url": donation["receipt_pdf_url"],
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+        },
+        upsert=False,
+    )
+
+    temple_name = "Temple"
+    try:
+        temple_doc = await get_collection("mandir_temples").find_one({"tenant_id": tenant_id}) or {}
+        temple_name = str(temple_doc.get("temple_name") or temple_doc.get("name") or temple_name)
+    except Exception:
+        temple_name = "Temple"
+
+    pdf_bytes = _generate_donation_receipt_pdf_bytes(donation, temple_name=temple_name)
+    safe_receipt = "".join(ch for ch in str(receipt_number) if ch.isalnum() or ch in ("-", "_")) or donation_id_text[:8]
+    filename = f"donation_receipt_{safe_receipt}.pdf"
+
+    return StreamingResponse(
+        BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
 
 
 @router.post("/donations/reconcile-posting")
@@ -2992,6 +3188,9 @@ async def create_seva_booking(
         "updated_at": now,
         "status": "confirmed"
     }
+    booking["receipt_number"] = _receipt_number_for_seva(booking)
+    booking["receipt_pdf_url"] = f"/api/v1/sevas/bookings/{booking_id}/receipt/pdf"
+
     col = get_collection("mandir_seva_bookings")
     try:
         await col.insert_one(booking)
@@ -3033,7 +3232,7 @@ async def create_seva_booking(
             await col.delete_one({"id": booking_id, "tenant_id": tenant_id, "app_key": app_key})
             raise HTTPException(status_code=500, detail=f"Failed to post seva journal: {exc}") from exc
 
-    return _sanitize_mongo_doc(booking)
+    return _mandir_seva_booking_view(booking)
 
 @router.get("/sevas/bookings")
 async def mandir_seva_bookings(
@@ -3046,7 +3245,58 @@ async def mandir_seva_bookings(
     app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
     col = get_collection("mandir_seva_bookings")
     docs = await col.find({"tenant_id": tenant_id, "app_key": app_key}).sort("booking_date", -1).limit(limit).to_list(length=limit)
-    return [_sanitize_mongo_doc(doc) for doc in docs]
+    return [_mandir_seva_booking_view(doc) for doc in docs]
+
+
+@router.get("/sevas/bookings/{booking_id}/receipt/pdf")
+async def get_seva_receipt_pdf(
+    booking_id: str,
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+
+    col = get_collection("mandir_seva_bookings")
+    booking = await col.find_one({"id": str(booking_id), "tenant_id": tenant_id, "app_key": app_key})
+    if booking is None:
+        raise HTTPException(status_code=404, detail="Seva booking not found")
+
+    booking_id_text = str(booking.get("id") or booking_id).strip()
+    booking["id"] = booking_id_text
+    receipt_number = _receipt_number_for_seva(booking)
+    booking["receipt_number"] = receipt_number
+    booking["receipt_pdf_url"] = f"/api/v1/sevas/bookings/{booking_id_text}/receipt/pdf"
+
+    await col.update_one(
+        {"tenant_id": tenant_id, "app_key": app_key, "id": booking_id_text},
+        {
+            "$set": {
+                "receipt_number": receipt_number,
+                "receipt_pdf_url": booking["receipt_pdf_url"],
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+        },
+        upsert=False,
+    )
+
+    temple_name = "Temple"
+    try:
+        temple_doc = await get_collection("mandir_temples").find_one({"tenant_id": tenant_id}) or {}
+        temple_name = str(temple_doc.get("temple_name") or temple_doc.get("name") or temple_name)
+    except Exception:
+        temple_name = "Temple"
+
+    pdf_bytes = _generate_seva_receipt_pdf_bytes(booking, temple_name=temple_name)
+    safe_receipt = "".join(ch for ch in str(receipt_number) if ch.isalnum() or ch in ("-", "_")) or booking_id_text[:8]
+    filename = f"seva_receipt_{safe_receipt}.pdf"
+
+    return StreamingResponse(
+        BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
 
 
 @router.get("/sevas/reschedule/pending")
@@ -3071,3 +3321,4 @@ async def mandir_seva_reschedule_pending(
 @router.get("/users/me")
 async def mandir_users_me(current_user: dict = Depends(get_current_user)):
     return current_user
+
