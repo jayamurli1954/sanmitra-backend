@@ -519,3 +519,185 @@ def test_update_user_profile_route(mandir_compat_client):
 
 
 
+
+
+@pytest.fixture()
+def mandir_upi_client(monkeypatch):
+    collections = defaultdict(FakeCollection)
+    collections["mandir_sevas"] = FakeCollection(
+        [
+            {
+                "id": "seva-1",
+                "tenant_id": "tenant-1",
+                "app_key": "mandirmitra",
+                "name": "Sarva Seve",
+                "category": "pooja",
+            }
+        ]
+    )
+    collections["mandir_devotees"] = FakeCollection(
+        [
+            {
+                "id": "dev-1",
+                "tenant_id": "tenant-1",
+                "app_key": "mandirmitra",
+                "name": "Raghavan Iyer",
+                "phone": "9876512340",
+            }
+        ]
+    )
+    collections["mandir_temples"] = FakeCollection(
+        [
+            {
+                "tenant_id": "tenant-1",
+                "app_key": "mandirmitra",
+                "id": 1,
+                "temple_id": 1,
+                "name": "Temple One",
+                "upi_public_enabled": True,
+                "upi_id": "temple1@oksbi",
+                "upi_payee_name": "Temple One Trust",
+                "upi_qr_note": "Temple Donation",
+                "upi_currency": "INR",
+            },
+            {
+                "tenant_id": "tenant-2",
+                "app_key": "mandirmitra",
+                "id": 2,
+                "temple_id": 2,
+                "name": "Temple Two",
+                "upi_public_enabled": False,
+                "upi_id": "temple2@oksbi",
+            },
+        ]
+    )
+
+    def fake_get_collection(name: str):
+        return collections[name]
+
+    async def fake_session():
+        yield DummySession()
+
+    async def noop_ensure_sql_accounts(_session, _tenant_id):
+        return None
+
+    async def fake_resolve_tenant_by_temple_id(value):
+        mapping = {1: "tenant-1", 2: "tenant-2"}
+        return mapping.get(int(value or 0))
+
+    monkeypatch.setattr(mandir_router, "get_collection", fake_get_collection)
+    monkeypatch.setattr(mandir_router, "_ensure_default_mandir_sql_accounts", noop_ensure_sql_accounts)
+    monkeypatch.setattr(mandir_router, "resolve_tenant_by_temple_id", fake_resolve_tenant_by_temple_id)
+
+    app.dependency_overrides[get_current_user] = lambda: {
+        "tenant_id": "tenant-1",
+        "id": "user-1",
+        "user_id": "user-1",
+        "role": "tenant_admin",
+        "app_key": "mandirmitra",
+        "is_superuser": False,
+    }
+    app.dependency_overrides[get_async_session] = fake_session
+
+    with TestClient(app) as client:
+        yield client, collections
+
+    app.dependency_overrides.pop(get_current_user, None)
+    app.dependency_overrides.pop(get_async_session, None)
+
+
+def test_upi_quick_log_persists_and_lists_rows(mandir_upi_client, monkeypatch):
+    client, collections = mandir_upi_client
+
+    async def fake_resolve_account(_session, _tenant_id, _raw_account_id, _payment_mode):
+        return 1001
+
+    async def fake_income_account(_session, _tenant_id, _category_name):
+        return 4100
+
+    async def fake_post_journal_entry(**_kwargs):
+        return None
+
+    monkeypatch.setattr(mandir_router, "_resolve_mandir_payment_account_id", fake_resolve_account)
+    monkeypatch.setattr(mandir_router, "_resolve_mandir_income_account", fake_income_account)
+    monkeypatch.setattr(mandir_router, "post_journal_entry", fake_post_journal_entry)
+
+    response = client.post(
+        "/api/v1/upi-payments/quick-log",
+        json={
+            "devotee_phone": "9876512340",
+            "devotee_name": "Raghavan Iyer",
+            "amount": 501,
+            "payment_purpose": "DONATION",
+            "payment_datetime": "2026-04-10T07:00:00+00:00",
+            "upi_reference_number": "UPI-REF-1",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["payment_purpose"] == "DONATION"
+    assert payload["receipt_number"].startswith("DON-")
+    assert payload["amount"] == 501.0
+
+    assert len(collections["mandir_upi_payments"].docs) == 1
+    assert len(collections["mandir_donations"].docs) == 1
+
+    listing = client.get("/api/v1/upi-payments", params={"from_date": "2026-04-10", "to_date": "2026-04-10"})
+    assert listing.status_code == 200
+    rows = listing.json()
+    assert len(rows) == 1
+    assert rows[0]["upi_reference_number"] == "UPI-REF-1"
+
+
+def test_public_upi_intent_is_temple_scoped(mandir_upi_client):
+    client, _collections = mandir_upi_client
+
+    ok = client.get(
+        "/api/v1/public/temples/1/upi-intent",
+        params={"amount": 750, "purpose": "Annadanam", "reference": "DON-1001"},
+    )
+    assert ok.status_code == 200
+    payload = ok.json()
+    assert payload["temple_id"] == 1
+    assert payload["upi_id"] == "temple1@oksbi"
+    assert payload["intent_uri"].startswith("upi://pay?")
+    assert "pa=temple1%40oksbi" in payload["intent_uri"]
+
+    blocked = client.get("/api/v1/public/temples/2/upi-intent")
+    assert blocked.status_code == 404
+
+
+def test_quick_ticket_uses_devotee_autofill_and_resolves_seva_name(mandir_upi_client, monkeypatch):
+    client, collections = mandir_upi_client
+
+    async def fake_resolve_account(_session, _tenant_id, _raw_account_id, _payment_mode):
+        return 1001
+
+    async def fake_income_account(_session, _tenant_id, _category_name):
+        return 4100
+
+    async def fake_post_journal_entry(**_kwargs):
+        return None
+
+    monkeypatch.setattr(mandir_router, "_resolve_mandir_payment_account_id", fake_resolve_account)
+    monkeypatch.setattr(mandir_router, "_resolve_mandir_income_account", fake_income_account)
+    monkeypatch.setattr(mandir_router, "post_journal_entry", fake_post_journal_entry)
+
+    response = client.post(
+        "/api/v1/sevas/bookings/quick-ticket",
+        json={
+            "ticket_type": "seva",
+            "seva_id": "seva-1",
+            "devotee_phone": "9876512340",
+            "amount": 300,
+            "payment_mode": "Cash",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ticket_type"] == "seva"
+    assert payload["autofill_found"] is True
+    assert payload["record"]["seva_name"] == "Sarva Seve"
+    assert len(collections["mandir_seva_bookings"].docs) == 1

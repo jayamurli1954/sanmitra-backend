@@ -175,3 +175,38 @@ def test_pincode_lookup_returns_not_found_when_lookup_misses(mandir_client, monk
     assert payload["city"] is None
     assert payload["state"] is None
     assert payload["found"] is False
+
+def test_devotee_autofill_returns_found_payload(mandir_client):
+    client, collection = mandir_client
+
+    collection.docs.append(
+        {
+            "_id": FakeObjectId(),
+            "id": "dev-3",
+            "tenant_id": "tenant-1",
+            "app_key": "mandirmitra",
+            "name": "Smt. Lakshmi",
+            "phone": "9998887776",
+            "city": "Chennai",
+        }
+    )
+
+    response = client.get("/api/v1/devotees/autofill/by-mobile/9998887776")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["found"] is True
+    assert payload["phone"] == "9998887776"
+    assert payload["devotee"]["id"] == "dev-3"
+    assert "_id" not in payload["devotee"]
+
+
+def test_devotee_autofill_returns_not_found_payload(mandir_client):
+    client, _collection = mandir_client
+
+    response = client.get("/api/v1/devotees/autofill/by-mobile/123")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["found"] is False
+    assert payload["devotee"] is None

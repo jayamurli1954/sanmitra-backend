@@ -4,6 +4,7 @@ import calendar
 import json
 import logging
 import os
+from urllib.parse import urlencode
 from datetime import date, datetime, timezone
 from io import BytesIO, StringIO
 import csv
@@ -1410,6 +1411,13 @@ def _build_receipt_pdf_bytes(payload: dict[str, Any]) -> bytes:
         leading=9.2,
         alignment=1,
     )
+    powered_by_note = ParagraphStyle(
+        "ReceiptPoweredByNote",
+        parent=footer_note,
+        fontSize=6.6,
+        leading=8,
+        alignment=2,
+    )
 
     elements: list[Any] = []
 
@@ -1510,7 +1518,7 @@ def _build_receipt_pdf_bytes(payload: dict[str, Any]) -> bytes:
     rows.append([
         _receipt_paragraph(line_item_header, table_cell_bold),
         _receipt_paragraph('Rs', table_cell_center),
-        _receipt_paragraph('-', table_cell_center),
+        _receipt_paragraph('', table_cell_center),
     ])
 
     for item in line_items:
@@ -1528,35 +1536,15 @@ def _build_receipt_pdf_bytes(payload: dict[str, Any]) -> bytes:
         _receipt_paragraph(total_minor, table_cell_right),
     ])
 
-    if bool(payload.get('include_astro_row', True)):
-        rows.append([
-            _receipt_paragraph(f"{gotra_label} {_as_text(payload.get('gotra'), '--')}", table_cell),
-            _receipt_paragraph(f"{star_label} {_as_text(payload.get('nakshatra'), '--')}", table_cell),
-            _receipt_paragraph(f"{rashi_label} {_as_text(payload.get('rashi'), '--')}", table_cell),
-        ])
-
-    if bool(payload.get('include_service_row', True)):
-        rows.append([
-            _receipt_paragraph(f"{service_date_label} {_as_text(payload.get('service_date'), '--')}", table_cell),
-            _receipt_paragraph('', table_cell_center),
-            _receipt_paragraph(signatory_label, table_cell_center),
-        ])
-
     note_line_local = _as_text(payload.get('note_local'), labels['note_local'])
     note_line_english = _as_text(payload.get('note_english'), '')
     note_lines = [line for line in [note_line_local if use_local_labels else '', note_line_english] if line]
     note_block = '\n'.join(note_lines)
     rows.append([_receipt_paragraph(note_block or '-', table_cell_center), '', ''])
 
-    include_astro_row = bool(payload.get('include_astro_row', True))
-    if include_astro_row:
-        col1 = doc.width * 0.63
-        col2 = doc.width * 0.18
-        col3 = doc.width - col1 - col2
-    else:
-        col1 = doc.width * 0.67
-        col2 = doc.width * 0.13
-        col3 = doc.width - col1 - col2
+    col1 = doc.width * 0.76
+    col2 = doc.width * 0.16
+    col3 = doc.width - col1 - col2
     table = Table(rows, colWidths=[col1, col2, col3])
 
     note_row_index = len(rows) - 1
@@ -1589,6 +1577,20 @@ def _build_receipt_pdf_bytes(payload: dict[str, Any]) -> bytes:
     elements.append(table)
     elements.append(Spacer(1, 4))
 
+    if bool(payload.get('include_astro_row', True)):
+        astro_line = (
+            f"{gotra_label}: {_as_text(payload.get('gotra'), '--')}    "
+            f"{star_label}: {_as_text(payload.get('nakshatra'), '--')}    "
+            f"{rashi_label}: {_as_text(payload.get('rashi'), '--')}"
+        )
+        elements.append(_receipt_paragraph(astro_line, table_cell_small))
+        elements.append(Spacer(1, 2))
+
+    if bool(payload.get('include_service_row', True)):
+        service_line = f"{service_date_label}: {_as_text(payload.get('service_date'), '--')}"
+        elements.append(_receipt_paragraph(service_line, table_cell_small))
+        elements.append(Spacer(1, 2))
+
     system_line_raw = payload.get('system_generated_line')
     if system_line_raw is None:
         system_line = 'This is a system generated receipt and does not require any signature.'
@@ -1599,8 +1601,8 @@ def _build_receipt_pdf_bytes(payload: dict[str, Any]) -> bytes:
 
     if system_line:
         elements.append(_receipt_paragraph(system_line, footer_note))
-        elements.append(Spacer(1, 2))
-    elements.append(_receipt_paragraph(powered_by, footer_note))
+        elements.append(Spacer(1, 4))
+    elements.append(_receipt_paragraph(powered_by, powered_by_note))
 
     doc.build(elements)
     return buffer.getvalue()
@@ -1980,6 +1982,79 @@ def _seva_import_template_csv() -> str:
 
 def _normalize_phone(phone: str | None) -> str:
     return "".join(ch for ch in str(phone or "") if ch.isdigit())[:10]
+
+
+def _parse_iso_datetime(value: Any) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except Exception:
+        return None
+
+
+def _upi_receipt_number(doc: dict[str, Any]) -> str:
+    existing = str(doc.get("receipt_number") or "").strip()
+    if existing:
+        return existing
+
+    row_id = str(doc.get("id") or "").strip()
+    if row_id:
+        return f"UPI-{row_id[:8].upper()}"
+
+    return f"UPI-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
+
+
+def _mandir_upi_payment_view(doc: dict[str, Any]) -> dict[str, Any]:
+    row = _sanitize_mongo_doc(doc)
+    row_id = str(row.get("id") or "").strip()
+    if row_id:
+        row["id"] = row_id
+
+    row["amount"] = _safe_float(row.get("amount"), 0.0)
+    row["payment_purpose"] = str(row.get("payment_purpose") or "DONATION").strip().upper()
+    row["receipt_number"] = _upi_receipt_number(row)
+    if not row.get("payment_datetime"):
+        row["payment_datetime"] = row.get("created_at")
+
+    row["sender_phone"] = _normalize_phone(row.get("sender_phone") or row.get("devotee_phone"))
+    row["devotee_phone"] = _normalize_phone(row.get("devotee_phone") or row.get("sender_phone"))
+    return row
+
+
+async def _find_devotee_by_phone(tenant_id: str, app_key: str, phone: str) -> dict[str, Any] | None:
+    normalized = _normalize_phone(phone)
+    if not normalized:
+        return None
+
+    col = get_collection("mandir_devotees")
+    docs = await col.find({"tenant_id": tenant_id, "app_key": app_key, "phone": normalized}).limit(1).to_list(length=1)
+    if not docs:
+        return None
+    return _sanitize_mongo_doc(docs[0])
+
+
+def _build_upi_intent_uri(
+    *,
+    upi_id: str,
+    payee_name: str,
+    amount: float | None,
+    note: str | None,
+    reference: str | None,
+    currency: str = "INR",
+) -> str:
+    params: list[tuple[str, str]] = [("pa", upi_id), ("pn", payee_name), ("cu", currency)]
+    if amount is not None and amount > 0:
+        params.append(("am", f"{amount:.2f}"))
+    if note:
+        params.append(("tn", note))
+    if reference:
+        params.append(("tr", reference))
+    return f"upi://pay?{urlencode(params)}"
 
 
 def _is_platform_super_admin(user: dict[str, Any]) -> bool:
@@ -2605,6 +2680,28 @@ async def search_devotee_by_mobile(
     except Exception as exc:
         logger.error("Failed to search devotees by mobile for tenant=%s: %s", tenant_id, exc, exc_info=True)
         return []
+
+@router.get("/devotees/autofill/by-mobile/{phone}")
+async def autofill_devotee_by_mobile(
+    phone: str,
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    normalized = _normalize_phone(phone)
+    if not normalized:
+        return {"found": False, "phone": normalized, "devotee": None}
+
+    try:
+        devotee = await _find_devotee_by_phone(tenant_id, app_key, normalized)
+        if devotee is None:
+            return {"found": False, "phone": normalized, "devotee": None}
+        return {"found": True, "phone": normalized, "devotee": devotee}
+    except Exception as exc:
+        logger.error("Failed to autofill devotee by mobile for tenant=%s: %s", tenant_id, exc, exc_info=True)
+        return {"found": False, "phone": normalized, "devotee": None}
 
 
 @router.get("/sevas/")
@@ -4259,14 +4356,281 @@ async def mandir_temples_module_config_update(
     }
 
 
+def _mandir_upi_config_view(doc: dict[str, Any], temple_id: int) -> dict[str, Any]:
+    upi_id = str(doc.get("upi_id") or "").strip()
+    payee_name = str(doc.get("upi_payee_name") or doc.get("trust_name") or doc.get("temple_name") or doc.get("name") or "Temple").strip()
+    currency = str(doc.get("upi_currency") or "INR").strip().upper() or "INR"
+    return {
+        "temple_id": int(temple_id),
+        "upi_public_enabled": bool(doc.get("upi_public_enabled", False)),
+        "upi_id": upi_id,
+        "upi_payee_name": payee_name,
+        "upi_currency": currency,
+        "upi_qr_note": str(doc.get("upi_qr_note") or "").strip() or None,
+    }
+
+
+@router.get("/upi-payments/config")
+async def mandir_upi_payments_config(
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    temple_id: int | None = Query(default=None),
+):
+    tenant_id = await _resolve_tenant_for_mandir_request(current_user, x_tenant_id, temple_id)
+    assigned_temple_id = await ensure_temple_numeric_id(tenant_id)
+    doc = await get_collection("mandir_temples").find_one({"tenant_id": tenant_id}) or {}
+    return _mandir_upi_config_view(doc, assigned_temple_id)
+
+
+@router.put("/upi-payments/config")
+async def mandir_upi_payments_config_update(
+    payload: dict[str, Any],
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    temple_id: int | None = Query(default=None),
+):
+    tenant_id = await _resolve_tenant_for_mandir_request(current_user, x_tenant_id, temple_id)
+    assigned_temple_id = await ensure_temple_numeric_id(tenant_id)
+
+    upi_id = str(payload.get("upi_id") or "").strip().lower()
+    upi_payee_name = str(payload.get("upi_payee_name") or "").strip()
+    upi_qr_note = str(payload.get("upi_qr_note") or "").strip()
+    upi_currency = str(payload.get("upi_currency") or "INR").strip().upper() or "INR"
+
+    update = {
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "id": assigned_temple_id,
+        "temple_id": assigned_temple_id,
+    }
+    if "upi_public_enabled" in payload:
+        update["upi_public_enabled"] = bool(payload.get("upi_public_enabled"))
+    if "upi_id" in payload:
+        update["upi_id"] = upi_id or None
+    if "upi_payee_name" in payload:
+        update["upi_payee_name"] = upi_payee_name or None
+    if "upi_qr_note" in payload:
+        update["upi_qr_note"] = upi_qr_note or None
+    if "upi_currency" in payload:
+        update["upi_currency"] = upi_currency
+
+    col = get_collection("mandir_temples")
+    await col.update_one(
+        {"tenant_id": tenant_id},
+        {
+            "$set": update,
+            "$setOnInsert": {
+                "tenant_id": tenant_id,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            },
+        },
+        upsert=True,
+    )
+    doc = await col.find_one({"tenant_id": tenant_id}) or {}
+    return _mandir_upi_config_view(doc, assigned_temple_id)
+
+
+@router.get("/public/temples/{temple_id}/upi-intent")
+async def mandir_public_upi_intent(
+    temple_id: int,
+    amount: float | None = Query(default=None, ge=0),
+    purpose: str | None = Query(default=None),
+    reference: str | None = Query(default=None),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    app_key = resolve_app_key((x_app_key or "mandirmitra").strip())
+    tenant_id = await resolve_tenant_by_temple_id(temple_id)
+    if not tenant_id:
+        raise HTTPException(status_code=404, detail="Temple not found")
+
+    temples = get_collection("mandir_temples")
+    temple_doc = await temples.find_one({"tenant_id": tenant_id, "app_key": app_key}) or {}
+    if not temple_doc:
+        temple_doc = await temples.find_one({"tenant_id": tenant_id}) or {}
+
+    if not bool(temple_doc.get("upi_public_enabled", False)):
+        raise HTTPException(status_code=404, detail="Public UPI is not enabled for this temple")
+
+    upi_id = str(temple_doc.get("upi_id") or "").strip().lower()
+    if not upi_id:
+        raise HTTPException(status_code=404, detail="Temple UPI ID is not configured")
+
+    payee_name = str(
+        temple_doc.get("upi_payee_name")
+        or temple_doc.get("trust_name")
+        or temple_doc.get("temple_name")
+        or temple_doc.get("name")
+        or "Temple"
+    ).strip()
+    currency = str(temple_doc.get("upi_currency") or "INR").strip().upper() or "INR"
+    note_text = str(purpose or temple_doc.get("upi_qr_note") or "Temple Offering").strip()
+    reference_text = str(reference or "").strip() or None
+
+    intent_uri = _build_upi_intent_uri(
+        upi_id=upi_id,
+        payee_name=payee_name,
+        amount=amount,
+        note=note_text,
+        reference=reference_text,
+        currency=currency,
+    )
+
+    return {
+        "temple_id": temple_id,
+        "upi_id": upi_id,
+        "payee_name": payee_name,
+        "currency": currency,
+        "amount": amount,
+        "purpose": note_text,
+        "reference": reference_text,
+        "intent_uri": intent_uri,
+        "qr_payload": intent_uri,
+    }
+
+
 @router.get("/upi-payments")
-async def mandir_upi_payments(_current_user: dict = Depends(get_current_user)):
-    return []
+async def mandir_upi_payments(
+    from_date: date | None = Query(default=None),
+    to_date: date | None = Query(default=None),
+    limit: int = Query(default=500, ge=1, le=2000),
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+
+    rows = await get_collection("mandir_upi_payments").find({"tenant_id": tenant_id, "app_key": app_key}).sort("payment_datetime", -1).limit(limit).to_list(length=limit)
+
+    filtered: list[dict[str, Any]] = []
+    for row in rows:
+        parsed = _parse_iso_datetime(row.get("payment_datetime") or row.get("created_at"))
+        if parsed is not None:
+            row_date = parsed.date()
+            if from_date and row_date < from_date:
+                continue
+            if to_date and row_date > to_date:
+                continue
+        filtered.append(row)
+
+    filtered.sort(key=lambda item: str(item.get("payment_datetime") or item.get("created_at") or ""), reverse=True)
+    return [_mandir_upi_payment_view(row) for row in filtered]
 
 
 @router.post("/upi-payments/quick-log")
-async def mandir_upi_quick_log(_payload: dict[str, Any], _current_user: dict = Depends(get_current_user)):
-    return _ok("upi-payments/quick-log")
+async def mandir_upi_quick_log(
+    payload: dict[str, Any],
+    session: AsyncSession = Depends(get_async_session),
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+
+    amount = _safe_float(payload.get("amount"), 0.0)
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="Amount must be greater than zero")
+
+    purpose = str(payload.get("payment_purpose") or "DONATION").strip().upper()
+    payment_dt = _parse_iso_datetime(payload.get("payment_datetime")) or datetime.now(timezone.utc)
+    payment_datetime = payment_dt.isoformat()
+
+    normalized_phone = _normalize_phone(payload.get("devotee_phone") or payload.get("sender_phone") or payload.get("phone"))
+    devotee_name = str(payload.get("devotee_name") or payload.get("sender_name") or "").strip() or "Walk-in Devotee"
+    sender_upi_id = str(payload.get("sender_upi_id") or "").strip() or None
+    upi_reference_number = str(payload.get("upi_reference_number") or "").strip() or None
+    notes = str(payload.get("notes") or "").strip() or None
+
+    col = get_collection("mandir_upi_payments")
+    if upi_reference_number:
+        existing = await col.find_one(
+            {
+                "tenant_id": tenant_id,
+                "app_key": app_key,
+                "upi_reference_number": upi_reference_number,
+            }
+        )
+        if existing is not None:
+            return _mandir_upi_payment_view(existing)
+
+    source_record: dict[str, Any]
+    source_type: str
+    source_id: str | None
+
+    if purpose == "SEVA":
+        seva_payload = {
+            **payload,
+            "amount_paid": amount,
+            "payment_mode": "UPI",
+            "devotee_name": devotee_name,
+            "devotee_names": str(payload.get("devotee_names") or devotee_name),
+            "devotee_phone": normalized_phone,
+            "devotee_mobile": normalized_phone,
+            "booking_date": str(payload.get("booking_date") or payment_dt.date().isoformat()),
+            "seva_name": str(payload.get("seva_name") or "Seva Booking"),
+        }
+        source_record = await create_seva_booking(
+            payload=seva_payload,
+            session=session,
+            current_user=current_user,
+            x_tenant_id=x_tenant_id,
+            x_app_key=x_app_key,
+        )
+        source_type = "seva"
+        source_id = str(source_record.get("id") or "").strip() or None
+    else:
+        donation_category_map = {
+            "ANNADANA": "Annadanam",
+            "ANNADANAM": "Annadanam",
+            "SPONSORSHIP": "Sponsorship",
+            "OTHER": "General Donation",
+            "DONATION": "General Donation",
+        }
+        donation_payload = {
+            **payload,
+            "amount": amount,
+            "payment_mode": "UPI",
+            "category": str(payload.get("category") or donation_category_map.get(purpose, "General Donation")),
+            "devotee_name": devotee_name,
+            "devotee_phone": normalized_phone,
+            "phone": normalized_phone,
+        }
+        source_record = await create_donation(
+            payload=donation_payload,
+            session=session,
+            current_user=current_user,
+            x_tenant_id=x_tenant_id,
+            x_app_key=x_app_key,
+        )
+        source_type = "donation"
+        source_id = str(source_record.get("donation_id") or source_record.get("id") or "").strip() or None
+
+    row_id = str(uuid4())
+    receipt_number = str(source_record.get("receipt_number") or _upi_receipt_number({"id": row_id})).strip()
+    now = datetime.now(timezone.utc).isoformat()
+    payment_row = {
+        "id": row_id,
+        "tenant_id": tenant_id,
+        "app_key": app_key,
+        "amount": amount,
+        "payment_datetime": payment_datetime,
+        "payment_mode": "UPI",
+        "payment_purpose": purpose,
+        "devotee_name": devotee_name,
+        "devotee_phone": normalized_phone,
+        "sender_phone": normalized_phone,
+        "sender_upi_id": sender_upi_id,
+        "upi_reference_number": upi_reference_number,
+        "notes": notes,
+        "source_type": source_type,
+        "source_id": source_id,
+        "receipt_number": receipt_number,
+        "created_at": now,
+        "updated_at": now,
+    }
+    await col.insert_one(payment_row)
+
+    return _mandir_upi_payment_view(payment_row)
 
 
 @router.get("/users")
@@ -4361,6 +4725,7 @@ async def create_seva_booking(
         "updated_at": now,
         "status": "confirmed"
     }
+    booking["seva_name"] = str(booking.get("seva_name") or seva_name)
     booking["receipt_number"] = _receipt_number_for_seva(booking)
     booking["receipt_pdf_url"] = f"/api/v1/sevas/bookings/{booking_id}/receipt/pdf"
 
@@ -4406,6 +4771,94 @@ async def create_seva_booking(
             raise HTTPException(status_code=500, detail=f"Failed to post seva journal: {exc}") from exc
 
     return _mandir_seva_booking_view(booking)
+
+@router.post("/sevas/bookings/quick-ticket")
+async def create_quick_ticket(
+    payload: dict[str, Any],
+    session: AsyncSession = Depends(get_async_session),
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+
+    ticket_type = str(payload.get("ticket_type") or payload.get("purpose") or payload.get("payment_purpose") or "seva").strip().lower()
+    normalized_phone = _normalize_phone(payload.get("devotee_phone") or payload.get("phone") or payload.get("mobile"))
+
+    devotee = None
+    if normalized_phone:
+        try:
+            devotee = await _find_devotee_by_phone(tenant_id, app_key, normalized_phone)
+        except Exception:
+            devotee = None
+
+    devotee_name = str(
+        payload.get("devotee_name")
+        or payload.get("devotee_names")
+        or (devotee or {}).get("name")
+        or "Walk-in Devotee"
+    ).strip() or "Walk-in Devotee"
+
+    if ticket_type in {"donation", "annadanam", "annadana", "sponsorship", "other"}:
+        category_map = {
+            "annadanam": "Annadanam",
+            "annadana": "Annadanam",
+            "sponsorship": "Sponsorship",
+            "other": "General Donation",
+            "donation": "General Donation",
+        }
+        donation_payload = {
+            **payload,
+            "amount": _safe_float(payload.get("amount") or payload.get("amount_paid"), 0.0),
+            "devotee_name": devotee_name,
+            "devotee_phone": normalized_phone,
+            "phone": normalized_phone,
+            "category": str(payload.get("category") or category_map.get(ticket_type, "General Donation")),
+            "payment_mode": str(payload.get("payment_mode") or payload.get("payment_method") or "Cash"),
+        }
+        donation = await create_donation(
+            payload=donation_payload,
+            session=session,
+            current_user=current_user,
+            x_tenant_id=x_tenant_id,
+            x_app_key=x_app_key,
+        )
+        return {
+            "ticket_type": "donation",
+            "autofill_found": bool(devotee),
+            "devotee": devotee,
+            "receipt_number": donation.get("receipt_number"),
+            "receipt_pdf_url": donation.get("receipt_pdf_url"),
+            "record": donation,
+        }
+
+    seva_payload = {
+        **payload,
+        "amount_paid": _safe_float(payload.get("amount_paid") or payload.get("amount"), 0.0),
+        "devotee_name": devotee_name,
+        "devotee_names": str(payload.get("devotee_names") or devotee_name),
+        "devotee_phone": normalized_phone,
+        "devotee_mobile": normalized_phone,
+        "payment_mode": str(payload.get("payment_mode") or payload.get("payment_method") or "Cash"),
+        "booking_date": str(payload.get("booking_date") or datetime.now(timezone.utc).date().isoformat()),
+    }
+    booking = await create_seva_booking(
+        payload=seva_payload,
+        session=session,
+        current_user=current_user,
+        x_tenant_id=x_tenant_id,
+        x_app_key=x_app_key,
+    )
+    return {
+        "ticket_type": "seva",
+        "autofill_found": bool(devotee),
+        "devotee": devotee,
+        "receipt_number": booking.get("receipt_number"),
+        "receipt_pdf_url": booking.get("receipt_pdf_url"),
+        "record": booking,
+    }
+
 
 @router.get("/sevas/bookings")
 async def mandir_seva_bookings(
