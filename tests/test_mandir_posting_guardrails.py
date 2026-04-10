@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
@@ -126,6 +127,7 @@ def test_get_seva_receipt_pdf_resolves_seva_name_from_seva_id(mandir_posting_cli
 def mandir_posting_client(monkeypatch):
     donations = FakeCollection()
     seva_bookings = FakeCollection()
+    devotees = FakeCollection()
     sevas = FakeCollection(
         [
             {
@@ -143,6 +145,8 @@ def mandir_posting_client(monkeypatch):
             return donations
         if name == "mandir_seva_bookings":
             return seva_bookings
+        if name == "mandir_devotees":
+            return devotees
         if name == "mandir_sevas":
             return sevas
         raise AssertionError(f"Unexpected collection: {name}")
@@ -729,3 +733,144 @@ def test_quick_ticket_uses_devotee_autofill_and_resolves_seva_name(mandir_upi_cl
     assert payload["autofill_found"] is True
     assert payload["record"]["seva_name"] == "Sarva Seve"
     assert len(collections["mandir_seva_bookings"].docs) == 1
+
+def test_journal_entry_create_update_post_cancel_flow(mandir_compat_client, monkeypatch):
+    client, collections = mandir_compat_client
+
+    async def noop_ensure_sql_accounts_safe(_session, _tenant_id, raise_on_failure=False):
+        return None
+
+    async def fake_normalize_lines(_session, *, tenant_id, raw_lines):
+        assert tenant_id == "tenant-1"
+        assert isinstance(raw_lines, list)
+        return (
+            [
+                {
+                    "account_id": 11001,
+                    "account_code": "11001",
+                    "account_name": "Cash in Hand",
+                    "ledger_account_id": 101,
+                    "debit_amount": 500.0,
+                    "credit_amount": 0.0,
+                    "description": "Expense debit",
+                },
+                {
+                    "account_id": 51001,
+                    "account_code": "51001",
+                    "account_name": "Priest Salary",
+                    "ledger_account_id": 202,
+                    "debit_amount": 0.0,
+                    "credit_amount": 500.0,
+                    "description": "Expense credit",
+                },
+            ],
+            Decimal("500.00"),
+            Decimal("500.00"),
+        )
+
+    posted_ids = iter([901, 902])
+
+    async def fake_post_journal_entry(**_kwargs):
+        return SimpleNamespace(id=next(posted_ids)), True
+
+    monkeypatch.setattr(mandir_router, "_ensure_default_mandir_sql_accounts_safe", noop_ensure_sql_accounts_safe)
+    monkeypatch.setattr(mandir_router, "_normalize_mandir_journal_lines", fake_normalize_lines)
+    monkeypatch.setattr(mandir_router, "post_journal_entry", fake_post_journal_entry)
+
+    created = client.post(
+        "/api/v1/journal-entries/",
+        json={
+            "entry_date": "2026-04-10",
+            "narration": "Quick expense draft",
+            "reference_type": "expense",
+            "journal_lines": [{"account_id": "11001"}, {"account_id": "51001"}],
+        },
+    )
+    assert created.status_code == 200
+    created_payload = created.json()
+    entry_id = created_payload["id"]
+    assert created_payload["status"] == "draft"
+    assert created_payload["entry_number"].startswith("JE-")
+
+    updated = client.put(
+        f"/api/v1/journal-entries/{entry_id}",
+        json={
+            "entry_date": "2026-04-10",
+            "narration": "Quick expense updated",
+            "reference_type": "expense",
+            "journal_lines": [{"account_id": "11001"}, {"account_id": "51001"}],
+        },
+    )
+    assert updated.status_code == 200
+    assert updated.json()["status"] == "draft"
+    assert updated.json()["narration"] == "Quick expense updated"
+
+    posted = client.post(f"/api/v1/journal-entries/{entry_id}/post")
+    assert posted.status_code == 200
+    posted_payload = posted.json()
+    assert posted_payload["status"] == "posted"
+    assert posted_payload["posted_journal_id"] == 901
+
+    reversed_response = client.post(
+        f"/api/v1/journal-entries/{entry_id}/cancel",
+        json={"cancellation_reason": "Entry created by mistake"},
+    )
+    assert reversed_response.status_code == 200
+    reversed_payload = reversed_response.json()
+    assert reversed_payload["status"] == "reversed"
+    assert reversed_payload["reversal_journal_id"] == 902
+
+    listing = client.get("/api/v1/journal-entries", params={"reference_type": "expense"})
+    assert listing.status_code == 200
+    rows = listing.json()
+    assert len(rows) == 1
+    assert rows[0]["id"] == entry_id
+    assert rows[0]["status"] == "reversed"
+    assert "_id" not in rows[0]
+
+    assert len(collections["mandir_journal_entries"].docs) == 1
+
+
+def test_get_seva_receipt_pdf_backfills_devotee_name_and_address(mandir_compat_client):
+    client, collections = mandir_compat_client
+
+    collections["mandir_devotees"].docs.append(
+        {
+            "id": "dev-7",
+            "tenant_id": "tenant-1",
+            "app_key": "mandirmitra",
+            "name": "Sri Raghavan Iyer",
+            "phone": "9876512340",
+            "address": "45, T Nagar South Road",
+            "city": "Chennai",
+            "state": "Tamil Nadu",
+            "pincode": "600017",
+        }
+    )
+    collections["mandir_seva_bookings"].docs.append(
+        {
+            "id": "book-4",
+            "tenant_id": "tenant-1",
+            "app_key": "mandirmitra",
+            "seva_id": "seva-1",
+            "amount_paid": 500,
+            "payment_mode": "Cash",
+            "booking_date": "2026-04-06",
+            "devotee_id": "dev-7",
+            "created_at": "2026-04-06T10:00:00+00:00",
+        }
+    )
+
+    response = client.get("/api/v1/sevas/bookings/book-4/receipt/pdf")
+
+    assert response.status_code == 200
+    assert response.headers.get("content-type", "").startswith("application/pdf")
+    assert response.content.startswith(b"%PDF")
+
+    booking = collections["mandir_seva_bookings"].docs[0]
+    assert booking["seva_name"] == "Sarva Seve"
+    assert booking["devotee_names"] == "Sri Raghavan Iyer"
+    assert booking["devotee_name"] == "Sri Raghavan Iyer"
+    assert booking["devotee_address"] == "45, T Nagar South Road"
+    assert booking["address"] == "45, T Nagar South Road"
+

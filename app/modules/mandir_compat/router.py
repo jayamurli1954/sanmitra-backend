@@ -877,6 +877,7 @@ def _generate_donation_receipt_pdf_bytes(
     payload = {
         **temple_profile,
         "receipt_title": "DONATION RECEIPT",
+        "party_label": "",
         "line_item_header": "Donation Details",
         "service_date_label": "Donation Date",
         "receipt_number": receipt_number,
@@ -931,11 +932,22 @@ def _generate_seva_receipt_pdf_bytes(
     temple_profile = _build_temple_receipt_profile(temple_profile or {"temple_name": temple_name})
     amount = _safe_float(booking.get("amount_paid") or booking.get("amount"), 0.0)
     seva_name = str(booking.get("seva_name") or booking.get("seva") or "Seva Booking").strip() or "Seva Booking"
-    devotee_name = str(booking.get("devotee_names") or booking.get("devotee_name") or "Devotee").strip() or "Devotee"
+    devotee = booking.get("devotee") if isinstance(booking.get("devotee"), dict) else {}
+    devotee_name = str(
+        booking.get("devotee_names")
+        or booking.get("devotee_name")
+        or devotee.get("name")
+        or "Devotee"
+    ).strip() or "Devotee"
     booking_date = _format_receipt_date(booking.get("booking_date") or booking.get("created_at"))
     payment_mode = _format_payment_mode_for_receipt(booking.get("payment_mode") or booking.get("payment_method") or "Cash")
     receipt_number = _receipt_number_for_seva(booking)
-    devotee_address = str(booking.get("devotee_address") or booking.get("address") or "--").strip() or "--"
+    devotee_address = str(
+        booking.get("devotee_address")
+        or booking.get("address")
+        or devotee.get("address")
+        or "--"
+    ).strip() or "--"
 
     line_items = _extract_seva_line_items(booking, fallback_name=seva_name, fallback_amount=amount)
     total_amount = sum(_safe_float(item.get("amount"), 0.0) for item in line_items)
@@ -944,6 +956,7 @@ def _generate_seva_receipt_pdf_bytes(
 
     payload = {
         **temple_profile,
+        "party_label": "",
         "receipt_number": receipt_number,
         "receipt_date": booking_date,
         "party_name": devotee_name,
@@ -1073,7 +1086,7 @@ _ENGLISH_LABELS = {
     "receipt_title": "RECEIPT",
     "receipt_number": "Receipt No",
     "date": "Date",
-    "party": "Smt/Sri",
+    "party": "Devotee",
     "address": "Address",
     "line_item": "Seva Details",
     "total": "Total",
@@ -1494,7 +1507,8 @@ def _build_receipt_pdf_bytes(payload: dict[str, Any]) -> bytes:
     receipt_title = _as_text(payload.get("receipt_title")) or labels["receipt_title"]
     receipt_no_label = _as_text(payload.get("receipt_number_label")) or labels["receipt_number"]
     date_label = _as_text(payload.get("date_label")) or labels["date"]
-    party_label = _as_text(payload.get("party_label")) or labels["party"]
+    party_label_raw = payload.get("party_label")
+    party_label = labels["party"] if party_label_raw is None else _as_text(party_label_raw, "")
     address_label = _as_text(payload.get("address_label")) or labels["address"]
     line_item_header = _as_text(payload.get("line_item_header")) or labels["line_item"]
     total_label = _as_text(payload.get("total_label")) or labels["total"]
@@ -1511,7 +1525,9 @@ def _build_receipt_pdf_bytes(payload: dict[str, Any]) -> bytes:
         _receipt_paragraph(f"{date_label}: {_as_text(payload.get('receipt_date'), '-')}", table_cell_small_right),
         "",
     ])
-    rows.append([_receipt_paragraph(f"{party_label} {_as_text(payload.get('party_name'), '-')}", table_cell), "", ""])
+    party_name = _as_text(payload.get("party_name"), "-")
+    party_line = f"{party_label}: {party_name}" if party_label else party_name
+    rows.append([_receipt_paragraph(party_line, table_cell), "", ""])
     rows.append([_receipt_paragraph(f"{address_label} {_as_text(payload.get('address_value'), '--')}", table_cell), "", ""])
     rows.append([_receipt_paragraph(_as_text(payload.get('amount_words_line'), 'Received with thanks'), table_cell_small), "", ""])
     rows.append([_receipt_paragraph(_as_text(payload.get('payment_line'), 'Received with thanks.'), table_cell_small), "", ""])
@@ -3585,14 +3601,502 @@ async def mandir_inventory_summary(
     }
 
 
+def _parse_journal_entry_date(value: Any) -> date:
+    if isinstance(value, date):
+        return value
+
+    raw = str(value or "").strip()
+    if not raw:
+        return datetime.now(timezone.utc).date()
+
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00")).date()
+    except Exception:
+        try:
+            return date.fromisoformat(raw[:10])
+        except Exception:
+            return datetime.now(timezone.utc).date()
+
+
+async def _resolve_sql_account_for_journal_line(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    raw_account_id: Any,
+) -> Account | None:
+    raw_value = str(raw_account_id or "").strip()
+    if not raw_value:
+        return None
+
+    maybe_id = _safe_optional_int(raw_value)
+    if maybe_id is not None:
+        by_id_stmt = select(Account).where(
+            Account.tenant_id == tenant_id,
+            Account.id == maybe_id,
+        )
+        by_id = (await session.execute(by_id_stmt)).scalar_one_or_none()
+        if by_id is not None:
+            return by_id
+
+    code_candidate = raw_value.split(" - ", 1)[0].strip()
+    normalized_code = _normalize_mandir_account_code(code_candidate)
+    if normalized_code:
+        by_code_stmt = select(Account).where(
+            Account.tenant_id == tenant_id,
+            Account.code == normalized_code,
+        )
+        by_code = (await session.execute(by_code_stmt)).scalar_one_or_none()
+        if by_code is not None:
+            return by_code
+
+    return None
+
+
+async def _normalize_mandir_journal_lines(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    raw_lines: Any,
+) -> tuple[list[dict[str, Any]], Decimal, Decimal]:
+    if not isinstance(raw_lines, list) or len(raw_lines) < 2:
+        raise HTTPException(status_code=400, detail="At least two journal lines are required")
+
+    normalized_lines: list[dict[str, Any]] = []
+    total_debit = Decimal("0.00")
+    total_credit = Decimal("0.00")
+
+    for index, line in enumerate(raw_lines, start=1):
+        if not isinstance(line, dict):
+            raise HTTPException(status_code=400, detail=f"Journal line #{index} is invalid")
+
+        account_ref = line.get("account_id")
+        account = await _resolve_sql_account_for_journal_line(
+            session,
+            tenant_id=tenant_id,
+            raw_account_id=account_ref,
+        )
+        if account is None:
+            raise HTTPException(status_code=400, detail=f"Invalid account on journal line #{index}")
+
+        try:
+            debit_amount = Decimal(str(line.get("debit_amount") or 0)).quantize(Decimal("0.01"))
+            credit_amount = Decimal(str(line.get("credit_amount") or 0)).quantize(Decimal("0.01"))
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid amount on journal line #{index}") from exc
+
+        if debit_amount < 0 or credit_amount < 0:
+            raise HTTPException(status_code=400, detail=f"Amounts cannot be negative on line #{index}")
+        if debit_amount == 0 and credit_amount == 0:
+            raise HTTPException(status_code=400, detail=f"Either debit or credit is required on line #{index}")
+        if debit_amount > 0 and credit_amount > 0:
+            raise HTTPException(status_code=400, detail=f"Line #{index} cannot have both debit and credit")
+
+        total_debit += debit_amount
+        total_credit += credit_amount
+
+        reference_account_id = _safe_optional_int(account_ref)
+        if reference_account_id is None:
+            reference_account_id = _safe_optional_int(str(account.code or "").strip()) or int(account.id)
+
+        normalized_lines.append(
+            {
+                "account_id": reference_account_id,
+                "account_code": str(account.code or "").strip(),
+                "account_name": str(account.name or "").strip(),
+                "ledger_account_id": int(account.id),
+                "debit_amount": float(debit_amount),
+                "credit_amount": float(credit_amount),
+                "description": str(line.get("description") or "").strip(),
+            }
+        )
+
+    if total_debit <= 0 or total_credit <= 0:
+        raise HTTPException(status_code=400, detail="Total debit and credit must be greater than zero")
+    if total_debit != total_credit:
+        raise HTTPException(status_code=400, detail="Total debit and credit must be equal")
+
+    return normalized_lines, total_debit, total_credit
+
+
+def _mandir_journal_entry_view(doc: dict[str, Any]) -> dict[str, Any]:
+    row = _sanitize_mongo_doc(doc)
+    row["entry_number"] = str(row.get("entry_number") or f"JE-{str(row.get('id') or '')[:8].upper()}")
+    row["entry_date"] = str(row.get("entry_date") or datetime.now(timezone.utc).date().isoformat())[:10]
+    row["narration"] = str(row.get("narration") or row.get("description") or "").strip()
+    row["reference_type"] = str(row.get("reference_type") or "").strip().lower() or None
+    row["reference_id"] = _safe_optional_int(row.get("reference_id"))
+    row["status"] = str(row.get("status") or "draft").strip().lower() or "draft"
+    row["total_debit"] = _safe_float(row.get("total_debit"), 0.0)
+    row["total_credit"] = _safe_float(row.get("total_credit"), 0.0)
+    row["total_amount"] = _safe_float(
+        row.get("total_amount"),
+        _safe_float(row.get("total_debit"), 0.0),
+    )
+
+    journal_lines: list[dict[str, Any]] = []
+    for line in row.get("journal_lines") or []:
+        if not isinstance(line, dict):
+            continue
+        journal_lines.append(
+            {
+                "account_id": _safe_optional_int(line.get("account_id")),
+                "account_code": str(line.get("account_code") or "").strip(),
+                "account_name": str(line.get("account_name") or "").strip(),
+                "debit_amount": _safe_float(line.get("debit_amount"), 0.0),
+                "credit_amount": _safe_float(line.get("credit_amount"), 0.0),
+                "description": str(line.get("description") or "").strip(),
+            }
+        )
+    row["journal_lines"] = journal_lines
+    return row
+
+
 @router.get("/journal-entries")
+@router.get("/journal-entries/")
 async def mandir_journal_entries(
+    from_date: date | None = Query(default=None),
+    to_date: date | None = Query(default=None),
+    reference_type: str | None = Query(default=None),
+    limit: int = Query(default=500, ge=1, le=2000),
     session: AsyncSession = Depends(get_async_session),
     current_user: dict = Depends(get_current_user),
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
 ):
     tenant_id = resolve_tenant_id(current_user, x_tenant_id)
-    return await journal_entries_report(session, tenant_id=tenant_id)
+    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+
+    query: dict[str, Any] = {"tenant_id": tenant_id, "app_key": app_key}
+    if reference_type:
+        query["reference_type"] = str(reference_type).strip().lower()
+
+    try:
+        docs = await get_collection("mandir_journal_entries").find(query).sort("updated_at", -1).limit(limit).to_list(length=limit)
+    except Exception:
+        docs = []
+
+    rows: list[dict[str, Any]] = []
+    for doc in docs:
+        view = _mandir_journal_entry_view(doc)
+        entry_date = _parse_journal_entry_date(view.get("entry_date"))
+        if from_date and entry_date < from_date:
+            continue
+        if to_date and entry_date > to_date:
+            continue
+        rows.append(view)
+
+    if rows:
+        return rows
+
+    # Backward-compatible fallback: expose posted SQL journals in the same list shape.
+    report = await journal_entries_report(session, tenant_id=tenant_id, limit=limit)
+    fallback_rows: list[dict[str, Any]] = []
+    for item in report.get("items", []):
+        entry_date = _parse_journal_entry_date(item.get("entry_date"))
+        if from_date and entry_date < from_date:
+            continue
+        if to_date and entry_date > to_date:
+            continue
+
+        fallback_rows.append(
+            {
+                "id": int(item.get("id")),
+                "entry_number": f"JE-{item.get('id')}",
+                "entry_date": entry_date.isoformat(),
+                "narration": str(item.get("description") or "").strip(),
+                "reference_type": str(item.get("reference") or "").split("-", 1)[0].lower() or None,
+                "reference_id": None,
+                "status": "posted",
+                "total_amount": _safe_float(item.get("total_debit"), 0.0),
+                "total_debit": _safe_float(item.get("total_debit"), 0.0),
+                "total_credit": _safe_float(item.get("total_credit"), 0.0),
+                "journal_lines": [],
+            }
+        )
+
+    return fallback_rows
+
+
+@router.post("/journal-entries")
+@router.post("/journal-entries/")
+async def mandir_create_journal_entry(
+    payload: dict[str, Any],
+    session: AsyncSession = Depends(get_async_session),
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    await _ensure_default_mandir_sql_accounts_safe(session, tenant_id, raise_on_failure=True)
+
+    normalized_lines, total_debit, total_credit = await _normalize_mandir_journal_lines(
+        session,
+        tenant_id=tenant_id,
+        raw_lines=payload.get("journal_lines"),
+    )
+
+    entry_id = str(uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+    entry_date = _parse_journal_entry_date(payload.get("entry_date"))
+    entry_number = f"JE-{entry_id[:8].upper()}"
+
+    entry_doc = {
+        "id": entry_id,
+        "tenant_id": tenant_id,
+        "app_key": app_key,
+        "entry_number": entry_number,
+        "entry_date": entry_date.isoformat(),
+        "narration": str(payload.get("narration") or "").strip(),
+        "reference_type": str(payload.get("reference_type") or "expense").strip().lower(),
+        "reference_id": _safe_optional_int(payload.get("reference_id")),
+        "status": "draft",
+        "journal_lines": normalized_lines,
+        "total_debit": float(total_debit),
+        "total_credit": float(total_credit),
+        "total_amount": float(total_debit),
+        "idempotency_key": f"man_je_{entry_id}",
+        "created_by": str(current_user.get("sub") or current_user.get("email") or "system"),
+        "created_at": now,
+        "updated_at": now,
+    }
+
+    await get_collection("mandir_journal_entries").insert_one(entry_doc)
+    return _mandir_journal_entry_view(entry_doc)
+
+
+@router.put("/journal-entries/{entry_id}")
+async def mandir_update_journal_entry(
+    entry_id: str,
+    payload: dict[str, Any],
+    session: AsyncSession = Depends(get_async_session),
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+
+    collection = get_collection("mandir_journal_entries")
+    existing = await collection.find_one({"id": str(entry_id), "tenant_id": tenant_id, "app_key": app_key})
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Journal entry not found")
+
+    if str(existing.get("status") or "").lower() != "draft":
+        raise HTTPException(status_code=400, detail="Only draft entries can be edited")
+
+    normalized_lines, total_debit, total_credit = await _normalize_mandir_journal_lines(
+        session,
+        tenant_id=tenant_id,
+        raw_lines=payload.get("journal_lines"),
+    )
+
+    patch = {
+        "entry_date": _parse_journal_entry_date(payload.get("entry_date") or existing.get("entry_date")).isoformat(),
+        "narration": str(payload.get("narration") or "").strip(),
+        "reference_type": str(payload.get("reference_type") or existing.get("reference_type") or "expense").strip().lower(),
+        "reference_id": _safe_optional_int(payload.get("reference_id")),
+        "journal_lines": normalized_lines,
+        "total_debit": float(total_debit),
+        "total_credit": float(total_credit),
+        "total_amount": float(total_debit),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    await collection.update_one(
+        {"id": str(entry_id), "tenant_id": tenant_id, "app_key": app_key},
+        {"$set": patch},
+        upsert=False,
+    )
+
+    updated = {**existing, **patch}
+    return _mandir_journal_entry_view(updated)
+
+
+@router.post("/journal-entries/{entry_id}/post")
+async def mandir_post_journal_entry(
+    entry_id: str,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    await _ensure_default_mandir_sql_accounts_safe(session, tenant_id, raise_on_failure=True)
+
+    collection = get_collection("mandir_journal_entries")
+    existing = await collection.find_one({"id": str(entry_id), "tenant_id": tenant_id, "app_key": app_key})
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Journal entry not found")
+
+    if str(existing.get("status") or "").lower() == "posted":
+        return _mandir_journal_entry_view(existing)
+
+    if str(existing.get("status") or "").lower() in {"cancelled", "reversed"}:
+        raise HTTPException(status_code=400, detail="Cancelled/reversed entries cannot be posted")
+
+    normalized_lines, total_debit, total_credit = await _normalize_mandir_journal_lines(
+        session,
+        tenant_id=tenant_id,
+        raw_lines=existing.get("journal_lines"),
+    )
+
+    post_lines: list[JournalLineIn] = []
+    for line in normalized_lines:
+        ledger_account_id = _safe_optional_int(line.get("ledger_account_id"))
+        if not ledger_account_id:
+            account = await _resolve_sql_account_for_journal_line(
+                session,
+                tenant_id=tenant_id,
+                raw_account_id=line.get("account_id"),
+            )
+            if account is None:
+                raise HTTPException(status_code=400, detail="Unable to resolve account while posting")
+            ledger_account_id = int(account.id)
+
+        post_lines.append(
+            JournalLineIn(
+                account_id=ledger_account_id,
+                debit=Decimal(str(line.get("debit_amount") or 0)),
+                credit=Decimal(str(line.get("credit_amount") or 0)),
+            )
+        )
+
+    journal_payload = JournalPostRequest(
+        entry_date=_parse_journal_entry_date(existing.get("entry_date")),
+        description=str(existing.get("narration") or "").strip(),
+        reference=f"{str(existing.get('reference_type') or 'expense').upper()}-{str(existing.get('entry_number') or '')}",
+        lines=post_lines,
+    )
+
+    try:
+        posted_entry, _created = await post_journal_entry(
+            session=session,
+            tenant_id=tenant_id,
+            created_by=str(current_user.get("sub") or current_user.get("email") or "system"),
+            payload=journal_payload,
+            idempotency_key=str(existing.get("idempotency_key") or f"man_je_{entry_id}"),
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to post journal entry: {exc}") from exc
+
+    patch = {
+        "status": "posted",
+        "journal_lines": normalized_lines,
+        "total_debit": float(total_debit),
+        "total_credit": float(total_credit),
+        "total_amount": float(total_debit),
+        "posted_journal_id": int(posted_entry.id),
+        "posted_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await collection.update_one(
+        {"id": str(entry_id), "tenant_id": tenant_id, "app_key": app_key},
+        {"$set": patch},
+        upsert=False,
+    )
+
+    return _mandir_journal_entry_view({**existing, **patch})
+
+
+@router.post("/journal-entries/{entry_id}/cancel")
+async def mandir_cancel_journal_entry(
+    entry_id: str,
+    payload: dict[str, Any] | None = None,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+
+    collection = get_collection("mandir_journal_entries")
+    existing = await collection.find_one({"id": str(entry_id), "tenant_id": tenant_id, "app_key": app_key})
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Journal entry not found")
+
+    current_status = str(existing.get("status") or "").lower()
+    if current_status in {"cancelled", "reversed"}:
+        return _mandir_journal_entry_view(existing)
+
+    cancellation_reason = str((payload or {}).get("cancellation_reason") or "").strip() or "Reversal entry"
+
+    if current_status == "draft":
+        patch = {
+            "status": "cancelled",
+            "cancellation_reason": cancellation_reason,
+            "cancelled_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        await collection.update_one(
+            {"id": str(entry_id), "tenant_id": tenant_id, "app_key": app_key},
+            {"$set": patch},
+            upsert=False,
+        )
+        return _mandir_journal_entry_view({**existing, **patch})
+
+    await _ensure_default_mandir_sql_accounts_safe(session, tenant_id, raise_on_failure=True)
+    normalized_lines, _total_debit, _total_credit = await _normalize_mandir_journal_lines(
+        session,
+        tenant_id=tenant_id,
+        raw_lines=existing.get("journal_lines"),
+    )
+
+    reversal_lines: list[JournalLineIn] = []
+    for line in normalized_lines:
+        ledger_account_id = _safe_optional_int(line.get("ledger_account_id"))
+        if not ledger_account_id:
+            account = await _resolve_sql_account_for_journal_line(
+                session,
+                tenant_id=tenant_id,
+                raw_account_id=line.get("account_id"),
+            )
+            if account is None:
+                raise HTTPException(status_code=400, detail="Unable to resolve account while reversing")
+            ledger_account_id = int(account.id)
+
+        reversal_lines.append(
+            JournalLineIn(
+                account_id=ledger_account_id,
+                debit=Decimal(str(line.get("credit_amount") or 0)),
+                credit=Decimal(str(line.get("debit_amount") or 0)),
+            )
+        )
+
+    reversal_payload = JournalPostRequest(
+        entry_date=datetime.now(timezone.utc).date(),
+        description=f"Reversal of {existing.get('entry_number')}: {cancellation_reason}",
+        reference=f"REV-{existing.get('entry_number')}",
+        lines=reversal_lines,
+    )
+
+    try:
+        reversal_entry, _created = await post_journal_entry(
+            session=session,
+            tenant_id=tenant_id,
+            created_by=str(current_user.get("sub") or current_user.get("email") or "system"),
+            payload=reversal_payload,
+            idempotency_key=f"{str(existing.get('idempotency_key') or f'man_je_{entry_id}')}_rev",
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to reverse journal entry: {exc}") from exc
+
+    patch = {
+        "status": "reversed",
+        "cancellation_reason": cancellation_reason,
+        "reversed_at": datetime.now(timezone.utc).isoformat(),
+        "reversal_journal_id": int(reversal_entry.id),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await collection.update_one(
+        {"id": str(entry_id), "tenant_id": tenant_id, "app_key": app_key},
+        {"$set": patch},
+        upsert=False,
+    )
+
+    return _mandir_journal_entry_view({**existing, **patch})
 
 
 @router.get("/journal-entries/reports/trial-balance")
@@ -4714,8 +5218,42 @@ async def create_seva_booking(
     col_sevas = get_collection("mandir_sevas")
     if seva_id:
         seva_doc = await col_sevas.find_one({"id": str(seva_id), "tenant_id": tenant_id})
+        if not seva_doc:
+            seva_doc = await col_sevas.find_one({"id": str(seva_id), "tenant_id": tenant_id, "app_key": app_key})
         if seva_doc and seva_doc.get("name"):
             seva_name = str(seva_doc["name"])
+
+    devotee_doc: dict[str, Any] | None = None
+    devotee_id = str(payload.get("devotee_id") or "").strip()
+    if devotee_id:
+        devotee_doc = await get_collection("mandir_devotees").find_one(
+            {"id": devotee_id, "tenant_id": tenant_id, "app_key": app_key}
+        )
+        if not devotee_doc:
+            devotee_doc = await get_collection("mandir_devotees").find_one(
+                {"id": devotee_id, "tenant_id": tenant_id}
+            )
+
+    devotee_phone = _normalize_phone(
+        payload.get("devotee_phone") or payload.get("devotee_mobile") or payload.get("phone")
+    )
+    if devotee_doc is None and devotee_phone:
+        devotee_doc = await _find_devotee_by_phone(tenant_id, app_key, devotee_phone)
+
+    devotee_snapshot = _sanitize_mongo_doc(devotee_doc) if isinstance(devotee_doc, dict) else {}
+    devotee_name = str(
+        payload.get("devotee_names")
+        or payload.get("devotee_name")
+        or devotee_snapshot.get("name")
+        or "Devotee"
+    ).strip() or "Devotee"
+    devotee_address = str(
+        payload.get("devotee_address")
+        or payload.get("address")
+        or devotee_snapshot.get("address")
+        or ""
+    ).strip() or None
+    devotee_phone = devotee_phone or _normalize_phone(devotee_snapshot.get("phone"))
 
     booking = {
         "id": booking_id,
@@ -4725,9 +5263,26 @@ async def create_seva_booking(
         "payment_mode": payment_mode,
         "created_at": now,
         "updated_at": now,
-        "status": "confirmed"
+        "status": "confirmed",
     }
     booking["seva_name"] = seva_name
+    booking["devotee_id"] = devotee_id or str(booking.get("devotee_id") or devotee_snapshot.get("id") or "").strip() or None
+    booking["devotee_name"] = devotee_name
+    booking["devotee_names"] = devotee_name
+    booking["devotee_phone"] = devotee_phone or None
+    if devotee_address:
+        booking["devotee_address"] = devotee_address
+        booking["address"] = devotee_address
+    if devotee_snapshot:
+        booking["devotee"] = {
+            "id": devotee_snapshot.get("id"),
+            "name": devotee_name,
+            "phone": devotee_phone or devotee_snapshot.get("phone"),
+            "address": devotee_address or devotee_snapshot.get("address"),
+            "city": devotee_snapshot.get("city"),
+            "state": devotee_snapshot.get("state"),
+            "pincode": devotee_snapshot.get("pincode"),
+        }
     booking["receipt_number"] = _receipt_number_for_seva(booking)
     booking["receipt_pdf_url"] = f"/api/v1/sevas/bookings/{booking_id}/receipt/pdf"
 
@@ -4751,7 +5306,7 @@ async def create_seva_booking(
 
         try:
             income_acc_id = await _resolve_mandir_income_account(session, tenant_id, "Seva Income - General")
-            devotee_names = str(payload.get("devotee_names") or "Devotee")
+            devotee_names = str(booking.get("devotee_names") or booking.get("devotee_name") or "Devotee")
             journal_payload = JournalPostRequest(
                 entry_date=datetime.now(timezone.utc).date(),
                 description=f"Seva Booking ({seva_name}) - {devotee_names}",
@@ -4904,6 +5459,66 @@ async def get_seva_receipt_pdf(
             if seva_doc and seva_doc.get("name"):
                 booking["seva_name"] = str(seva_doc.get("name")).strip()
 
+    devotee_snapshot = booking.get("devotee") if isinstance(booking.get("devotee"), dict) else {}
+    if not devotee_snapshot or not any([
+        booking.get("devotee_name"),
+        booking.get("devotee_names"),
+        booking.get("devotee_address"),
+        booking.get("address"),
+    ]):
+        devotee_doc: dict[str, Any] | None = None
+        booking_devotee_id = str(booking.get("devotee_id") or "").strip()
+        if booking_devotee_id:
+            devotee_doc = await get_collection("mandir_devotees").find_one(
+                {"id": booking_devotee_id, "tenant_id": tenant_id, "app_key": app_key}
+            )
+            if not devotee_doc:
+                devotee_doc = await get_collection("mandir_devotees").find_one(
+                    {"id": booking_devotee_id, "tenant_id": tenant_id}
+                )
+
+        if devotee_doc is None:
+            booking_phone = _normalize_phone(
+                booking.get("devotee_phone") or booking.get("devotee_mobile") or (devotee_snapshot or {}).get("phone")
+            )
+            if booking_phone:
+                devotee_doc = await _find_devotee_by_phone(tenant_id, app_key, booking_phone)
+
+        if devotee_doc:
+            devotee_snapshot = _sanitize_mongo_doc(devotee_doc)
+
+    if devotee_snapshot:
+        resolved_devotee_name = str(
+            booking.get("devotee_names")
+            or booking.get("devotee_name")
+            or devotee_snapshot.get("name")
+            or "Devotee"
+        ).strip() or "Devotee"
+        resolved_devotee_address = str(
+            booking.get("devotee_address")
+            or booking.get("address")
+            or devotee_snapshot.get("address")
+            or ""
+        ).strip() or None
+        resolved_devotee_phone = _normalize_phone(
+            booking.get("devotee_phone") or booking.get("devotee_mobile") or devotee_snapshot.get("phone")
+        )
+        booking["devotee_id"] = str(booking.get("devotee_id") or devotee_snapshot.get("id") or "").strip() or None
+        booking["devotee_name"] = resolved_devotee_name
+        booking["devotee_names"] = resolved_devotee_name
+        booking["devotee_phone"] = resolved_devotee_phone or None
+        if resolved_devotee_address:
+            booking["devotee_address"] = resolved_devotee_address
+            booking["address"] = resolved_devotee_address
+        booking["devotee"] = {
+            "id": devotee_snapshot.get("id"),
+            "name": resolved_devotee_name,
+            "phone": resolved_devotee_phone or devotee_snapshot.get("phone"),
+            "address": resolved_devotee_address or devotee_snapshot.get("address"),
+            "city": devotee_snapshot.get("city"),
+            "state": devotee_snapshot.get("state"),
+            "pincode": devotee_snapshot.get("pincode"),
+        }
     receipt_number = _receipt_number_for_seva(booking)
     booking["receipt_number"] = receipt_number
     booking["receipt_pdf_url"] = f"/api/v1/sevas/bookings/{booking_id_text}/receipt/pdf"
@@ -4915,6 +5530,13 @@ async def get_seva_receipt_pdf(
                 "receipt_number": receipt_number,
                 "receipt_pdf_url": booking["receipt_pdf_url"],
                 "seva_name": booking.get("seva_name"),
+                "devotee_id": booking.get("devotee_id"),
+                "devotee_name": booking.get("devotee_name"),
+                "devotee_names": booking.get("devotee_names"),
+                "devotee_phone": booking.get("devotee_phone"),
+                "devotee_address": booking.get("devotee_address"),
+                "address": booking.get("address"),
+                "devotee": booking.get("devotee"),
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
         },
@@ -5046,6 +5668,15 @@ async def mandir_seva_reschedule_pending(
 @router.get("/users/me")
 async def mandir_users_me(current_user: dict = Depends(get_current_user)):
     return current_user
+
+
+
+
+
+
+
+
+
 
 
 

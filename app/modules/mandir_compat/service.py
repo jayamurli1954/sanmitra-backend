@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import re
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -17,6 +18,8 @@ from app.modules.mandir_compat.schemas import MandirFirstLoginOnboardingRequest
 
 MANDIR_TEMPLES_COLLECTION = "mandir_temples"
 MANDIR_ONBOARDING_COLLECTION = "mandir_onboarding_events"
+_MANDIR_INDEXES_READY = False
+_MANDIR_INDEXES_LOCK = asyncio.Lock()
 
 
 def _slugify(value: str) -> str:
@@ -52,46 +55,56 @@ async def _allocate_tenant_id(base_hint: str) -> str:
 
 
 async def ensure_mandir_compat_indexes() -> None:
-    temples = get_collection(MANDIR_TEMPLES_COLLECTION)
-    await temples.create_index("tenant_id", unique=True)
-    await temples.create_index("temple_id", unique=True, sparse=True)
-    await temples.create_index([("app_key", 1), ("updated_at", -1)])
-    # Compound indexes for frequent query patterns (tenant + app + time).
-    await temples.create_index([("tenant_id", 1), ("app_key", 1), ("updated_at", -1)])
+    global _MANDIR_INDEXES_READY
+    if _MANDIR_INDEXES_READY:
+        return
 
-    onboarding_events = get_collection(MANDIR_ONBOARDING_COLLECTION)
-    await onboarding_events.create_index("onboarding_id", unique=True)
-    await onboarding_events.create_index([("tenant_id", 1), ("created_at", -1)])
-    await onboarding_events.create_index([("admin_email", 1), ("created_at", -1)])
-    await onboarding_events.create_index([("tenant_id", 1), ("app_key", 1), ("created_at", -1)])
+    async with _MANDIR_INDEXES_LOCK:
+        if _MANDIR_INDEXES_READY:
+            return
 
-    # Compound indexes for high-frequency operational collections.
-    donations = get_collection("mandir_donations")
-    await donations.create_index([("tenant_id", 1), ("app_key", 1), ("created_at", -1)])
-    await donations.create_index([("tenant_id", 1), ("app_key", 1), ("donation_id", 1)], unique=True, sparse=True)
+        temples = get_collection(MANDIR_TEMPLES_COLLECTION)
+        await temples.create_index("tenant_id", unique=True)
+        await temples.create_index("temple_id", unique=True, sparse=True)
+        await temples.create_index([("app_key", 1), ("updated_at", -1)])
+        # Compound indexes for frequent query patterns (tenant + app + time).
+        await temples.create_index([("tenant_id", 1), ("app_key", 1), ("updated_at", -1)])
 
-    devotees = get_collection("mandir_devotees")
-    await devotees.create_index([("tenant_id", 1), ("app_key", 1), ("created_at", -1)])
-    await devotees.create_index([("tenant_id", 1), ("app_key", 1), ("phone", 1)])
+        onboarding_events = get_collection(MANDIR_ONBOARDING_COLLECTION)
+        await onboarding_events.create_index("onboarding_id", unique=True)
+        await onboarding_events.create_index([("tenant_id", 1), ("created_at", -1)])
+        await onboarding_events.create_index([("admin_email", 1), ("created_at", -1)])
+        await onboarding_events.create_index([("tenant_id", 1), ("app_key", 1), ("created_at", -1)])
 
-    sevas = get_collection("mandir_sevas")
-    await sevas.create_index([("tenant_id", 1), ("app_key", 1), ("created_at", -1)])
-    await sevas.create_index([("tenant_id", 1), ("app_key", 1), ("is_active", 1), ("created_at", -1)])
+        # Compound indexes for high-frequency operational collections.
+        donations = get_collection("mandir_donations")
+        await donations.create_index([("tenant_id", 1), ("app_key", 1), ("created_at", -1)])
+        await donations.create_index([("tenant_id", 1), ("app_key", 1), ("donation_id", 1)], unique=True, sparse=True)
 
-    # Seed the atomic temple ID counter from the current max if the counter doc is missing.
-    counters = get_collection(_MANDIR_COUNTERS_COLLECTION)
-    existing_counter = await counters.find_one({"_id": "temple_id_seq"})
-    if not existing_counter:
-        try:
-            latest = await temples.find_one({"temple_id": {"$type": "int"}}, sort=[("temple_id", -1)])
-            current_max = _to_positive_int((latest or {}).get("temple_id")) or 0
-            await counters.update_one(
-                {"_id": "temple_id_seq"},
-                {"$setOnInsert": {"seq": current_max}},
-                upsert=True,
-            )
-        except Exception:
-            pass
+        devotees = get_collection("mandir_devotees")
+        await devotees.create_index([("tenant_id", 1), ("app_key", 1), ("created_at", -1)])
+        await devotees.create_index([("tenant_id", 1), ("app_key", 1), ("phone", 1)])
+
+        sevas = get_collection("mandir_sevas")
+        await sevas.create_index([("tenant_id", 1), ("app_key", 1), ("created_at", -1)])
+        await sevas.create_index([("tenant_id", 1), ("app_key", 1), ("is_active", 1), ("created_at", -1)])
+
+        # Seed the atomic temple ID counter from the current max if the counter doc is missing.
+        counters = get_collection(_MANDIR_COUNTERS_COLLECTION)
+        existing_counter = await counters.find_one({"_id": "temple_id_seq"})
+        if not existing_counter:
+            try:
+                latest = await temples.find_one({"temple_id": {"$type": "int"}}, sort=[("temple_id", -1)])
+                current_max = _to_positive_int((latest or {}).get("temple_id")) or 0
+                await counters.update_one(
+                    {"_id": "temple_id_seq"},
+                    {"$setOnInsert": {"seq": current_max}},
+                    upsert=True,
+                )
+            except Exception:
+                pass
+
+        _MANDIR_INDEXES_READY = True
 
 
 _MANDIR_COUNTERS_COLLECTION = "mandir_counters"
@@ -448,3 +461,4 @@ async def ensure_demo_mandir_bootstrap() -> None:
         },
         upsert=True,
     )
+
