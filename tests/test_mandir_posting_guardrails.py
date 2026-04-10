@@ -95,6 +95,33 @@ class DummySession:
         raise AssertionError("execute() should not be called in these tests")
 
 
+
+
+def test_get_seva_receipt_pdf_resolves_seva_name_from_seva_id(mandir_posting_client):
+    client, _donations, seva_bookings = mandir_posting_client
+    seva_bookings.docs.append(
+        {
+            "_id": FakeObjectId(),
+            "id": "book-3",
+            "tenant_id": "tenant-1",
+            "app_key": "mandirmitra",
+            "seva_id": "seva-1",
+            "seva_name": "Seva Booking",
+            "amount_paid": 501,
+            "payment_mode": "Cash",
+            "devotee_names": "S. Ramesh",
+            "booking_date": "2026-04-09",
+            "created_at": "2026-04-09T12:00:00+00:00",
+        }
+    )
+
+    response = client.get("/api/v1/sevas/bookings/book-3/receipt/pdf")
+
+    assert response.status_code == 200
+    assert response.headers.get("content-type", "").startswith("application/pdf")
+    assert response.content.startswith(b"%PDF")
+    assert seva_bookings.docs[0]["seva_name"] == "Sarva Seve"
+
 @pytest.fixture()
 def mandir_posting_client(monkeypatch):
     donations = FakeCollection()
@@ -214,6 +241,7 @@ def test_create_seva_booking_uses_payment_method_fallback(mandir_posting_client,
     assert payload["id"]
     assert payload["receipt_number"].startswith("SEV-")
     assert payload["receipt_pdf_url"] == f"/api/v1/sevas/bookings/{payload['id']}/receipt/pdf"
+    assert payload["seva_name"] == "Sarva Seve"
     assert seen["mode"] == "Cash"
     assert len(seva_bookings.docs) == 1
 

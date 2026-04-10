@@ -1403,6 +1403,7 @@ def _build_receipt_pdf_bytes(payload: dict[str, Any]) -> bytes:
     )
     table_cell_center = ParagraphStyle("ReceiptTableCellCenter", parent=table_cell, alignment=1)
     table_cell_right = ParagraphStyle("ReceiptTableCellRight", parent=table_cell, alignment=2)
+    table_cell_small_right = ParagraphStyle("ReceiptTableCellSmallRight", parent=table_cell_small, alignment=2)
     footer_note = ParagraphStyle(
         "ReceiptFooterNote",
         parent=styles["Normal"],
@@ -1507,8 +1508,8 @@ def _build_receipt_pdf_bytes(payload: dict[str, Any]) -> bytes:
     rows.append([_receipt_paragraph(receipt_title, table_cell_center), "", ""])
     rows.append([
         _receipt_paragraph(f"{receipt_no_label}: {_as_text(payload.get('receipt_number'), '-')}", table_cell_small),
-        _receipt_paragraph(date_label, table_cell_center),
-        _receipt_paragraph(_as_text(payload.get('receipt_date'), '-'), table_cell_center),
+        _receipt_paragraph(f"{date_label}: {_as_text(payload.get('receipt_date'), '-')}", table_cell_small_right),
+        "",
     ])
     rows.append([_receipt_paragraph(f"{party_label} {_as_text(payload.get('party_name'), '-')}", table_cell), "", ""])
     rows.append([_receipt_paragraph(f"{address_label} {_as_text(payload.get('address_value'), '--')}", table_cell), "", ""])
@@ -1542,8 +1543,8 @@ def _build_receipt_pdf_bytes(payload: dict[str, Any]) -> bytes:
     note_block = '\n'.join(note_lines)
     rows.append([_receipt_paragraph(note_block or '-', table_cell_center), '', ''])
 
-    col1 = doc.width * 0.76
-    col2 = doc.width * 0.16
+    col1 = doc.width * 0.72
+    col2 = doc.width * 0.20
     col3 = doc.width - col1 - col2
     table = Table(rows, colWidths=[col1, col2, col3])
 
@@ -1552,6 +1553,7 @@ def _build_receipt_pdf_bytes(payload: dict[str, Any]) -> bytes:
         ('BOX', (0, 0), (-1, -1), 0.75, colors.HexColor('#808080')),
         ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#A0A0A0')),
         ('SPAN', (0, 0), (2, 0)),
+        ('SPAN', (1, 1), (2, 1)),
         ('SPAN', (0, 2), (2, 2)),
         ('SPAN', (0, 3), (2, 3)),
         ('SPAN', (0, 4), (2, 4)),
@@ -4725,7 +4727,7 @@ async def create_seva_booking(
         "updated_at": now,
         "status": "confirmed"
     }
-    booking["seva_name"] = str(booking.get("seva_name") or seva_name)
+    booking["seva_name"] = seva_name
     booking["receipt_number"] = _receipt_number_for_seva(booking)
     booking["receipt_pdf_url"] = f"/api/v1/sevas/bookings/{booking_id}/receipt/pdf"
 
@@ -4891,6 +4893,17 @@ async def get_seva_receipt_pdf(
 
     booking_id_text = str(booking.get("id") or booking_id).strip()
     booking["id"] = booking_id_text
+
+    resolved_seva_name = str(booking.get("seva_name") or "").strip()
+    if not resolved_seva_name or resolved_seva_name.lower() in {"seva booking", "seva"}:
+        seva_id = booking.get("seva_id")
+        if seva_id:
+            seva_doc = await get_collection("mandir_sevas").find_one({"id": str(seva_id), "tenant_id": tenant_id, "app_key": app_key})
+            if not seva_doc:
+                seva_doc = await get_collection("mandir_sevas").find_one({"id": str(seva_id), "tenant_id": tenant_id})
+            if seva_doc and seva_doc.get("name"):
+                booking["seva_name"] = str(seva_doc.get("name")).strip()
+
     receipt_number = _receipt_number_for_seva(booking)
     booking["receipt_number"] = receipt_number
     booking["receipt_pdf_url"] = f"/api/v1/sevas/bookings/{booking_id_text}/receipt/pdf"
@@ -4901,6 +4914,7 @@ async def get_seva_receipt_pdf(
             "$set": {
                 "receipt_number": receipt_number,
                 "receipt_pdf_url": booking["receipt_pdf_url"],
+                "seva_name": booking.get("seva_name"),
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
         },
