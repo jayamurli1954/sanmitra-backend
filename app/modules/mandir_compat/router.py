@@ -1389,6 +1389,17 @@ def _build_receipt_pdf_bytes(payload: dict[str, Any]) -> bytes:
         fontSize=9,
         leading=11,
     )
+    table_cell_small = ParagraphStyle(
+        "ReceiptTableCellSmall",
+        parent=table_cell,
+        fontSize=8.4,
+        leading=10.2,
+    )
+    table_cell_bold = ParagraphStyle(
+        "ReceiptTableCellBold",
+        parent=table_cell,
+        fontName=f"{font_name}-Bold" if font_name == "Helvetica" else font_name,
+    )
     table_cell_center = ParagraphStyle("ReceiptTableCellCenter", parent=table_cell, alignment=1)
     table_cell_right = ParagraphStyle("ReceiptTableCellRight", parent=table_cell, alignment=2)
     footer_note = ParagraphStyle(
@@ -1487,17 +1498,17 @@ def _build_receipt_pdf_bytes(payload: dict[str, Any]) -> bytes:
     rows: list[list[Any]] = []
     rows.append([_receipt_paragraph(receipt_title, table_cell_center), "", ""])
     rows.append([
-        _receipt_paragraph(f"{receipt_no_label}: {_as_text(payload.get('receipt_number'), '-')}", table_cell),
+        _receipt_paragraph(f"{receipt_no_label}: {_as_text(payload.get('receipt_number'), '-')}", table_cell_small),
         _receipt_paragraph(date_label, table_cell_center),
         _receipt_paragraph(_as_text(payload.get('receipt_date'), '-'), table_cell_center),
     ])
     rows.append([_receipt_paragraph(f"{party_label} {_as_text(payload.get('party_name'), '-')}", table_cell), "", ""])
     rows.append([_receipt_paragraph(f"{address_label} {_as_text(payload.get('address_value'), '--')}", table_cell), "", ""])
-    rows.append([_receipt_paragraph(_as_text(payload.get('amount_words_line'), 'Received with thanks'), table_cell), "", ""])
-    rows.append([_receipt_paragraph(_as_text(payload.get('payment_line'), 'Received with thanks.'), table_cell), "", ""])
+    rows.append([_receipt_paragraph(_as_text(payload.get('amount_words_line'), 'Received with thanks'), table_cell_small), "", ""])
+    rows.append([_receipt_paragraph(_as_text(payload.get('payment_line'), 'Received with thanks.'), table_cell_small), "", ""])
 
     rows.append([
-        _receipt_paragraph(line_item_header, table_cell_center),
+        _receipt_paragraph(line_item_header, table_cell_bold),
         _receipt_paragraph('Rs', table_cell_center),
         _receipt_paragraph('-', table_cell_center),
     ])
@@ -1537,9 +1548,15 @@ def _build_receipt_pdf_bytes(payload: dict[str, Any]) -> bytes:
     note_block = '\n'.join(note_lines)
     rows.append([_receipt_paragraph(note_block or '-', table_cell_center), '', ''])
 
-    col1 = doc.width * 0.67
-    col2 = doc.width * 0.13
-    col3 = doc.width - col1 - col2
+    include_astro_row = bool(payload.get('include_astro_row', True))
+    if include_astro_row:
+        col1 = doc.width * 0.63
+        col2 = doc.width * 0.18
+        col3 = doc.width - col1 - col2
+    else:
+        col1 = doc.width * 0.67
+        col2 = doc.width * 0.13
+        col3 = doc.width - col1 - col2
     table = Table(rows, colWidths=[col1, col2, col3])
 
     note_row_index = len(rows) - 1
@@ -1560,6 +1577,12 @@ def _build_receipt_pdf_bytes(payload: dict[str, Any]) -> bytes:
         ('RIGHTPADDING', (0, 0), (-1, -1), 5),
         ('TOPPADDING', (0, 0), (-1, -1), 3),
         ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+        ('TOPPADDING', (0, 2), (2, 5), 4),
+        ('BOTTOMPADDING', (0, 2), (2, 5), 4),
+        ('LEFTPADDING', (0, 2), (0, 5), 6),
+        ('TOPPADDING', (0, 6), (2, 6), 4),
+        ('BOTTOMPADDING', (0, 6), (2, 6), 4),
+        ('BOTTOMPADDING', (0, note_row_index), (2, note_row_index), 5),
     ]
     table.setStyle(TableStyle(table_style))
 
