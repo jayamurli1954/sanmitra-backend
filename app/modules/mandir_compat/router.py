@@ -3,6 +3,7 @@ from __future__ import annotations
 import calendar
 import json
 import logging
+import os
 from datetime import date, datetime, timezone
 from io import BytesIO, StringIO
 import csv
@@ -21,10 +22,12 @@ from sqlalchemy import and_, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from decimal import Decimal
 from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4
+from reportlab.lib.pagesizes import A4, A5
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from app.core.auth.dependencies import get_current_user
 from app.core.audit.service import log_audit_event
@@ -864,7 +867,7 @@ def _generate_donation_receipt_pdf_bytes(
     amount = _safe_float(donation.get("amount"), 0.0)
     devotee = donation.get("devotee") if isinstance(donation.get("devotee"), dict) else {}
     devotee_name = str(devotee.get("name") or donation.get("devotee_name") or "Unknown Devotee").strip() or "Unknown Devotee"
-    payment_mode = str(donation.get("payment_mode") or "Cash").strip() or "Cash"
+    payment_mode = _format_payment_mode_for_receipt(donation.get("payment_mode") or donation.get("payment_method") or "Cash")
     receipt_number = _receipt_number_for_donation(donation)
     donation_date = _format_receipt_date(donation.get("donation_date") or donation.get("created_at"))
     category = str(donation.get("category") or "General Donation").strip() or "General Donation"
@@ -881,11 +884,15 @@ def _generate_donation_receipt_pdf_bytes(
         "address_value": devotee_address,
         "amount_words_line": f"Received Rupees {_amount_to_words(amount)}",
         "payment_line": f"Received with thanks for donation by {payment_mode}.",
-        "line_items": [{"description": f"{category} ({payment_mode})", "amount": amount}],
+        "line_items": [{"description": category, "amount": amount}],
         "total_amount": amount,
         "include_astro_row": False,
+        "include_service_row": False,
         "service_date": donation_date,
-        "note_english": "Thank you for your generous contribution.",
+        "note_english": "This is a system generated receipt and does not require any signature.",
+        "system_generated_line": "",
+        "powered_by_line": "Powered by Sanmitra Tech Solutions.",
+        "local_language": temple_profile.get("local_language"),
     }
     return _build_receipt_pdf_bytes(payload)
 
@@ -925,9 +932,14 @@ def _generate_seva_receipt_pdf_bytes(
     seva_name = str(booking.get("seva_name") or booking.get("seva") or "Seva Booking").strip() or "Seva Booking"
     devotee_name = str(booking.get("devotee_names") or booking.get("devotee_name") or "Devotee").strip() or "Devotee"
     booking_date = _format_receipt_date(booking.get("booking_date") or booking.get("created_at"))
-    payment_mode = str(booking.get("payment_mode") or booking.get("payment_method") or "Cash").strip() or "Cash"
+    payment_mode = _format_payment_mode_for_receipt(booking.get("payment_mode") or booking.get("payment_method") or "Cash")
     receipt_number = _receipt_number_for_seva(booking)
     devotee_address = str(booking.get("devotee_address") or booking.get("address") or "--").strip() or "--"
+
+    line_items = _extract_seva_line_items(booking, fallback_name=seva_name, fallback_amount=amount)
+    total_amount = sum(_safe_float(item.get("amount"), 0.0) for item in line_items)
+    if total_amount <= 0:
+        total_amount = amount
 
     payload = {
         **temple_profile,
@@ -935,16 +947,19 @@ def _generate_seva_receipt_pdf_bytes(
         "receipt_date": booking_date,
         "party_name": devotee_name,
         "address_value": devotee_address,
-        "amount_words_line": f"Received Rupees {_amount_to_words(amount)}",
+        "amount_words_line": f"Received Rupees {_amount_to_words(total_amount)}",
         "payment_line": f"Received with thanks for the below mentioned seva by {payment_mode}.",
-        "line_items": [{"description": seva_name, "amount": amount}],
-        "total_amount": amount,
+        "line_items": line_items,
+        "total_amount": total_amount,
         "include_astro_row": True,
+        "include_service_row": True,
         "gotra": booking.get("gotra"),
         "nakshatra": booking.get("nakshatra") or booking.get("star"),
         "rashi": booking.get("rashi"),
         "service_date": _format_receipt_date(booking.get("seva_date") or booking.get("booking_date") or booking.get("created_at")),
         "note_english": "Note: Sevakartas to be present 10 minutes before Pooja time for Sankalpa and collect the prasadam on the same day.",
+        "powered_by_line": "Powered by Sanmitra Tech Solutions.",
+        "local_language": temple_profile.get("local_language"),
     }
     return _build_receipt_pdf_bytes(payload)
 
@@ -973,6 +988,120 @@ _ONES_WORDS = [
 ]
 _TENS_WORDS = ["", "", "TWENTY", "THIRTY", "FORTY", "FIFTY", "SIXTY", "SEVENTY", "EIGHTY", "NINETY"]
 
+_SUPPORTED_LOCAL_LANGUAGES = {"kannada", "tamil", "telugu", "malayalam", "hindi"}
+
+_LOCAL_LABELS = {
+    "kannada": {
+        "receipt_title": "?????",
+        "receipt_number": "????? ??????",
+        "date": "??????",
+        "party": "????/???????",
+        "address": "?????",
+        "line_item": "???? ????",
+        "total": "?????",
+        "gotra": "?????",
+        "nakshatra": "???????",
+        "rashi": "????",
+        "service_date": "???? ??????",
+        "cashier": "??????",
+        "note": "?????: ???? ??????? 10 ????? ????? ?????? ????? ??????????? ??? ??? ???????.",
+    },
+    "tamil": {
+        "receipt_title": "?????",
+        "receipt_number": "????? ???",
+        "date": "????",
+        "party": "????/???????",
+        "address": "??????",
+        "line_item": "???? ??????",
+        "total": "???????",
+        "gotra": "?????????",
+        "nakshatra": "???????????",
+        "rashi": "????",
+        "service_date": "???? ????",
+        "cashier": "?????????",
+        "note": "????????: ???? ??????????? 10 ??????? ?????? ?????? ??????? ??? ?????? ???????? ???????.",
+    },
+    "telugu": {
+        "receipt_title": "?????",
+        "receipt_number": "????? ?????",
+        "date": "????",
+        "party": "????/???????",
+        "address": "????????",
+        "line_item": "??? ???????",
+        "total": "??????",
+        "gotra": "??????",
+        "nakshatra": "????????",
+        "rashi": "????",
+        "service_date": "??? ????",
+        "cashier": "??????",
+        "note": "?????: ??? ???????? 10 ??????? ????? ???? ????? ??????? ??? ????? ?????????.",
+    },
+    "malayalam": {
+        "receipt_title": "?????",
+        "receipt_number": "????? ?????",
+        "date": "?????",
+        "party": "????/???????",
+        "address": "??????",
+        "line_item": "??? ???????????",
+        "total": "???",
+        "gotra": "??????",
+        "nakshatra": "????????",
+        "rashi": "????",
+        "service_date": "??? ?????",
+        "cashier": "??????",
+        "note": "????????: ??? ???? ???????? 10 ???????? ??????? ????? ??????? ??? ????? ??????????.",
+    },
+    "hindi": {
+        "receipt_title": "????",
+        "receipt_number": "???? ??????",
+        "date": "??????",
+        "party": "????/???????",
+        "address": "???",
+        "line_item": "???? ?????",
+        "total": "???",
+        "gotra": "?????",
+        "nakshatra": "???????",
+        "rashi": "????",
+        "service_date": "???? ????",
+        "cashier": "??????",
+        "note": "???: ????? ???? ??? ?? 10 ???? ???? ??? ?? ?????? ??? ??? ??????? ?????",
+    },
+}
+
+_ENGLISH_LABELS = {
+    "receipt_title": "RECEIPT",
+    "receipt_number": "Receipt No",
+    "date": "Date",
+    "party": "Smt/Sri",
+    "address": "Address",
+    "line_item": "Seva Details",
+    "total": "Total",
+    "gotra": "Gotra",
+    "nakshatra": "Star",
+    "rashi": "Rashi",
+    "service_date": "Seva Date",
+    "cashier": "Cashier",
+}
+
+_SCRIPT_RANGES = {
+    "kannada": (0x0C80, 0x0CFF),
+    "tamil": (0x0B80, 0x0BFF),
+    "telugu": (0x0C00, 0x0C7F),
+    "malayalam": (0x0D00, 0x0D7F),
+    "hindi": (0x0900, 0x097F),
+}
+
+_SCRIPT_FONT_FILES = {
+    "kannada": ["NotoSansKannada-Regular.ttf", "NotoSansKannada-Bold.ttf", "Tunga.ttf", "Nirmala.ttc", "Nirmala.ttf"],
+    "tamil": ["NotoSansTamil-Regular.ttf", "NotoSansTamil-Bold.ttf", "Latha.ttf", "Nirmala.ttc", "Nirmala.ttf"],
+    "telugu": ["NotoSansTelugu-Regular.ttf", "NotoSansTelugu-Bold.ttf", "Gautami.ttf", "Nirmala.ttc", "Nirmala.ttf"],
+    "malayalam": ["NotoSansMalayalam-Regular.ttf", "NotoSansMalayalam-Bold.ttf", "Kartika.ttf", "Nirmala.ttc", "Nirmala.ttf"],
+    "hindi": ["NotoSansDevanagari-Regular.ttf", "NotoSansDevanagari-Bold.ttf", "Mangal.ttf", "Nirmala.ttc", "Nirmala.ttf"],
+}
+
+_GENERIC_FONT_FILES = ["Nirmala.ttc", "Nirmala.ttf", "NirmalaB.ttf"]
+
+
 
 def _integer_to_words(value: int) -> str:
     if value < 20:
@@ -998,6 +1127,7 @@ def _integer_to_words(value: int) -> str:
     return f"{crores} {_integer_to_words(remainder)}".strip() if remainder else crores
 
 
+
 def _amount_to_words(amount: float) -> str:
     try:
         major = int(round(float(amount or 0)))
@@ -1006,11 +1136,13 @@ def _amount_to_words(amount: float) -> str:
     return f"{_integer_to_words(max(major, 0))} ONLY"
 
 
+
 def _as_text(value: Any, fallback: str = "") -> str:
     if value is None:
         return fallback
     text = str(value).strip()
     return text if text else fallback
+
 
 
 def _split_amount(value: Any) -> tuple[str, str]:
@@ -1023,9 +1155,75 @@ def _split_amount(value: Any) -> tuple[str, str]:
     return major, minor
 
 
+
+def _normalize_local_language(value: Any) -> str | None:
+    if value is None:
+        return None
+    language = str(value).strip().lower()
+    language = {
+        "kannada": "kannada",
+        "kan": "kannada",
+        "tamil": "tamil",
+        "tam": "tamil",
+        "telugu": "telugu",
+        "tel": "telugu",
+        "malayalam": "malayalam",
+        "mal": "malayalam",
+        "hindi": "hindi",
+        "hin": "hindi",
+    }.get(language, language)
+    return language if language in _SUPPORTED_LOCAL_LANGUAGES else None
+
+
+
+def _detect_script(text: str) -> str | None:
+    for char in text:
+        code = ord(char)
+        for script_name, (start, end) in _SCRIPT_RANGES.items():
+            if start <= code <= end:
+                return script_name
+    return None
+
+
+
+def _font_candidate_paths(script_hint: str | None) -> list[str]:
+    candidates: list[str] = []
+    script_files = _SCRIPT_FONT_FILES.get(script_hint or "", [])
+    for file_name in script_files:
+        candidates.append(os.path.join(r"C:\Windows\Fonts", file_name))
+    for file_name in _GENERIC_FONT_FILES:
+        candidates.append(os.path.join(r"C:\Windows\Fonts", file_name))
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for p in candidates:
+        normalized = os.path.normpath(p)
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        deduped.append(normalized)
+    return deduped
+
+
+
+def _resolve_font_name(script_hint: str | None) -> str:
+    for idx, font_path in enumerate(_font_candidate_paths(script_hint)):
+        if not os.path.exists(font_path):
+            continue
+        font_name = f"MandirReceipt_{script_hint or 'generic'}_{idx}"
+        if font_name not in pdfmetrics.getRegisteredFontNames():
+            try:
+                pdfmetrics.registerFont(TTFont(font_name, font_path))
+            except Exception:
+                continue
+        return font_name
+    return "Helvetica"
+
+
+
 def _receipt_paragraph(text: str, style: ParagraphStyle) -> Paragraph:
     safe_text = escape(_as_text(text, "-")).replace("\n", "<br/>")
     return Paragraph(safe_text, style)
+
 
 
 def _format_receipt_date(value: Any) -> str:
@@ -1047,7 +1245,49 @@ def _format_receipt_date(value: Any) -> str:
     return raw
 
 
-def _build_temple_receipt_profile(temple_doc: dict[str, Any] | None) -> dict[str, str]:
+
+def _format_payment_mode_for_receipt(value: Any) -> str:
+    mode = _as_text(value, "Cash")
+    lowered = mode.lower()
+    if "cash" in lowered:
+        return "Cash"
+    if any(token in lowered for token in ["upi", "bank", "cheque", "check", "online", "transfer", "neft", "rtgs", "card"]):
+        return f"Bank ({mode})"
+    return mode
+
+
+
+def _extract_seva_line_items(booking: dict[str, Any], *, fallback_name: str, fallback_amount: float) -> list[dict[str, Any]]:
+    line_items: list[dict[str, Any]] = []
+    candidate_lists = [booking.get("line_items"), booking.get("seva_items"), booking.get("sevas"), booking.get("booked_sevas")]
+    for candidate in candidate_lists:
+        if not isinstance(candidate, list):
+            continue
+        for item in candidate:
+            if not isinstance(item, dict):
+                continue
+            name = _as_text(item.get("description") or item.get("seva_name") or item.get("name"), "")
+            amount = _safe_float(item.get("amount") or item.get("amount_paid") or item.get("fee"), 0.0)
+            if not name and amount <= 0:
+                continue
+            line_items.append({"description": name or fallback_name, "amount": amount or fallback_amount})
+
+    if not line_items:
+        csv_names = _as_text(booking.get("seva_names"))
+        if csv_names:
+            names = [part.strip() for part in csv_names.split(",") if part.strip()]
+            if names:
+                split_amount = fallback_amount / len(names) if fallback_amount > 0 else 0.0
+                for name in names:
+                    line_items.append({"description": name, "amount": split_amount})
+
+    if not line_items:
+        line_items = [{"description": fallback_name, "amount": fallback_amount}]
+    return line_items
+
+
+
+def _build_temple_receipt_profile(temple_doc: dict[str, Any] | None) -> dict[str, str | None]:
     temple_doc = temple_doc if isinstance(temple_doc, dict) else {}
     temple_name = _as_text(temple_doc.get("temple_name") or temple_doc.get("name"), "Temple")
     trust_name = _as_text(temple_doc.get("trust_name"), temple_name)
@@ -1059,6 +1299,9 @@ def _build_temple_receipt_profile(temple_doc: dict[str, Any] | None) -> dict[str
     phone = _as_text(temple_doc.get("phone") or temple_doc.get("contact_number") or temple_doc.get("temple_contact_number"))
     website = _as_text(temple_doc.get("website") or temple_doc.get("temple_website"))
     header_local_line = _as_text(temple_doc.get("header_local_line"))
+    local_language = _normalize_local_language(
+        temple_doc.get("local_language") or temple_doc.get("primary_language") or temple_doc.get("language")
+    )
     return {
         "trust_name": trust_name,
         "temple_name": temple_name,
@@ -1070,74 +1313,115 @@ def _build_temple_receipt_profile(temple_doc: dict[str, Any] | None) -> dict[str
         "phone": phone,
         "website": website,
         "header_local_line": header_local_line,
+        "local_language": local_language,
     }
 
 
+
+def _bilingual_label(local_label: str, english_label: str, use_local_labels: bool) -> str:
+    if use_local_labels and local_label:
+        return f"{local_label} / {english_label}"
+    return english_label
+
+
+
+def _default_labels(local_language: str | None, use_local_labels: bool) -> dict[str, str]:
+    local_labels = _LOCAL_LABELS.get(local_language or "", {})
+    return {
+        "receipt_title": _bilingual_label(local_labels.get("receipt_title", ""), _ENGLISH_LABELS["receipt_title"], use_local_labels),
+        "receipt_number": _bilingual_label(local_labels.get("receipt_number", ""), _ENGLISH_LABELS["receipt_number"], use_local_labels),
+        "date": _bilingual_label(local_labels.get("date", ""), _ENGLISH_LABELS["date"], use_local_labels),
+        "party": _bilingual_label(local_labels.get("party", ""), _ENGLISH_LABELS["party"], use_local_labels),
+        "address": _bilingual_label(local_labels.get("address", ""), _ENGLISH_LABELS["address"], use_local_labels),
+        "line_item": _bilingual_label(local_labels.get("line_item", ""), _ENGLISH_LABELS["line_item"], use_local_labels),
+        "total": _bilingual_label(local_labels.get("total", ""), _ENGLISH_LABELS["total"], use_local_labels),
+        "gotra": _bilingual_label(local_labels.get("gotra", ""), _ENGLISH_LABELS["gotra"], use_local_labels),
+        "nakshatra": _bilingual_label(local_labels.get("nakshatra", ""), _ENGLISH_LABELS["nakshatra"], use_local_labels),
+        "rashi": _bilingual_label(local_labels.get("rashi", ""), _ENGLISH_LABELS["rashi"], use_local_labels),
+        "service_date": _bilingual_label(local_labels.get("service_date", ""), _ENGLISH_LABELS["service_date"], use_local_labels),
+        "cashier": _bilingual_label(local_labels.get("cashier", ""), _ENGLISH_LABELS["cashier"], use_local_labels),
+        "note_local": local_labels.get("note", ""),
+    }
+
+
+
 def _build_receipt_pdf_bytes(payload: dict[str, Any]) -> bytes:
+    local_language = _normalize_local_language(payload.get("local_language"))
+    script_hint = _detect_script(_as_text(payload.get("header_local_line"))) or local_language
+    font_name = _resolve_font_name(script_hint)
+    has_local_font = font_name != "Helvetica"
+
+    use_local_labels = bool(payload.get("use_local_labels", False)) and has_local_font and local_language in _SUPPORTED_LOCAL_LANGUAGES
+    labels = _default_labels(local_language, use_local_labels)
+
     buffer = BytesIO()
     doc = SimpleDocTemplate(
         buffer,
-        pagesize=A4,
-        leftMargin=14 * mm,
-        rightMargin=14 * mm,
-        topMargin=12 * mm,
-        bottomMargin=12 * mm,
+        pagesize=A5,
+        leftMargin=8 * mm,
+        rightMargin=8 * mm,
+        topMargin=8 * mm,
+        bottomMargin=8 * mm,
     )
 
     styles = getSampleStyleSheet()
     header_title = ParagraphStyle(
         "ReceiptHeaderTitle",
         parent=styles["Heading3"],
-        fontName="Helvetica-Bold",
-        fontSize=14,
-        leading=16,
+        fontName=font_name,
+        fontSize=11.5,
+        leading=13,
         alignment=1,
-        spaceAfter=2,
+        spaceAfter=1,
     )
     header_line = ParagraphStyle(
         "ReceiptHeaderLine",
         parent=styles["Normal"],
-        fontName="Helvetica",
-        fontSize=10,
-        leading=12,
+        fontName=font_name,
+        fontSize=8.5,
+        leading=10,
         alignment=1,
     )
     table_cell = ParagraphStyle(
         "ReceiptTableCell",
         parent=styles["Normal"],
-        fontName="Helvetica",
-        fontSize=10.5,
-        leading=13,
+        fontName=font_name,
+        fontSize=9,
+        leading=11,
     )
-    table_cell_center = ParagraphStyle(
-        "ReceiptTableCellCenter",
-        parent=table_cell,
-        alignment=1,
-    )
-    table_cell_right = ParagraphStyle(
-        "ReceiptTableCellRight",
-        parent=table_cell,
-        alignment=2,
-    )
+    table_cell_center = ParagraphStyle("ReceiptTableCellCenter", parent=table_cell, alignment=1)
+    table_cell_right = ParagraphStyle("ReceiptTableCellRight", parent=table_cell, alignment=2)
     footer_note = ParagraphStyle(
         "ReceiptFooterNote",
         parent=styles["Normal"],
-        fontName="Helvetica",
-        fontSize=9.5,
-        leading=11,
+        fontName=font_name,
+        fontSize=7.8,
+        leading=9.2,
         alignment=1,
     )
 
     elements: list[Any] = []
 
+    logo_obj = None
+    logo_source = payload.get("logo")
+    if logo_source:
+        try:
+            logo_obj = Image(logo_source, width=16 * mm, height=16 * mm)
+        except Exception:
+            logo_obj = None
+
     trust_name = _as_text(payload.get("trust_name"))
     temple_name = _as_text(payload.get("temple_name"), "Temple")
+    primary_header = trust_name or temple_name
+    secondary_header = temple_name if trust_name and temple_name and trust_name != temple_name else ""
+
+    header_lines: list[Any] = []
     header_local_line = _as_text(payload.get("header_local_line"))
-    if header_local_line:
-        elements.append(_receipt_paragraph(header_local_line, header_line))
-    elements.append(_receipt_paragraph(trust_name or temple_name, header_title))
-    if trust_name and temple_name and trust_name != temple_name:
-        elements.append(_receipt_paragraph(temple_name, header_line))
+    if header_local_line and use_local_labels:
+        header_lines.append(_receipt_paragraph(header_local_line, header_line))
+    header_lines.append(_receipt_paragraph(primary_header, header_title))
+    if secondary_header:
+        header_lines.append(_receipt_paragraph(secondary_header, header_line))
 
     address_line = " ".join(
         part
@@ -1150,15 +1434,34 @@ def _build_receipt_pdf_bytes(payload: dict[str, Any]) -> bytes:
         if part
     )
     if address_line:
-        elements.append(_receipt_paragraph(address_line, header_line))
+        header_lines.append(_receipt_paragraph(address_line, header_line))
     if _as_text(payload.get("website")):
-        elements.append(_receipt_paragraph(_as_text(payload.get("website")), header_line))
+        header_lines.append(_receipt_paragraph(_as_text(payload.get("website")), header_line))
     if _as_text(payload.get("email")):
-        elements.append(_receipt_paragraph(_as_text(payload.get("email")), header_line))
+        header_lines.append(_receipt_paragraph(_as_text(payload.get("email")), header_line))
     if _as_text(payload.get("phone")):
-        elements.append(_receipt_paragraph(f"Phone : {_as_text(payload.get('phone'))}", header_line))
+        header_lines.append(_receipt_paragraph(f"Phone : {_as_text(payload.get('phone'))}", header_line))
 
-    elements.append(Spacer(1, 6))
+    if logo_obj:
+        logo_width = 22 * mm
+        header_table = Table([[logo_obj, header_lines]], colWidths=[logo_width, doc.width - logo_width])
+        header_table.setStyle(
+            TableStyle(
+                [
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("ALIGN", (0, 0), (0, 0), "LEFT"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 2),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 2),
+                    ("TOPPADDING", (0, 0), (-1, -1), 1),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
+                ]
+            )
+        )
+        elements.append(header_table)
+    else:
+        elements.extend(header_lines)
+
+    elements.append(Spacer(1, 4))
 
     line_items = payload.get("line_items") or []
     if not line_items:
@@ -1168,102 +1471,109 @@ def _build_receipt_pdf_bytes(payload: dict[str, Any]) -> bytes:
     if total_amount is None:
         total_amount = sum(_safe_float(item.get("amount"), 0.0) for item in line_items)
 
+    receipt_title = _as_text(payload.get("receipt_title")) or labels["receipt_title"]
+    receipt_no_label = _as_text(payload.get("receipt_number_label")) or labels["receipt_number"]
+    date_label = _as_text(payload.get("date_label")) or labels["date"]
+    party_label = _as_text(payload.get("party_label")) or labels["party"]
+    address_label = _as_text(payload.get("address_label")) or labels["address"]
+    line_item_header = _as_text(payload.get("line_item_header")) or labels["line_item"]
+    total_label = _as_text(payload.get("total_label")) or labels["total"]
+    gotra_label = _as_text(payload.get("gotra_label")) or labels["gotra"]
+    star_label = _as_text(payload.get("nakshatra_label")) or labels["nakshatra"]
+    rashi_label = _as_text(payload.get("rashi_label")) or labels["rashi"]
+    service_date_label = _as_text(payload.get("service_date_label")) or labels["service_date"]
+    signatory_label = _as_text(payload.get("signatory_label"), labels["cashier"])
+
     rows: list[list[Any]] = []
-    rows.append([_receipt_paragraph(_as_text(payload.get("receipt_title"), "RECEIPT"), table_cell_center), "", ""])
-    rows.append(
-        [
-            _receipt_paragraph(f"Receipt No: {_as_text(payload.get('receipt_number'), '-')}", table_cell),
-            _receipt_paragraph("Date", table_cell_center),
-            _receipt_paragraph(_as_text(payload.get("receipt_date"), "-"), table_cell_center),
-        ]
-    )
-    rows.append([_receipt_paragraph(f"Smt/Sri {_as_text(payload.get('party_name'), '-')}", table_cell), "", ""])
-    rows.append([_receipt_paragraph(f"Address {_as_text(payload.get('address_value'), '--')}", table_cell), "", ""])
-    rows.append([_receipt_paragraph(_as_text(payload.get("amount_words_line"), "Received with thanks"), table_cell), "", ""])
-    rows.append([_receipt_paragraph(_as_text(payload.get("payment_line"), "Received with thanks."), table_cell), "", ""])
-    rows.append(
-        [
-            _receipt_paragraph(_as_text(payload.get("line_item_header"), "Seva Details"), table_cell_center),
-            _receipt_paragraph("Rs", table_cell_center),
-            _receipt_paragraph("-", table_cell_center),
-        ]
-    )
+    rows.append([_receipt_paragraph(receipt_title, table_cell_center), "", ""])
+    rows.append([
+        _receipt_paragraph(f"{receipt_no_label}: {_as_text(payload.get('receipt_number'), '-')}", table_cell),
+        _receipt_paragraph(date_label, table_cell_center),
+        _receipt_paragraph(_as_text(payload.get('receipt_date'), '-'), table_cell_center),
+    ])
+    rows.append([_receipt_paragraph(f"{party_label} {_as_text(payload.get('party_name'), '-')}", table_cell), "", ""])
+    rows.append([_receipt_paragraph(f"{address_label} {_as_text(payload.get('address_value'), '--')}", table_cell), "", ""])
+    rows.append([_receipt_paragraph(_as_text(payload.get('amount_words_line'), 'Received with thanks'), table_cell), "", ""])
+    rows.append([_receipt_paragraph(_as_text(payload.get('payment_line'), 'Received with thanks.'), table_cell), "", ""])
+
+    rows.append([
+        _receipt_paragraph(line_item_header, table_cell_center),
+        _receipt_paragraph('Rs', table_cell_center),
+        _receipt_paragraph('-', table_cell_center),
+    ])
 
     for item in line_items:
-        major, minor = _split_amount(item.get("amount"))
-        rows.append(
-            [
-                _receipt_paragraph(_as_text(item.get("description"), "-"), table_cell),
-                _receipt_paragraph(major, table_cell_right),
-                _receipt_paragraph(minor, table_cell_right),
-            ]
-        )
+        major, minor = _split_amount(item.get('amount'))
+        rows.append([
+            _receipt_paragraph(_as_text(item.get('description'), '-'), table_cell),
+            _receipt_paragraph(major, table_cell_right),
+            _receipt_paragraph(minor, table_cell_right),
+        ])
 
     total_major, total_minor = _split_amount(total_amount)
-    rows.append(
-        [
-            _receipt_paragraph(_as_text(payload.get("total_label"), "Total"), table_cell_right),
-            _receipt_paragraph(total_major, table_cell_right),
-            _receipt_paragraph(total_minor, table_cell_right),
-        ]
-    )
+    rows.append([
+        _receipt_paragraph(total_label, table_cell_right),
+        _receipt_paragraph(total_major, table_cell_right),
+        _receipt_paragraph(total_minor, table_cell_right),
+    ])
 
-    if bool(payload.get("include_astro_row", True)):
-        rows.append(
-            [
-                _receipt_paragraph(f"Gotra {_as_text(payload.get('gotra'), '--')}", table_cell),
-                _receipt_paragraph(f"Star {_as_text(payload.get('nakshatra'), '--')}", table_cell),
-                _receipt_paragraph(f"Rashi {_as_text(payload.get('rashi'), '--')}", table_cell),
-            ]
-        )
+    if bool(payload.get('include_astro_row', True)):
+        rows.append([
+            _receipt_paragraph(f"{gotra_label} {_as_text(payload.get('gotra'), '--')}", table_cell),
+            _receipt_paragraph(f"{star_label} {_as_text(payload.get('nakshatra'), '--')}", table_cell),
+            _receipt_paragraph(f"{rashi_label} {_as_text(payload.get('rashi'), '--')}", table_cell),
+        ])
 
-    service_date_label = _as_text(payload.get("service_date_label"), "Seva Date")
-    rows.append(
-        [
+    if bool(payload.get('include_service_row', True)):
+        rows.append([
             _receipt_paragraph(f"{service_date_label} {_as_text(payload.get('service_date'), '--')}", table_cell),
-            _receipt_paragraph("", table_cell_center),
-            _receipt_paragraph(_as_text(payload.get("signatory_label"), "Cashier"), table_cell_center),
-        ]
-    )
+            _receipt_paragraph('', table_cell_center),
+            _receipt_paragraph(signatory_label, table_cell_center),
+        ])
 
-    note_line = _as_text(payload.get("note_english"))
-    rows.append([_receipt_paragraph(note_line or "-", table_cell_center), "", ""])
+    note_line_local = _as_text(payload.get('note_local'), labels['note_local'])
+    note_line_english = _as_text(payload.get('note_english'), '')
+    note_lines = [line for line in [note_line_local if use_local_labels else '', note_line_english] if line]
+    note_block = '\n'.join(note_lines)
+    rows.append([_receipt_paragraph(note_block or '-', table_cell_center), '', ''])
 
-    col1 = doc.width * 0.66
-    col2 = doc.width * 0.14
+    col1 = doc.width * 0.67
+    col2 = doc.width * 0.13
     col3 = doc.width - col1 - col2
     table = Table(rows, colWidths=[col1, col2, col3])
 
     note_row_index = len(rows) - 1
-    item_start_index = 7
-    item_end_index = item_start_index + len(line_items) - 1
     table_style = [
-        ("BOX", (0, 0), (-1, -1), 0.75, colors.HexColor("#808080")),
-        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#A0A0A0")),
-        ("SPAN", (0, 0), (2, 0)),
-        ("SPAN", (0, 2), (2, 2)),
-        ("SPAN", (0, 3), (2, 3)),
-        ("SPAN", (0, 4), (2, 4)),
-        ("SPAN", (0, 5), (2, 5)),
-        ("SPAN", (0, note_row_index), (2, note_row_index)),
-        ("BACKGROUND", (0, 0), (2, 0), colors.HexColor("#F2F2F2")),
-        ("BACKGROUND", (0, 6), (2, 6), colors.HexColor("#F8F8F8")),
-        ("BACKGROUND", (0, note_row_index), (2, note_row_index), colors.HexColor("#F8F8F8")),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 5),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-        ("TOPPADDING", (0, 0), (-1, -1), 4),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ('BOX', (0, 0), (-1, -1), 0.75, colors.HexColor('#808080')),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#A0A0A0')),
+        ('SPAN', (0, 0), (2, 0)),
+        ('SPAN', (0, 2), (2, 2)),
+        ('SPAN', (0, 3), (2, 3)),
+        ('SPAN', (0, 4), (2, 4)),
+        ('SPAN', (0, 5), (2, 5)),
+        ('SPAN', (0, note_row_index), (2, note_row_index)),
+        ('BACKGROUND', (0, 0), (2, 0), colors.HexColor('#F2F2F2')),
+        ('BACKGROUND', (0, 6), (2, 6), colors.HexColor('#F8F8F8')),
+        ('BACKGROUND', (0, note_row_index), (2, note_row_index), colors.HexColor('#F8F8F8')),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('LEFTPADDING', (0, 0), (-1, -1), 5),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 5),
+        ('TOPPADDING', (0, 0), (-1, -1), 3),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
     ]
-    if item_end_index >= item_start_index:
-        table_style.append(("ALIGN", (1, item_start_index), (2, item_end_index), "RIGHT"))
     table.setStyle(TableStyle(table_style))
 
     elements.append(table)
-    elements.append(Spacer(1, 6))
+    elements.append(Spacer(1, 4))
 
-    system_line = _as_text(payload.get("system_generated_line"), "This is a system generated receipt and does not require any signature.")
-    powered_by = _as_text(payload.get("powered_by_line"), "Powered by sevamrutam.")
+    system_line_raw = payload.get('system_generated_line')
+    if system_line_raw is None:
+        system_line = 'This is a system generated receipt and does not require any signature.'
+    else:
+        system_line = str(system_line_raw).strip()
+
+    powered_by = _as_text(payload.get('powered_by_line'), 'Powered by Sanmitra Tech Solutions.')
+
     if system_line:
         elements.append(_receipt_paragraph(system_line, footer_note))
         elements.append(Spacer(1, 2))
@@ -1966,6 +2276,11 @@ async def get_donation_receipt_pdf(
         if not temple_doc:
             temple_doc = await get_collection("mandir_temples").find_one({"tenant_id": tenant_id}) or {}
         temple_profile = _build_temple_receipt_profile(temple_doc)
+
+        lang_doc = await get_collection("mandir_panchang_settings").find_one({"tenant_id": tenant_id, "app_key": app_key}) or {}
+        selected_language = _normalize_local_language(lang_doc.get("primary_language") or temple_doc.get("primary_language"))
+        if selected_language:
+            temple_profile["local_language"] = selected_language
     except Exception:
         temple_profile = _build_temple_receipt_profile(None)
 
@@ -4123,6 +4438,11 @@ async def get_seva_receipt_pdf(
         if not temple_doc:
             temple_doc = await get_collection("mandir_temples").find_one({"tenant_id": tenant_id}) or {}
         temple_profile = _build_temple_receipt_profile(temple_doc)
+
+        lang_doc = await get_collection("mandir_panchang_settings").find_one({"tenant_id": tenant_id, "app_key": app_key}) or {}
+        selected_language = _normalize_local_language(lang_doc.get("primary_language") or temple_doc.get("primary_language"))
+        if selected_language:
+            temple_profile["local_language"] = selected_language
     except Exception:
         temple_profile = _build_temple_receipt_profile(None)
 
