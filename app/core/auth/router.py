@@ -14,6 +14,7 @@ _auth_logger = logging.getLogger(__name__)
 from app.config import get_settings
 
 from app.core.auth.dependencies import get_current_user
+from app.core.email_delivery.service import log_email_delivery_attempt
 from app.core.auth.schemas import (
     GoogleLoginRequest,
     LoginRequest,
@@ -165,11 +166,29 @@ async def _consume_email_action(doc: dict[str, Any]) -> None:
     )
 
 
-async def _send_auth_email(*, to_email: str, subject: str, body: str) -> tuple[bool, str | None]:
+async def _send_auth_email(
+    *,
+    to_email: str,
+    subject: str,
+    body: str,
+    action: str | None = None,
+    meta: dict[str, Any] | None = None,
+) -> tuple[bool, str | None]:
     settings = get_settings()
+    normalized_email = str(to_email or "").strip().lower()
 
     if not settings.SMTP_HOST:
-        return False, "SMTP is not configured"
+        error = "SMTP is not configured"
+        await log_email_delivery_attempt(
+            module="auth",
+            action=action,
+            to_email=normalized_email,
+            subject=subject,
+            sent=False,
+            error=error,
+            meta=meta,
+        )
+        return False, error
 
     from_header = settings.SMTP_FROM_EMAIL
     if settings.SMTP_FROM_NAME:
@@ -178,7 +197,7 @@ async def _send_auth_email(*, to_email: str, subject: str, body: str) -> tuple[b
     message = EmailMessage()
     message["Subject"] = subject
     message["From"] = from_header
-    message["To"] = to_email
+    message["To"] = normalized_email
     message.set_content(body)
 
     def _send() -> None:
@@ -199,8 +218,26 @@ async def _send_auth_email(*, to_email: str, subject: str, body: str) -> tuple[b
     try:
         await asyncio.to_thread(_send)
     except Exception as exc:
-        return False, str(exc)
+        error = str(exc)
+        await log_email_delivery_attempt(
+            module="auth",
+            action=action,
+            to_email=normalized_email,
+            subject=subject,
+            sent=False,
+            error=error,
+            meta=meta,
+        )
+        return False, error
 
+    await log_email_delivery_attempt(
+        module="auth",
+        action=action,
+        to_email=normalized_email,
+        subject=subject,
+        sent=True,
+        meta=meta,
+    )
     return True, None
 
 
@@ -312,6 +349,8 @@ async def register_request(payload: dict, request: Request):
         to_email=email,
         subject="Activate your LegalMitra account",
         body=body,
+        action="activation",
+        meta={"tenant_id": tenant_id, "full_name": full_name},
     )
 
     if not sent:
@@ -413,6 +452,8 @@ async def forgot_password(payload: dict, request: Request):
         to_email=email,
         subject="Reset your LegalMitra password",
         body=body,
+        action="password_reset",
+        meta={"user_id": str(user.get("user_id") or "")},
     )
 
     if not sent:
@@ -484,7 +525,7 @@ async def change_password(payload: dict, current_user: dict = Depends(get_curren
         raise HTTPException(status_code=401, detail="Current password is invalid")
 
     users = get_collection("core_users")
-    await users.update_one({"user_id": user.get("user_id")}, {"$set": {"hashed_password": hash_password(new_password)}})
+    await users.update_one({"user_id": user.get("user_id")}, {"$set": {"hashed_password": hash_password(new_password), "must_change_password": False, "updated_at": datetime.now(timezone.utc)}})
     return {"status": "ok"}
 
 
@@ -599,3 +640,7 @@ async def login_activity(
 
     items = [doc async for doc in cursor]
     return {"items": items, "count": len(items)}
+
+
+
+

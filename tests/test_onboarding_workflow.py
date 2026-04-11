@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 import app.core.onboarding.service as onboarding_service
-from app.core.onboarding.schemas import OnboardingApproveRequest, OnboardingRejectRequest
+from app.core.onboarding.schemas import OnboardingApproveRequest, OnboardingRejectRequest, OnboardingResendRequest
 
 
 class FakeCursor:
@@ -115,6 +115,11 @@ async def test_approve_onboarding_request_creates_tenant_admin(monkeypatch):
     monkeypatch.setattr(onboarding_service, "create_user", fake_create_user)
     monkeypatch.setattr(onboarding_service, "_send_onboarding_email", fake_send_onboarding_email)
 
+    async def _noop_sync_mandir(**_kwargs):
+        return None
+
+    monkeypatch.setattr(onboarding_service, "_sync_mandir_temple_profile_from_request", _noop_sync_mandir)
+
     result = await onboarding_service.approve_onboarding_request(
         request_id="req-1",
         approved_by="super-admin-1",
@@ -222,3 +227,188 @@ async def test_approve_non_pending_request_raises(monkeypatch):
             approved_by="super-admin-1",
             payload=OnboardingApproveRequest(initial_password="TempPass123!"),
         )
+
+
+
+class FakeGenericCollection:
+    def __init__(self, docs=None):
+        self.docs = [dict(doc) for doc in (docs or [])]
+
+    async def create_index(self, *_args, **_kwargs):
+        return None
+
+    async def find_one(self, filters):
+        for doc in self.docs:
+            if _matches(doc, filters):
+                return doc
+        return None
+
+    async def insert_one(self, doc):
+        self.docs.append(dict(doc))
+        return SimpleNamespace(inserted_id=doc.get("id"))
+
+    async def update_one(self, filters, update, upsert=False):
+        for doc in self.docs:
+            if _matches(doc, filters):
+                for key, value in update.get("$set", {}).items():
+                    doc[key] = value
+                return SimpleNamespace(matched_count=1)
+
+        if upsert:
+            created = dict(filters)
+            for key, value in update.get("$setOnInsert", {}).items():
+                created[key] = value
+            for key, value in update.get("$set", {}).items():
+                created[key] = value
+            self.docs.append(created)
+            return SimpleNamespace(matched_count=1)
+
+        return SimpleNamespace(matched_count=0)
+
+
+@pytest.mark.asyncio
+async def test_resend_onboarding_credentials_resets_password_and_sends_email(monkeypatch):
+    fake_requests = FakeGenericCollection(
+        [
+            {
+                "request_id": "req-resend-1",
+                "status": "approved",
+                "tenant_name": "Demo Temple",
+                "admin_email": "admin@example.com",
+                "approved_tenant_id": "demo-temple",
+                "approved_admin_user_id": "user-1",
+                "app_key": "mandirmitra",
+            }
+        ]
+    )
+    fake_users = FakeGenericCollection(
+        [
+            {
+                "_id": "mongo-user-1",
+                "user_id": "user-1",
+                "tenant_id": "demo-temple",
+                "email": "admin@example.com",
+                "hashed_password": "old-hash",
+            }
+        ]
+    )
+    fake_temples = FakeGenericCollection()
+
+    def fake_get_collection(name: str):
+        if name == onboarding_service.ONBOARDING_REQUESTS_COLLECTION:
+            return fake_requests
+        if name == onboarding_service.USERS_COLLECTION:
+            return fake_users
+        if name == "mandir_temples":
+            return fake_temples
+        raise AssertionError(f"Unexpected collection: {name}")
+
+    async def fake_send_onboarding_email(**_kwargs):
+        return True, None
+
+    monkeypatch.setattr(onboarding_service, "get_collection", fake_get_collection)
+    monkeypatch.setattr(onboarding_service, "_send_onboarding_email", fake_send_onboarding_email)
+
+    result = await onboarding_service.resend_onboarding_credentials(
+        request_id="req-resend-1",
+        resent_by="super-admin-1",
+        payload=OnboardingResendRequest(initial_password="TempPass123!", app_key="mandirmitra"),
+    )
+
+    assert result["status"] == "approved"
+    assert result["temporary_password"] == "TempPass123!"
+    assert result["email_sent"] is True
+
+    user = await fake_users.find_one({"user_id": "user-1", "tenant_id": "demo-temple"})
+    assert user is not None
+    assert user["hashed_password"] != "old-hash"
+    assert user["must_change_password"] is True
+
+
+@pytest.mark.asyncio
+async def test_approve_onboarding_request_seeds_mandir_profile(monkeypatch):
+    fake_requests = FakeGenericCollection(
+        [
+            {
+                "request_id": "req-mandir-1",
+                "status": "pending",
+                "tenant_name": "Sri Temple",
+                "temple_name": "Sri Temple",
+                "trust_name": "Temple Trust",
+                "address": "Temple Street",
+                "city": "Chennai",
+                "state": "Tamil Nadu",
+                "pincode": "600001",
+                "phone": "9876543210",
+                "email": "temple@example.com",
+                "admin_full_name": "Temple Admin",
+                "admin_email": "admin.temple@example.com",
+                "admin_phone": "9876543211",
+                "app_key": "mandirmitra",
+            }
+        ]
+    )
+    fake_users = FakeGenericCollection(
+        [{"user_id": "tenant-admin-1", "tenant_id": "sri-temple", "email": "admin.temple@example.com"}]
+    )
+    fake_temples = FakeGenericCollection()
+
+    def fake_get_collection(name: str):
+        if name == onboarding_service.ONBOARDING_REQUESTS_COLLECTION:
+            return fake_requests
+        if name == onboarding_service.USERS_COLLECTION:
+            return fake_users
+        if name == "mandir_temples":
+            return fake_temples
+        raise AssertionError(f"Unexpected collection: {name}")
+
+    async def fake_get_tenant(_tenant_id: str):
+        return None
+
+    async def fake_ensure_tenant_exists(tenant_id: str, **_kwargs):
+        return {"tenant_id": tenant_id, "status": "active"}
+
+    async def fake_create_user(**kwargs):
+        return {
+            "user_id": "tenant-admin-1",
+            "email": kwargs["email"],
+            "tenant_id": kwargs["tenant_id"],
+            "role": kwargs["role"],
+            "is_active": True,
+        }
+
+    async def fake_send_onboarding_email(**_kwargs):
+        return True, None
+
+    monkeypatch.setattr(onboarding_service, "get_collection", fake_get_collection)
+    monkeypatch.setattr(onboarding_service, "get_tenant", fake_get_tenant)
+    monkeypatch.setattr(onboarding_service, "ensure_tenant_exists", fake_ensure_tenant_exists)
+    monkeypatch.setattr(onboarding_service, "create_user", fake_create_user)
+    monkeypatch.setattr(onboarding_service, "_send_onboarding_email", fake_send_onboarding_email)
+
+    result = await onboarding_service.approve_onboarding_request(
+        request_id="req-mandir-1",
+        approved_by="super-admin-1",
+        payload=OnboardingApproveRequest(tenant_id="sri-temple", initial_password="TempPass123!"),
+    )
+
+    assert result["status"] == "approved"
+
+    temple = await fake_temples.find_one({"tenant_id": "sri-temple"})
+    assert temple is not None
+    assert temple["name"] == "Sri Temple"
+    assert temple["address"] == "Temple Street"
+    assert temple["admin_email"] == "admin.temple@example.com"
+
+
+def test_build_onboarding_email_subject_is_app_branded():
+    subject, body = onboarding_service._build_onboarding_approval_email(
+        app_key="mandirmitra",
+        tenant_name="Demo Temple",
+        tenant_id="demo-temple",
+        temporary_password="TempPass123!",
+    )
+
+    assert subject.startswith("MandirMitra:")
+    assert "Temporary password" in body
+

@@ -114,3 +114,14 @@ class OnboardingRejectResponse(BaseModel):
     request_id: str
     status: OnboardingStatus
     message: str
+
+
+class OnboardingResendRequest(BaseModel):
+    initial_password: str | None = Field(default=None, min_length=8, max_length=128)
+    app_key: str | None = Field(default=None, min_length=3, max_length=40)
+
+    @model_validator(mode="after")
+    def normalize(self):
+        self.initial_password = (self.initial_password or "").strip() or None
+        self.app_key = (self.app_key or "").strip().lower() or None
+        return self

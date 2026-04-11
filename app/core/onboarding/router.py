@@ -9,6 +9,7 @@ from app.core.onboarding.schemas import (
     OnboardingRequestCreate,
     OnboardingRequestItem,
     OnboardingRequestResponse,
+    OnboardingResendRequest,
 )
 from app.core.onboarding.service import (
     approve_onboarding_request,
@@ -16,6 +17,7 @@ from app.core.onboarding.service import (
     get_onboarding_request,
     list_onboarding_requests,
     reject_onboarding_request,
+    resend_onboarding_credentials,
 )
 
 router = APIRouter(prefix="/onboarding-requests", tags=["onboarding"])
@@ -113,3 +115,27 @@ async def reject_onboarding_request_endpoint(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     return OnboardingRejectResponse(**row)
+
+
+@router.post("/{request_id}/resend-credentials", response_model=OnboardingApproveResponse)
+async def resend_onboarding_credentials_endpoint(
+    request_id: str,
+    payload: OnboardingResendRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    _require_super_admin(current_user)
+
+    try:
+        row = await resend_onboarding_credentials(
+            request_id=request_id,
+            resent_by=str(current_user.get("sub") or "system"),
+            payload=payload,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc.args[0] if exc.args else exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    return OnboardingApproveResponse(**row)
