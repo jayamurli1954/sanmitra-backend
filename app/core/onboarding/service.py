@@ -59,9 +59,30 @@ def _serialize_request(doc: dict) -> dict:
     }
 
 
-def _request_lookup_filter(request_id: str) -> dict:
+async def _find_onboarding_request_doc(requests, request_id: str) -> dict | None:
     normalized_request_id = request_id.strip()
-    return {"$or": [{"request_id": normalized_request_id}, {"id": normalized_request_id}]}
+    if not normalized_request_id:
+        return None
+
+    by_request_id = await requests.find_one({"request_id": normalized_request_id})
+    if by_request_id:
+        return by_request_id
+    return await requests.find_one({"id": normalized_request_id})
+
+
+async def _update_pending_onboarding_request(requests, request_id: str, patch: dict) -> object:
+    normalized_request_id = request_id.strip()
+    result = await requests.update_one(
+        {"request_id": normalized_request_id, "status": "pending"},
+        {"$set": patch},
+    )
+    if int(getattr(result, "matched_count", 0) or 0) > 0:
+        return result
+
+    return await requests.update_one(
+        {"id": normalized_request_id, "status": "pending"},
+        {"$set": patch},
+    )
 
 
 def _slugify(value: str) -> str:
@@ -158,7 +179,7 @@ async def get_onboarding_request(request_id: str) -> dict | None:
     await ensure_onboarding_indexes()
     requests = get_collection(ONBOARDING_REQUESTS_COLLECTION)
 
-    doc = await requests.find_one(_request_lookup_filter(request_id))
+    doc = await _find_onboarding_request_doc(requests, request_id)
     if not doc:
         return None
     return _serialize_request(doc)
@@ -169,7 +190,7 @@ async def approve_onboarding_request(*, request_id: str, approved_by: str, paylo
     requests = get_collection(ONBOARDING_REQUESTS_COLLECTION)
 
     normalized_request_id = request_id.strip()
-    doc = await requests.find_one(_request_lookup_filter(normalized_request_id))
+    doc = await _find_onboarding_request_doc(requests, normalized_request_id)
     if not doc:
         raise KeyError("Onboarding request not found")
 
@@ -200,17 +221,16 @@ async def approve_onboarding_request(*, request_id: str, approved_by: str, paylo
         raise ValueError("Admin user already exists for this onboarding email") from exc
 
     now = datetime.now(timezone.utc)
-    result = await requests.update_one(
-        {**_request_lookup_filter(normalized_request_id), "status": "pending"},
+    result = await _update_pending_onboarding_request(
+        requests,
+        normalized_request_id,
         {
-            "$set": {
-                "status": "approved",
-                "approved_at": now,
-                "approved_by": approved_by,
-                "approved_tenant_id": tenant_id,
-                "approved_admin_user_id": created_user["user_id"],
-                "updated_at": now,
-            }
+            "status": "approved",
+            "approved_at": now,
+            "approved_by": approved_by,
+            "approved_tenant_id": tenant_id,
+            "approved_admin_user_id": created_user["user_id"],
+            "updated_at": now,
         },
     )
     if result.matched_count == 0:
@@ -232,7 +252,7 @@ async def reject_onboarding_request(*, request_id: str, rejected_by: str, payloa
     requests = get_collection(ONBOARDING_REQUESTS_COLLECTION)
 
     normalized_request_id = request_id.strip()
-    doc = await requests.find_one(_request_lookup_filter(normalized_request_id))
+    doc = await _find_onboarding_request_doc(requests, normalized_request_id)
     if not doc:
         raise KeyError("Onboarding request not found")
 
@@ -240,16 +260,15 @@ async def reject_onboarding_request(*, request_id: str, rejected_by: str, payloa
         raise ValueError("Only pending onboarding requests can be rejected")
 
     now = datetime.now(timezone.utc)
-    result = await requests.update_one(
-        {**_request_lookup_filter(normalized_request_id), "status": "pending"},
+    result = await _update_pending_onboarding_request(
+        requests,
+        normalized_request_id,
         {
-            "$set": {
-                "status": "rejected",
-                "rejection_reason": payload.reason,
-                "rejected_at": now,
-                "rejected_by": rejected_by,
-                "updated_at": now,
-            }
+            "status": "rejected",
+            "rejection_reason": payload.reason,
+            "rejected_at": now,
+            "rejected_by": rejected_by,
+            "updated_at": now,
         },
     )
     if result.matched_count == 0:
