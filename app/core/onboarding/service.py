@@ -32,16 +32,22 @@ async def ensure_onboarding_indexes() -> None:
 
 
 def _serialize_request(doc: dict) -> dict:
+    request_id = doc.get("request_id") or doc.get("id")
+    submitted_at = doc.get("submitted_at") or doc.get("created_at") or doc.get("updated_at")
     return {
-        "request_id": doc.get("request_id"),
+        "id": request_id,
+        "request_id": request_id,
         "status": doc.get("status", "pending"),
         "tenant_name": doc.get("tenant_name") or "",
         "temple_name": doc.get("temple_name"),
         "trust_name": doc.get("trust_name"),
         "temple_slug": doc.get("temple_slug"),
+        "city": doc.get("city"),
+        "state": doc.get("state"),
+        "created_at": submitted_at,
+        "submitted_at": submitted_at,
         "admin_full_name": doc.get("admin_full_name") or "",
         "admin_email": doc.get("admin_email") or "",
-        "submitted_at": doc.get("submitted_at"),
         "updated_at": doc.get("updated_at"),
         "approved_at": doc.get("approved_at"),
         "approved_by": doc.get("approved_by"),
@@ -51,6 +57,11 @@ def _serialize_request(doc: dict) -> dict:
         "rejected_at": doc.get("rejected_at"),
         "rejected_by": doc.get("rejected_by"),
     }
+
+
+def _request_lookup_filter(request_id: str) -> dict:
+    normalized_request_id = request_id.strip()
+    return {"$or": [{"request_id": normalized_request_id}, {"id": normalized_request_id}]}
 
 
 def _slugify(value: str) -> str:
@@ -94,6 +105,7 @@ async def create_onboarding_request(payload: OnboardingRequestCreate) -> dict:
     request_id = str(uuid4())
 
     doc = {
+        "id": request_id,
         "request_id": request_id,
         "status": "pending",
         "submitted_at": now,
@@ -117,6 +129,7 @@ async def create_onboarding_request(payload: OnboardingRequestCreate) -> dict:
     await requests.insert_one(doc)
 
     return {
+        "id": request_id,
         "request_id": request_id,
         "status": "pending",
         "admin_email": admin_email,
@@ -145,7 +158,7 @@ async def get_onboarding_request(request_id: str) -> dict | None:
     await ensure_onboarding_indexes()
     requests = get_collection(ONBOARDING_REQUESTS_COLLECTION)
 
-    doc = await requests.find_one({"request_id": request_id.strip()})
+    doc = await requests.find_one(_request_lookup_filter(request_id))
     if not doc:
         return None
     return _serialize_request(doc)
@@ -156,7 +169,7 @@ async def approve_onboarding_request(*, request_id: str, approved_by: str, paylo
     requests = get_collection(ONBOARDING_REQUESTS_COLLECTION)
 
     normalized_request_id = request_id.strip()
-    doc = await requests.find_one({"request_id": normalized_request_id})
+    doc = await requests.find_one(_request_lookup_filter(normalized_request_id))
     if not doc:
         raise KeyError("Onboarding request not found")
 
@@ -188,7 +201,7 @@ async def approve_onboarding_request(*, request_id: str, approved_by: str, paylo
 
     now = datetime.now(timezone.utc)
     result = await requests.update_one(
-        {"request_id": normalized_request_id, "status": "pending"},
+        {**_request_lookup_filter(normalized_request_id), "status": "pending"},
         {
             "$set": {
                 "status": "approved",
@@ -219,7 +232,7 @@ async def reject_onboarding_request(*, request_id: str, rejected_by: str, payloa
     requests = get_collection(ONBOARDING_REQUESTS_COLLECTION)
 
     normalized_request_id = request_id.strip()
-    doc = await requests.find_one({"request_id": normalized_request_id})
+    doc = await requests.find_one(_request_lookup_filter(normalized_request_id))
     if not doc:
         raise KeyError("Onboarding request not found")
 
@@ -228,7 +241,7 @@ async def reject_onboarding_request(*, request_id: str, rejected_by: str, payloa
 
     now = datetime.now(timezone.utc)
     result = await requests.update_one(
-        {"request_id": normalized_request_id, "status": "pending"},
+        {**_request_lookup_filter(normalized_request_id), "status": "pending"},
         {
             "$set": {
                 "status": "rejected",

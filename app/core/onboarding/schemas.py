@@ -50,12 +50,16 @@ class OnboardingRequestResponse(BaseModel):
 
 
 class OnboardingRequestItem(BaseModel):
+    id: str | None = None
     request_id: str
     status: OnboardingStatus
     tenant_name: str
     temple_name: str | None = None
     trust_name: str | None = None
     temple_slug: str | None = None
+    city: str | None = None
+    state: str | None = None
+    created_at: datetime | None = None
     admin_full_name: str
     admin_email: EmailStr
     submitted_at: datetime
@@ -91,11 +95,16 @@ class OnboardingApproveResponse(BaseModel):
 
 
 class OnboardingRejectRequest(BaseModel):
-    reason: str = Field(min_length=3, max_length=500)
+    reason: str | None = Field(default=None, min_length=3, max_length=500)
+    review_notes: str | None = Field(default=None, min_length=3, max_length=500)
 
     @model_validator(mode="after")
     def normalize(self):
-        self.reason = self.reason.strip()
+        normalized_reason = (self.reason or self.review_notes or "").strip()
+        if len(normalized_reason) < 3:
+            raise ValueError("reason is required")
+        self.reason = normalized_reason
+        self.review_notes = normalized_reason
         return self
 
 
