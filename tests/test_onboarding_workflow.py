@@ -107,9 +107,13 @@ async def test_approve_onboarding_request_creates_tenant_admin(monkeypatch):
             "is_active": True,
         }
 
+    async def fake_send_onboarding_email(**_kwargs):
+        return True, None
+
     monkeypatch.setattr(onboarding_service, "get_tenant", fake_get_tenant)
     monkeypatch.setattr(onboarding_service, "ensure_tenant_exists", fake_ensure_tenant_exists)
     monkeypatch.setattr(onboarding_service, "create_user", fake_create_user)
+    monkeypatch.setattr(onboarding_service, "_send_onboarding_email", fake_send_onboarding_email)
 
     result = await onboarding_service.approve_onboarding_request(
         request_id="req-1",
@@ -121,6 +125,8 @@ async def test_approve_onboarding_request_creates_tenant_admin(monkeypatch):
     assert result["tenant_id"] == "sri-ganesh-temple"
     assert result["admin_user_id"] == "tenant-admin-1"
     assert result["temporary_password"] == "TempPass123!"
+    assert result["email_sent"] is True
+    assert result["email_error"] is None
 
     assert ensured["tenant_id"] == "sri-ganesh-temple"
     assert created["role"] == "tenant_admin"

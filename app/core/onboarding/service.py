@@ -1,9 +1,14 @@
+import asyncio
+import logging
 import re
 import secrets
+import smtplib
 import string
 from datetime import datetime, timezone
+from email.message import EmailMessage
 from uuid import uuid4
 
+from app.config import get_settings
 from app.core.onboarding.schemas import (
     OnboardingApproveRequest,
     OnboardingRejectRequest,
@@ -16,6 +21,7 @@ from app.db.mongo import get_collection
 ONBOARDING_REQUESTS_COLLECTION = "core_onboarding_requests"
 ONBOARDING_STATUSES = {"pending", "approved", "rejected"}
 _ONBOARDING_INDEXES_READY = False
+_onboarding_logger = logging.getLogger(__name__)
 
 
 async def ensure_onboarding_indexes() -> None:
@@ -104,6 +110,67 @@ async def _allocate_tenant_id(base_hint: str) -> str:
 def _generate_temporary_password(length: int = 14) -> str:
     alphabet = string.ascii_letters + string.digits + "@#$%&*!"
     return "".join(secrets.choice(alphabet) for _ in range(length))
+
+
+def _build_onboarding_approval_email(
+    *,
+    tenant_name: str,
+    tenant_id: str,
+    temporary_password: str,
+) -> tuple[str, str]:
+    subject = f"SanMitra onboarding approved for {tenant_name}"
+    body = "\n".join(
+        [
+            f"Your onboarding request for {tenant_name} has been approved.",
+            "",
+            f"Tenant ID: {tenant_id}",
+            f"Temporary password: {temporary_password}",
+            "",
+            "Please log in and change your password immediately.",
+            "",
+            "Regards,",
+            "SanMitra Team",
+        ]
+    )
+    return subject, body
+
+
+async def _send_onboarding_email(*, to_email: str, subject: str, body: str) -> tuple[bool, str | None]:
+    settings = get_settings()
+    if not settings.SMTP_HOST:
+        return False, "SMTP is not configured"
+
+    from_header = settings.SMTP_FROM_EMAIL
+    if settings.SMTP_FROM_NAME:
+        from_header = f"{settings.SMTP_FROM_NAME} <{settings.SMTP_FROM_EMAIL}>"
+
+    message = EmailMessage()
+    message["Subject"] = subject
+    message["From"] = from_header
+    message["To"] = to_email
+    message.set_content(body)
+
+    def _send() -> None:
+        if settings.SMTP_USE_SSL:
+            with smtplib.SMTP_SSL(settings.SMTP_HOST, settings.SMTP_PORT, timeout=15) as smtp:
+                if settings.SMTP_USERNAME:
+                    smtp.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
+                smtp.send_message(message)
+            return
+
+        with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=15) as smtp:
+            if settings.SMTP_USE_TLS:
+                smtp.starttls()
+            if settings.SMTP_USERNAME:
+                smtp.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
+            smtp.send_message(message)
+
+    try:
+        await asyncio.to_thread(_send)
+        return True, None
+    except Exception as exc:
+        _onboarding_logger.warning("Failed to send onboarding approval email to %s: %s", to_email, exc)
+        return False, str(exc)
 
 
 async def create_onboarding_request(payload: OnboardingRequestCreate) -> dict:
@@ -236,13 +303,45 @@ async def approve_onboarding_request(*, request_id: str, approved_by: str, paylo
     if result.matched_count == 0:
         raise ValueError("Onboarding request is already processed")
 
+    admin_email = str(doc.get("admin_email") or "").strip().lower()
+    if admin_email:
+        subject, body = _build_onboarding_approval_email(
+            tenant_name=tenant_name,
+            tenant_id=tenant_id,
+            temporary_password=temp_password,
+        )
+        email_sent, email_error = await _send_onboarding_email(
+            to_email=admin_email,
+            subject=subject,
+            body=body,
+        )
+    else:
+        email_sent, email_error = False, "Admin email is missing"
+
+    email_meta_patch = {
+        "approval_email_sent": email_sent,
+        "approval_email_error": email_error,
+        "approval_email_updated_at": datetime.now(timezone.utc),
+    }
+    email_result = await requests.update_one(
+        {"request_id": normalized_request_id},
+        {"$set": email_meta_patch},
+    )
+    if int(getattr(email_result, "matched_count", 0) or 0) == 0:
+        await requests.update_one(
+            {"id": normalized_request_id},
+            {"$set": email_meta_patch},
+        )
+
     return {
         "request_id": normalized_request_id,
         "status": "approved",
         "tenant_id": tenant_id,
-        "admin_email": str(doc.get("admin_email") or "").strip().lower(),
+        "admin_email": admin_email,
         "admin_user_id": created_user["user_id"],
         "temporary_password": temp_password,
+        "email_sent": email_sent,
+        "email_error": email_error,
         "message": "Onboarding approved and tenant admin user created",
     }
 

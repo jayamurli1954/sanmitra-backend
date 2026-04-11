@@ -91,6 +91,8 @@ class OnboardingApproveResponse(BaseModel):
     admin_email: EmailStr
     admin_user_id: str
     temporary_password: str
+    email_sent: bool = False
+    email_error: str | None = None
     message: str
 
 
