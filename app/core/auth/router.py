@@ -580,6 +580,22 @@ async def refresh(payload: RefreshRequest, app_key: str = Depends(inject_app_key
     return TokenResponse(access_token=access_token, refresh_token=refresh_token)
 
 
+@router.get("/validate")
+async def validate_token(current_user: dict = Depends(get_current_user)):
+    return {
+        "valid": True,
+        "user_id": current_user.get("sub"),
+        "email": current_user.get("email"),
+        "tenant_id": current_user.get("tenant_id"),
+    }
+
+
+@router.post("/keep-alive", response_model=TokenResponse)
+async def keep_alive(payload: RefreshRequest, app_key: str = Depends(inject_app_key)):
+    access_token, refresh_token = await rotate_refresh_token(payload.refresh_token, app_key=app_key)
+    return TokenResponse(access_token=access_token, refresh_token=refresh_token)
+
+
 @router.post("/logout")
 async def logout(payload: LogoutRequest):
     await logout_refresh_token(payload.refresh_token)
