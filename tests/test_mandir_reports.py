@@ -43,7 +43,7 @@ class FakeResult:
 
 
 class DummySession:
-    """Fake AsyncSession — returns the known posted idempotency keys for any IN query."""
+    """Fake AsyncSession - returns the known posted idempotency keys for any IN query."""
 
     async def execute(self, _stmt):
         return FakeResult([(key,) for key in _POSTED_KEYS])
@@ -230,7 +230,7 @@ async def test_trial_balance_report_backfills_known_account_codes(monkeypatch):
     )
 
     codes = [line['account_code'] for line in payload['lines']]
-    assert codes == ['11001', '44001', '42002']
+    assert codes == ['11001', '42002', '44001']
     assert payload['accounts'] == payload['lines']
 
 
@@ -289,3 +289,40 @@ async def test_ledger_report_uses_fallback_code_for_resolved_account(monkeypatch
 
     assert payload['account_code'] == '11001'
     assert len(payload['entries']) == 1
+
+@pytest.mark.asyncio
+async def test_trial_balance_report_merges_rows_with_same_normalized_account_code(monkeypatch):
+    async def fake_get_trial_balance(_session, *, tenant_id, as_of):
+        return (
+            [
+                {
+                    'account_id': 2,
+                    'account_code': '11001',
+                    'account_name': 'Cash in Hand',
+                    'debit_total': 1000,
+                    'credit_total': 0,
+                },
+                {
+                    'account_id': 99,
+                    'account_code': '1101',
+                    'account_name': 'Cash in Hand - Counter',
+                    'debit_total': 500,
+                    'credit_total': 0,
+                },
+            ],
+            1500,
+            0,
+        )
+
+    monkeypatch.setattr(report_helpers, 'get_trial_balance', fake_get_trial_balance)
+
+    payload = await report_helpers.trial_balance_report(
+        DummySession(),
+        tenant_id='tenant-1',
+        as_of=date.today(),
+    )
+
+    assert len(payload['lines']) == 1
+    assert payload['lines'][0]['account_code'] == '11001'
+    assert payload['lines'][0]['debit_total'] == 1500.0
+    assert payload['lines'][0]['credit_total'] == 0.0

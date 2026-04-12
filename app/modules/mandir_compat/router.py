@@ -21,7 +21,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy import and_, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, A5
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
@@ -449,6 +449,43 @@ def _mandir_account_view(doc: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+
+def _dedupe_mandir_account_docs(docs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    ordered_docs = sorted(
+        docs,
+        key=lambda item: (
+            str(item.get("updated_at") or item.get("created_at") or ""),
+            str(item.get("account_name") or item.get("name") or ""),
+            str(item.get("account_id") or item.get("_id") or ""),
+        ),
+        reverse=True,
+    )
+
+    deduped: dict[str, dict[str, Any]] = {}
+    for doc in ordered_docs:
+        account_name = str(doc.get("account_name") or doc.get("name") or "").strip()
+        account_code = _normalize_mandir_account_code(
+            doc.get("account_code") or doc.get("account_id"),
+            account_name=account_name,
+        )
+        dedupe_key = account_code or str(doc.get("account_id") or doc.get("_id") or "").strip()
+        if not dedupe_key:
+            continue
+        deduped.setdefault(dedupe_key, doc)
+
+    unique_docs = list(deduped.values())
+    unique_docs.sort(
+        key=lambda item: str(
+            _normalize_mandir_account_code(
+                item.get("account_code") or item.get("account_id"),
+                account_name=item.get("account_name") or item.get("name"),
+            )
+            or item.get("account_id")
+            or ""
+        )
+    )
+    return unique_docs
+
 async def _ensure_default_mandir_accounts(tenant_id: str, app_key: str) -> int:
     result = await _upsert_mandir_account_docs(
         tenant_id,
@@ -656,6 +693,132 @@ def _safe_optional_str(value: Any) -> str | None:
         return None
     raw = str(value).strip()
     return raw if raw else None
+
+
+def _parse_opening_balance_decimal(value: Any) -> Decimal | None:
+    if value is None:
+        return None
+    if isinstance(value, Decimal):
+        return value
+    raw = str(value).strip()
+    if not raw:
+        return None
+    cleaned = raw.replace(',', '')
+    if cleaned.startswith('(') and cleaned.endswith(')'):
+        cleaned = f"-{cleaned[1:-1]}"
+    try:
+        return Decimal(cleaned)
+    except (InvalidOperation, ValueError, TypeError):
+        raise ValueError(f"Invalid amount value: {value}")
+
+
+async def _parse_opening_balance_rows(file: UploadFile) -> list[dict[str, Any]]:
+    filename = str(file.filename or '').strip()
+    if not filename:
+        raise HTTPException(status_code=400, detail='File name is required')
+
+    suffix = Path(filename).suffix.lower()
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail='Uploaded file is empty')
+
+    if suffix == '.csv':
+        try:
+            text = raw.decode('utf-8-sig')
+        except UnicodeDecodeError as exc:
+            raise HTTPException(status_code=400, detail='Unable to decode CSV file as UTF-8') from exc
+        rows = list(csv.DictReader(StringIO(text)))
+        return [row for row in rows if isinstance(row, dict)]
+
+    if suffix in {'.xlsx', '.xlsm'}:
+        try:
+            from openpyxl import load_workbook
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500,
+                detail='XLSX import support is unavailable on server (missing openpyxl dependency)',
+            ) from exc
+
+        try:
+            workbook = load_workbook(BytesIO(raw), data_only=True)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail='Unable to read XLSX workbook') from exc
+
+        sheet = workbook.active
+        values = list(sheet.iter_rows(values_only=True))
+        if not values:
+            return []
+
+        headers = [str(cell).strip() if cell is not None else '' for cell in values[0]]
+        parsed_rows: list[dict[str, Any]] = []
+        for row in values[1:]:
+            if not any(cell not in (None, '') for cell in row):
+                continue
+            item: dict[str, Any] = {}
+            for index, header in enumerate(headers):
+                if not header:
+                    continue
+                if index < len(row):
+                    item[header] = row[index]
+            if item:
+                parsed_rows.append(item)
+        return parsed_rows
+
+    raise HTTPException(status_code=400, detail='Unsupported file format. Use .csv or .xlsx')
+
+
+async def _find_or_create_opening_balance_offset_account(session: AsyncSession, tenant_id: str) -> Account:
+    stmt = select(Account).where(
+        Account.tenant_id == tenant_id,
+        Account.code == '33001',
+    )
+    existing = (await session.execute(stmt)).scalar_one_or_none()
+    if existing is not None:
+        return existing
+
+    try:
+        return await create_account(
+            session,
+            tenant_id=tenant_id,
+            code='33001',
+            name='Opening Balance',
+            account_type='equity',
+            classification='real',
+            is_cash_bank=False,
+            is_receivable=False,
+            is_payable=False,
+        )
+    except IntegrityError:
+        await session.rollback()
+        existing = (await session.execute(stmt)).scalar_one_or_none()
+        if existing is None:
+            raise
+        return existing
+
+
+async def _current_opening_balance_net(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    account_id: int,
+    reference: str,
+) -> Decimal:
+    stmt = (
+        select(
+            func.coalesce(func.sum(JournalLine.debit), 0).label('debit_total'),
+            func.coalesce(func.sum(JournalLine.credit), 0).label('credit_total'),
+        )
+        .join(JournalEntry, JournalEntry.id == JournalLine.journal_id)
+        .where(
+            JournalEntry.tenant_id == tenant_id,
+            JournalEntry.reference == reference,
+            JournalLine.account_id == account_id,
+        )
+    )
+    row = (await session.execute(stmt)).one()
+    debit_total = Decimal(str(row.debit_total or 0))
+    credit_total = Decimal(str(row.credit_total or 0))
+    return debit_total - credit_total
 
 
 @lru_cache(maxsize=1)
@@ -867,17 +1030,26 @@ def _generate_donation_receipt_pdf_bytes(
     temple_profile = _build_temple_receipt_profile(temple_profile or {"temple_name": temple_name})
     amount = _safe_float(donation.get("amount"), 0.0)
     devotee = donation.get("devotee") if isinstance(donation.get("devotee"), dict) else {}
-    devotee_name = str(devotee.get("name") or donation.get("devotee_name") or "Unknown Devotee").strip() or "Unknown Devotee"
+    party_source = {
+        "devotee_name": donation.get("devotee_name"),
+        "name": donation.get("devotee_name") or donation.get("name"),
+        "name_prefix": donation.get("devotee_prefix") or donation.get("name_prefix"),
+    }
+    address_source = {
+        "devotee_address": donation.get("devotee_address") or donation.get("address"),
+        "city": donation.get("devotee_city") or donation.get("city"),
+        "state": donation.get("devotee_state") or donation.get("state"),
+        "pincode": donation.get("devotee_pincode") or donation.get("pincode"),
+    }
+    devotee_name = _compose_receipt_party_name(party_source, devotee, fallback="Unknown Devotee")
     payment_mode = _format_payment_mode_for_receipt(donation.get("payment_mode") or donation.get("payment_method") or "Cash")
     receipt_number = _receipt_number_for_donation(donation)
     donation_date = _format_receipt_date(donation.get("donation_date") or donation.get("created_at"))
     category = str(donation.get("category") or "General Donation").strip() or "General Donation"
-    devotee_address = str(devotee.get("address") or donation.get("devotee_address") or "--").strip() or "--"
-
+    devotee_address = _compose_receipt_address_line(address_source, devotee, fallback="--")
     payload = {
         **temple_profile,
         "receipt_title": "DONATION RECEIPT",
-        "party_label": "",
         "line_item_header": "Donation Details",
         "service_date_label": "Donation Date",
         "receipt_number": receipt_number,
@@ -895,6 +1067,7 @@ def _generate_donation_receipt_pdf_bytes(
         "system_generated_line": "",
         "powered_by_line": "Powered by Sanmitra Tech Solutions.",
         "local_language": temple_profile.get("local_language"),
+        "use_local_labels": True,
     }
     return _build_receipt_pdf_bytes(payload)
 
@@ -933,22 +1106,22 @@ def _generate_seva_receipt_pdf_bytes(
     amount = _safe_float(booking.get("amount_paid") or booking.get("amount"), 0.0)
     seva_name = str(booking.get("seva_name") or booking.get("seva") or "Seva Booking").strip() or "Seva Booking"
     devotee = booking.get("devotee") if isinstance(booking.get("devotee"), dict) else {}
-    devotee_name = str(
-        booking.get("devotee_names")
-        or booking.get("devotee_name")
-        or devotee.get("name")
-        or "Devotee"
-    ).strip() or "Devotee"
+    party_source = {
+        "devotee_name": booking.get("devotee_names") or booking.get("devotee_name"),
+        "name": booking.get("devotee_names") or booking.get("devotee_name"),
+        "name_prefix": booking.get("devotee_prefix") or booking.get("name_prefix"),
+    }
+    address_source = {
+        "devotee_address": booking.get("devotee_address") or booking.get("address"),
+        "city": booking.get("devotee_city") or booking.get("city"),
+        "state": booking.get("devotee_state") or booking.get("state"),
+        "pincode": booking.get("devotee_pincode") or booking.get("pincode"),
+    }
+    devotee_name = _compose_receipt_party_name(party_source, devotee, fallback="Devotee")
     booking_date = _format_receipt_date(booking.get("booking_date") or booking.get("created_at"))
     payment_mode = _format_payment_mode_for_receipt(booking.get("payment_mode") or booking.get("payment_method") or "Cash")
     receipt_number = _receipt_number_for_seva(booking)
-    devotee_address = str(
-        booking.get("devotee_address")
-        or booking.get("address")
-        or devotee.get("address")
-        or "--"
-    ).strip() or "--"
-
+    devotee_address = _compose_receipt_address_line(address_source, devotee, fallback="--")
     line_items = _extract_seva_line_items(booking, fallback_name=seva_name, fallback_amount=amount)
     total_amount = sum(_safe_float(item.get("amount"), 0.0) for item in line_items)
     if total_amount <= 0:
@@ -956,7 +1129,6 @@ def _generate_seva_receipt_pdf_bytes(
 
     payload = {
         **temple_profile,
-        "party_label": "",
         "receipt_number": receipt_number,
         "receipt_date": booking_date,
         "party_name": devotee_name,
@@ -974,6 +1146,7 @@ def _generate_seva_receipt_pdf_bytes(
         "note_english": "Note: Sevakartas to be present 10 minutes before Pooja time for Sankalpa and collect the prasadam on the same day.",
         "powered_by_line": "Powered by Sanmitra Tech Solutions.",
         "local_language": temple_profile.get("local_language"),
+        "use_local_labels": True,
     }
     return _build_receipt_pdf_bytes(payload)
 
@@ -1114,6 +1287,16 @@ _SCRIPT_FONT_FILES = {
 }
 
 _GENERIC_FONT_FILES = ["Nirmala.ttc", "Nirmala.ttf", "NirmalaB.ttf"]
+_FONT_SEARCH_DIRS = [
+    r"C:\Windows\Fonts",
+    "/usr/share/fonts/truetype/noto",
+    "/usr/share/fonts/opentype/noto",
+    "/usr/share/fonts/truetype",
+    "/usr/share/fonts",
+    "/usr/local/share/fonts",
+    "/app/fonts",
+    str(MANDIR_COMPAT_DATA_DIR / "fonts"),
+]
 
 
 
@@ -1158,6 +1341,77 @@ def _as_text(value: Any, fallback: str = "") -> str:
     return text if text else fallback
 
 
+
+
+def _first_non_empty_text(*values: Any) -> str:
+    for value in values:
+        text = _as_text(value)
+        if text:
+            return text
+    return ""
+
+
+def _name_prefix_from_sources(*sources: Any) -> str:
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        prefix = _first_non_empty_text(
+            source.get("name_prefix"),
+            source.get("devotee_prefix"),
+            source.get("prefix"),
+            source.get("title"),
+            source.get("salutation"),
+        )
+        if prefix:
+            return prefix
+    return ""
+
+
+def _compose_receipt_party_name(*sources: Any, fallback: str = "Devotee") -> str:
+    name_value = ""
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        name_value = _first_non_empty_text(
+            source.get("devotee_name"),
+            source.get("devotee_names"),
+            source.get("name"),
+            source.get("full_name"),
+            source.get("first_name"),
+        )
+        if name_value:
+            break
+
+    if not name_value:
+        return fallback
+
+    prefix_value = _name_prefix_from_sources(*sources)
+    if not prefix_value:
+        return name_value
+
+    normalized_prefix = " ".join(prefix_value.replace(".", " ").split()).lower()
+    normalized_name = " ".join(name_value.replace(".", " ").split()).lower()
+    if normalized_name.startswith(f"{normalized_prefix} ") or normalized_name == normalized_prefix:
+        return name_value
+    return f"{prefix_value} {name_value}".strip()
+
+
+def _compose_receipt_address_line(*sources: Any, fallback: str = "--") -> str:
+    parts: list[str] = []
+    seen: set[str] = set()
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        for key in ("devotee_address", "address", "city", "state", "pincode"):
+            part = _as_text(source.get(key))
+            if not part:
+                continue
+            normalized = " ".join(part.replace(",", " ").split()).lower()
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            parts.append(part)
+    return ", ".join(parts) if parts else fallback
 
 def _split_amount(value: Any) -> tuple[str, str]:
     try:
@@ -1204,9 +1458,11 @@ def _font_candidate_paths(script_hint: str | None) -> list[str]:
     candidates: list[str] = []
     script_files = _SCRIPT_FONT_FILES.get(script_hint or "", [])
     for file_name in script_files:
-        candidates.append(os.path.join(r"C:\Windows\Fonts", file_name))
+        for search_dir in _FONT_SEARCH_DIRS:
+            candidates.append(os.path.join(search_dir, file_name))
     for file_name in _GENERIC_FONT_FILES:
-        candidates.append(os.path.join(r"C:\Windows\Fonts", file_name))
+        for search_dir in _FONT_SEARCH_DIRS:
+            candidates.append(os.path.join(search_dir, file_name))
     seen: set[str] = set()
     deduped: list[str] = []
     for p in candidates:
@@ -1365,7 +1621,10 @@ def _build_receipt_pdf_bytes(payload: dict[str, Any]) -> bytes:
     font_name = _resolve_font_name(script_hint)
     has_local_font = font_name != "Helvetica"
 
-    use_local_labels = bool(payload.get("use_local_labels", False)) and has_local_font and local_language in _SUPPORTED_LOCAL_LANGUAGES
+    requested_local_labels = payload.get("use_local_labels")
+    if requested_local_labels is None:
+        requested_local_labels = True
+    use_local_labels = bool(requested_local_labels) and has_local_font and local_language in _SUPPORTED_LOCAL_LANGUAGES
     labels = _default_labels(local_language, use_local_labels)
 
     buffer = BytesIO()
@@ -1528,7 +1787,7 @@ def _build_receipt_pdf_bytes(payload: dict[str, Any]) -> bytes:
     party_name = _as_text(payload.get("party_name"), "-")
     party_line = f"{party_label}: {party_name}" if party_label else party_name
     rows.append([_receipt_paragraph(party_line, table_cell), "", ""])
-    rows.append([_receipt_paragraph(f"{address_label} {_as_text(payload.get('address_value'), '--')}", table_cell), "", ""])
+    rows.append([_receipt_paragraph(f"{address_label}: {_as_text(payload.get('address_value'), '--')}", table_cell), "", ""])
     rows.append([_receipt_paragraph(_as_text(payload.get('amount_words_line'), 'Received with thanks'), table_cell_small), "", ""])
     rows.append([_receipt_paragraph(_as_text(payload.get('payment_line'), 'Received with thanks.'), table_cell_small), "", ""])
 
@@ -2279,6 +2538,18 @@ async def create_donation(
     amount = _safe_float(payload.get("amount"), 0.0)
     category = str(payload.get("category") or "General Donation")
     payment_mode = str(payload.get("payment_mode") or "Cash").lower()
+    devotee_prefix = _safe_optional_str(
+        payload.get("name_prefix")
+        or payload.get("devotee_prefix")
+        or payload.get("prefix")
+        or payload.get("title")
+        or payload.get("salutation")
+    )
+    devotee_name = str(payload.get("devotee_name") or payload.get("first_name") or "Unknown Devotee").strip() or "Unknown Devotee"
+    devotee_address = _safe_optional_str(payload.get("devotee_address") or payload.get("address"))
+    devotee_city = _safe_optional_str(payload.get("devotee_city") or payload.get("city"))
+    devotee_state = _safe_optional_str(payload.get("devotee_state") or payload.get("state"))
+    devotee_pincode = _safe_optional_str(payload.get("devotee_pincode") or payload.get("pincode"))
 
     donation = {
         "donation_id": donation_id,
@@ -2287,15 +2558,22 @@ async def create_donation(
         "amount": amount,
         "category": category,
         "payment_mode": payload.get("payment_mode") or "Cash",
+        "devotee_name": devotee_name,
         "devotee_phone": devotee_phone,
+        "devotee_prefix": devotee_prefix,
+        "devotee_address": devotee_address,
+        "devotee_city": devotee_city,
+        "devotee_state": devotee_state,
+        "devotee_pincode": devotee_pincode,
         "devotee": {
-            "name": str(payload.get("devotee_name") or payload.get("first_name") or "Unknown Devotee"),
+            "name": devotee_name,
+            "name_prefix": devotee_prefix,
             "phone": devotee_phone,
             "email": str(payload.get("email") or "") or None,
-            "address": str(payload.get("address") or "") or None,
-            "city": str(payload.get("city") or "") or None,
-            "state": str(payload.get("state") or "") or None,
-            "pincode": str(payload.get("pincode") or "") or None,
+            "address": devotee_address,
+            "city": devotee_city,
+            "state": devotee_state,
+            "pincode": devotee_pincode,
         },
         "created_at": now,
     }
@@ -2979,7 +3257,7 @@ async def get_current_temple(
         "trust_name": "Temple Trust",
         "city": "Bengaluru",
         "state": "Karnataka",
-        "platform_can_write": True,
+        "platform_can_write": False,
         "is_active": True,
         "updated_at": now,
         "created_at": now,
@@ -3027,7 +3305,8 @@ async def mandir_accounts_list(_current_user: dict = Depends(get_current_user)):
     await _ensure_default_mandir_accounts(tenant_id, app_key)
     accounts = get_collection("accounting_accounts")
     docs = await accounts.find({"tenant_id": tenant_id, "app_key": app_key, "is_active": True}).to_list(length=500)
-    return [_mandir_account_view(doc) for doc in docs]
+    unique_docs = _dedupe_mandir_account_docs(docs)
+    return [_mandir_account_view(doc) for doc in unique_docs]
 
 
 @router.get("/accounts/hierarchy")
@@ -3037,7 +3316,8 @@ async def mandir_accounts_hierarchy(_current_user: dict = Depends(get_current_us
     await _ensure_default_mandir_accounts(tenant_id, app_key)
     accounts = get_collection("accounting_accounts")
     docs = await accounts.find({"tenant_id": tenant_id, "app_key": app_key, "is_active": True}).to_list(length=500)
-    return [_mandir_account_view(doc) for doc in sorted(docs, key=lambda item: str(item.get("account_code") or item.get("account_id") or ""))]
+    unique_docs = _dedupe_mandir_account_docs(docs)
+    return [_mandir_account_view(doc) for doc in unique_docs]
 
 
 @router.put("/accounts/{account_id}")
@@ -4285,8 +4565,150 @@ async def mandir_legacy_login(payload: dict[str, Any], x_app_key: str | None = H
 
 
 @router.post("/opening-balances/import")
-async def mandir_opening_balances_import(_payload: dict[str, Any], _current_user: dict = Depends(get_current_user)):
-    return _ok("opening-balances/import")
+async def mandir_opening_balances_import(
+    file: UploadFile = File(...),
+    session: AsyncSession = Depends(get_async_session),
+    _current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+):
+    tenant_id = resolve_tenant_id(_current_user, x_tenant_id)
+    await _ensure_default_mandir_sql_accounts_safe(session, tenant_id)
+
+    rows = await _parse_opening_balance_rows(file)
+    if not rows:
+        raise HTTPException(status_code=400, detail="Import file is empty")
+
+    sql_accounts = await list_accounts(session, tenant_id=tenant_id)
+    accounts_by_code: dict[str, Account] = {}
+
+    def _score_account(acc: Account, normalized_code: str) -> tuple[int, int, int]:
+        raw_code = str(acc.code or "").strip()
+        return (
+            1 if raw_code == normalized_code else 0,
+            len(raw_code),
+            int(acc.id or 0),
+        )
+
+    for acc in sql_accounts:
+        normalized_code = _normalize_mandir_account_code(acc.code, account_name=acc.name)
+        if not normalized_code:
+            continue
+        existing = accounts_by_code.get(normalized_code)
+        if existing is None or _score_account(acc, normalized_code) > _score_account(existing, normalized_code):
+            accounts_by_code[normalized_code] = acc
+
+    opening_offset_account = await _find_or_create_opening_balance_offset_account(session, tenant_id)
+
+    updated_rows: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    skipped_count = 0
+
+    for row_number, raw_row in enumerate(rows, start=2):
+        try:
+            row = {
+                str(key or "").strip().lower(): value
+                for key, value in (raw_row or {}).items()
+                if key is not None
+            }
+
+            raw_code = row.get("account_code") or row.get("legacy_code") or row.get("code")
+            account_name_hint = row.get("account_name") or row.get("name")
+            account_code = _normalize_mandir_account_code(raw_code, account_name=account_name_hint)
+            if not account_code:
+                raise ValueError("account_code or legacy_code is required")
+
+            account = accounts_by_code.get(account_code)
+            if account is None:
+                raise ValueError(f"Account '{account_code}' not found")
+
+            account_type = str(account.type or "").strip().lower()
+            if account_type not in {"asset", "liability", "equity"}:
+                raise ValueError("Only balance sheet accounts can have opening balances")
+
+            debit_raw = _parse_opening_balance_decimal(row.get("opening_balance_debit"))
+            credit_raw = _parse_opening_balance_decimal(row.get("opening_balance_credit"))
+            signed_raw = _parse_opening_balance_decimal(row.get("opening_balance"))
+
+            if debit_raw is None and credit_raw is None and signed_raw is None:
+                raise ValueError("Provide opening_balance_debit/opening_balance_credit or opening_balance")
+
+            debit_amount = max(debit_raw or Decimal("0"), Decimal("0"))
+            credit_amount = max(credit_raw or Decimal("0"), Decimal("0"))
+
+            if debit_raw is None and credit_raw is None and signed_raw is not None:
+                if account_type == "asset":
+                    debit_amount = max(signed_raw, Decimal("0"))
+                    credit_amount = max(-signed_raw, Decimal("0"))
+                else:
+                    credit_amount = max(signed_raw, Decimal("0"))
+                    debit_amount = max(-signed_raw, Decimal("0"))
+
+            if debit_amount > 0 and credit_amount > 0:
+                raise ValueError("Only one side can be positive for opening balance")
+
+            desired_net = debit_amount - credit_amount
+            reference = f"OPENING-{account_code}"
+            current_net = await _current_opening_balance_net(
+                session,
+                tenant_id=tenant_id,
+                account_id=int(account.id),
+                reference=reference,
+            )
+            delta_net = desired_net - current_net
+
+            if delta_net == 0:
+                skipped_count += 1
+                continue
+
+            account_debit = delta_net if delta_net > 0 else Decimal("0")
+            account_credit = -delta_net if delta_net < 0 else Decimal("0")
+
+            payload = JournalPostRequest(
+                entry_date=date.today(),
+                reference=reference,
+                description=f"Opening balance import for {account.code} - {account.name}",
+                lines=[
+                    JournalLineIn(
+                        account_id=int(account.id),
+                        debit=account_debit,
+                        credit=account_credit,
+                    ),
+                    JournalLineIn(
+                        account_id=int(opening_offset_account.id),
+                        debit=account_credit,
+                        credit=account_debit,
+                    ),
+                ],
+            )
+
+            idempotency_key = f"mandir-opening-balance:{account_code}:{str(desired_net)}"
+            await post_journal_entry(
+                session,
+                tenant_id=tenant_id,
+                created_by=str(_current_user.get("sub") or _current_user.get("email") or "system"),
+                payload=payload,
+                idempotency_key=idempotency_key,
+            )
+
+            updated_rows.append(
+                {
+                    "account_code": account_code,
+                    "account_name": account.name,
+                    "opening_balance_debit": _safe_float(max(desired_net, Decimal("0"))),
+                    "opening_balance_credit": _safe_float(max(-desired_net, Decimal("0"))),
+                    "applied_delta": _safe_float(delta_net),
+                }
+            )
+        except Exception as exc:
+            errors.append({"row": row_number, "error": str(exc)})
+
+    return {
+        "message": f"Processed {len(rows)} opening balance row(s)",
+        "updated_count": len(updated_rows),
+        "skipped_count": skipped_count,
+        "updated": updated_rows,
+        "errors": errors[:200],
+    }
 
 
 @router.get("/panchang/display-settings")
@@ -4654,7 +5076,7 @@ async def mandir_temples(
             "state": "Karnataka",
             "phone": None,
             "email": None,
-            "platform_can_write": True,
+            "platform_can_write": False,
             "is_active": True,
         }
     ]
@@ -5668,6 +6090,9 @@ async def mandir_seva_reschedule_pending(
 @router.get("/users/me")
 async def mandir_users_me(current_user: dict = Depends(get_current_user)):
     return current_user
+
+
+
 
 
 

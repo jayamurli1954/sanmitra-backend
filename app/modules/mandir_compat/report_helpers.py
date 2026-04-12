@@ -231,7 +231,7 @@ async def _posted_docs(
     if not candidates:
         return []
 
-    # Step 2: single batch query — replaces N+1 per-document queries
+    # Step 2: single batch query - replaces N+1 per-document queries
     keys = [key for _, key in candidates]
     stmt = select(JournalEntry.idempotency_key).where(
         JournalEntry.tenant_id == tenant_id,
@@ -597,23 +597,70 @@ async def donation_monthly_report(
 
 async def trial_balance_report(session: AsyncSession, *, tenant_id: str, as_of: date) -> dict[str, Any]:
     lines, total_debit, total_credit = await get_trial_balance(session, tenant_id=tenant_id, as_of=as_of)
-    normalized_lines = []
+
+    # Consolidate by normalized account code so legacy/surrogate codes resolve to one visible TB line.
+    grouped: dict[str, dict[str, Any]] = {}
     for line in lines:
-        normalized_line = dict(line)
-        normalized_line['account_code'] = _fallback_account_code(
-            normalized_line.get('account_code'),
-            normalized_line.get('account_name'),
-            normalized_line.get('account_id'),
+        normalized_code = _fallback_account_code(
+            line.get('account_code'),
+            line.get('account_name'),
+            line.get('account_id'),
         )
-        normalized_lines.append(normalized_line)
+        account_code = str(normalized_code or line.get('account_code') or line.get('account_id') or '').strip()
+        if not account_code:
+            continue
+
+        debit_amount = _safe_decimal(line.get('debit_total'), Decimal('0'))
+        credit_amount = _safe_decimal(line.get('credit_total'), Decimal('0'))
+        net_amount = debit_amount - credit_amount
+
+        bucket = grouped.get(account_code)
+        if bucket is None:
+            bucket = {
+                'account_id': line.get('account_id'),
+                'account_code': account_code,
+                'account_name': str(line.get('account_name') or f'Account {account_code}'),
+                '_net': Decimal('0'),
+            }
+            grouped[account_code] = bucket
+        bucket['_net'] += net_amount
+
+    normalized_lines: list[dict[str, Any]] = []
+    net_total_debit = Decimal('0')
+    net_total_credit = Decimal('0')
+
+    for account_code in sorted(grouped.keys()):
+        bucket = grouped[account_code]
+        net_amount = _safe_decimal(bucket.get('_net'), Decimal('0'))
+
+        if net_amount >= 0:
+            debit_value = _as_float(net_amount, 0.0)
+            credit_value = 0.0
+            net_total_debit += net_amount
+        else:
+            debit_value = 0.0
+            credit_value = _as_float(abs(net_amount), 0.0)
+            net_total_credit += abs(net_amount)
+
+        normalized_lines.append(
+            {
+                'account_id': bucket.get('account_id'),
+                'account_code': bucket.get('account_code'),
+                'account_name': bucket.get('account_name'),
+                'debit_total': debit_value,
+                'credit_total': credit_value,
+            }
+        )
 
     return {
         'as_of': as_of.isoformat(),
         'lines': normalized_lines,
         'accounts': normalized_lines,
-        'total_debit': _as_float(total_debit, 0.0),
-        'total_credit': _as_float(total_credit, 0.0),
-        'balanced': total_debit == total_credit,
+        'total_debit': _as_float(net_total_debit, 0.0),
+        'total_credit': _as_float(net_total_credit, 0.0),
+        'gross_total_debit': _as_float(total_debit, 0.0),
+        'gross_total_credit': _as_float(total_credit, 0.0),
+        'balanced': net_total_debit == net_total_credit,
     }
 
 
