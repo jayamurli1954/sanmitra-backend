@@ -5374,6 +5374,8 @@ def _mandir_upi_config_view(doc: dict[str, Any], temple_id: int) -> dict[str, An
         "upi_payee_name": payee_name,
         "upi_currency": currency,
         "upi_qr_note": str(doc.get("upi_qr_note") or "").strip() or None,
+        "qr_code_image_url": str(doc.get("qr_code_image_url") or "").strip() or None,
+        "admin_whatsapp": str(doc.get("admin_whatsapp") or "").strip() or None,
     }
 
 
@@ -5419,6 +5421,10 @@ async def mandir_upi_payments_config_update(
         update["upi_qr_note"] = upi_qr_note or None
     if "upi_currency" in payload:
         update["upi_currency"] = upi_currency
+    if "qr_code_image_url" in payload:
+        update["qr_code_image_url"] = str(payload.get("qr_code_image_url") or "").strip() or None
+    if "admin_whatsapp" in payload:
+        update["admin_whatsapp"] = str(payload.get("admin_whatsapp") or "").strip() or None
 
     col = get_collection("mandir_temples")
     await col.update_one(
@@ -5492,6 +5498,351 @@ async def mandir_public_upi_intent(
         "intent_uri": intent_uri,
         "qr_payload": intent_uri,
     }
+
+
+# ---------------------------------------------------------------------------
+# PUBLIC SEVA PAYMENT ENDPOINTS  (no authentication required)
+# ---------------------------------------------------------------------------
+
+@router.get("/public/temples/{temple_id}/info")
+async def mandir_public_temple_info(
+    temple_id: int,
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    app_key = resolve_app_key((x_app_key or "mandirmitra").strip())
+    tenant_id = await resolve_tenant_by_temple_id(temple_id)
+    if not tenant_id:
+        raise HTTPException(status_code=404, detail="Temple not found")
+
+    doc = await get_collection("mandir_temples").find_one({"tenant_id": tenant_id}) or {}
+    if not doc:
+        raise HTTPException(status_code=404, detail="Temple not found")
+
+    return {
+        "temple_id": temple_id,
+        "temple_name": str(doc.get("temple_name") or doc.get("name") or ""),
+        "trust_name": str(doc.get("trust_name") or ""),
+        "address": str(doc.get("address") or ""),
+        "city": str(doc.get("city") or ""),
+        "state": str(doc.get("state") or ""),
+        "upi_id": str(doc.get("upi_id") or "").strip() if doc.get("upi_public_enabled") else None,
+        "upi_payee_name": str(doc.get("upi_payee_name") or doc.get("trust_name") or doc.get("temple_name") or ""),
+        "qr_code_image_url": str(doc.get("qr_code_image_url") or "").strip() or None,
+        "admin_whatsapp": str(doc.get("admin_whatsapp") or "").strip() or None,
+        "upi_public_enabled": bool(doc.get("upi_public_enabled", False)),
+    }
+
+
+@router.get("/public/temples/{temple_id}/sevas")
+async def mandir_public_temple_sevas(
+    temple_id: int,
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    app_key = resolve_app_key((x_app_key or "mandirmitra").strip())
+    tenant_id = await resolve_tenant_by_temple_id(temple_id)
+    if not tenant_id:
+        raise HTTPException(status_code=404, detail="Temple not found")
+
+    col = get_collection("mandir_sevas")
+    docs = await col.find({
+        "tenant_id": tenant_id,
+        "app_key": app_key,
+        "is_active": {"$ne": False},
+    }).sort("seva_name", 1).to_list(length=200)
+
+    return [
+        {
+            "seva_id": str(doc.get("_id") or doc.get("id") or ""),
+            "seva_name": str(doc.get("seva_name") or doc.get("name") or ""),
+            "description": str(doc.get("description") or ""),
+            "amount": doc.get("amount"),
+            "frequency": str(doc.get("frequency") or "one_time"),
+            "duration_days": doc.get("duration_days"),
+        }
+        for doc in docs
+        if doc.get("seva_name") or doc.get("name")
+    ]
+
+
+@router.get("/public/temples/{temple_id}/devotee/autofill/{phone}")
+async def mandir_public_devotee_autofill(
+    temple_id: int,
+    phone: str,
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    app_key = resolve_app_key((x_app_key or "mandirmitra").strip())
+    tenant_id = await resolve_tenant_by_temple_id(temple_id)
+    if not tenant_id:
+        raise HTTPException(status_code=404, detail="Temple not found")
+
+    normalized = _normalize_phone(phone)
+    if not normalized:
+        return {"found": False, "devotee": None}
+
+    # Scoped by tenant_id + app_key - mobile linked to THIS temple only
+    col = get_collection("mandir_devotees")
+    docs = await col.find({
+        "tenant_id": tenant_id,
+        "app_key": app_key,
+        "phone": normalized,
+    }).limit(1).to_list(length=1)
+
+    if not docs:
+        return {"found": False, "devotee": None}
+
+    doc = docs[0]
+    return {
+        "found": True,
+        "devotee": {
+            "name": str(doc.get("name") or ""),
+            "email": str(doc.get("email") or ""),
+            "address": str(doc.get("address") or ""),
+            "city": str(doc.get("city") or ""),
+            "state": str(doc.get("state") or ""),
+            "pincode": str(doc.get("pincode") or ""),
+            "gothra": str(doc.get("gothra") or ""),
+            "nakshtra": str(doc.get("nakshtra") or ""),
+            "rashi": str(doc.get("rashi") or ""),
+        },
+    }
+
+
+@router.get("/public/location/pincode/{pincode}")
+async def mandir_public_pincode_lookup(pincode: str):
+    if not pincode.isdigit() or len(pincode) != 6:
+        raise HTTPException(status_code=400, detail="Invalid pincode. Must be 6 digits.")
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(f"https://api.postalpincode.in/pincode/{pincode}")
+        if resp.status_code == 200:
+            data = resp.json()
+            if data and data[0].get("Status") == "Success":
+                post_offices = data[0].get("PostOffice") or []
+                if post_offices:
+                    po = post_offices[0]
+                    return {
+                        "found": True,
+                        "pincode": pincode,
+                        "city": str(po.get("District") or po.get("Name") or ""),
+                        "state": str(po.get("State") or ""),
+                        "district": str(po.get("District") or ""),
+                    }
+    except Exception:
+        pass
+
+    return {"found": False, "pincode": pincode, "city": "", "state": "", "district": ""}
+
+
+@router.get("/public/temples/{temple_id}/donation-categories")
+async def mandir_public_donation_categories(
+    temple_id: int,
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = await resolve_tenant_by_temple_id(temple_id)
+    if not tenant_id:
+        raise HTTPException(status_code=404, detail="Temple not found")
+
+    return [
+        {"id": "general", "name": "General Donation", "description": "General donation to the temple"},
+        {"id": "annadanam", "name": "Annadanam", "description": "Sponsoring food/meals for devotees"},
+        {"id": "construction", "name": "Construction Fund", "description": "Temple construction and renovation"},
+        {"id": "corpus", "name": "Corpus Fund", "description": "Temple corpus fund"},
+        {"id": "vastra_seva", "name": "Vastra Seva", "description": "Clothing and decoration for deity"},
+        {"id": "nitya_puja", "name": "Nitya Puja", "description": "Daily worship sponsorship"},
+    ]
+
+
+@router.post("/public/temples/{temple_id}/seva-payments")
+async def mandir_public_create_seva_payment(
+    temple_id: int,
+    payload: dict[str, Any],
+    request: Request,
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    app_key = resolve_app_key((x_app_key or "mandirmitra").strip())
+    tenant_id = await resolve_tenant_by_temple_id(temple_id)
+    if not tenant_id:
+        raise HTTPException(status_code=404, detail="Temple not found")
+
+    payment_type = str(payload.get("payment_type") or "seva").strip().lower()
+    if payment_type not in ("seva", "donation"):
+        payment_type = "seva"
+
+    # Validate required fields
+    phone_raw = str(payload.get("phone") or payload.get("mobile") or "").strip()
+    normalized_phone = _normalize_phone(phone_raw)
+    if not normalized_phone:
+        raise HTTPException(status_code=400, detail="Valid mobile number is required")
+
+    name = str(payload.get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Name is required")
+
+    if payment_type == "donation":
+        category_id = str(payload.get("category_id") or "").strip()
+        category_name = str(payload.get("category_name") or "").strip()
+        if not category_name:
+            raise HTTPException(status_code=400, detail="Donation category is required")
+        seva_id = None
+        seva_name = category_name
+    else:
+        seva_id = str(payload.get("seva_id") or "").strip()
+        seva_name = str(payload.get("seva_name") or "").strip()
+        if not seva_name:
+            raise HTTPException(status_code=400, detail="Seva selection is required")
+
+    now = datetime.now(timezone.utc).isoformat()
+
+    # Upsert devotee record - scoped to this temple's tenant_id
+    devotee_col = get_collection("mandir_devotees")
+    devotee_update = {
+        "name": name,
+        "phone": normalized_phone,
+        "email": str(payload.get("email") or "").strip() or None,
+        "address": str(payload.get("address") or "").strip() or None,
+        "city": str(payload.get("city") or "").strip() or None,
+        "state": str(payload.get("state") or "").strip() or None,
+        "pincode": str(payload.get("pincode") or "").strip() or None,
+        "gothra": str(payload.get("gothra") or "").strip() or None,
+        "nakshtra": str(payload.get("nakshtra") or "").strip() or None,
+        "rashi": str(payload.get("rashi") or "").strip() or None,
+        "updated_at": now,
+    }
+    devotee_update_clean = {k: v for k, v in devotee_update.items() if v is not None}
+
+    await devotee_col.update_one(
+        {"tenant_id": tenant_id, "app_key": app_key, "phone": normalized_phone},
+        {
+            "$set": devotee_update_clean,
+            "$setOnInsert": {
+                "id": str(uuid4()),
+                "tenant_id": tenant_id,
+                "app_key": app_key,
+                "created_at": now,
+                "verified": False,
+            },
+        },
+        upsert=True,
+    )
+
+    # Create payment record with pending status
+    payment_id = str(uuid4())
+    payment_doc = {
+        "id": payment_id,
+        "temple_id": temple_id,
+        "tenant_id": tenant_id,
+        "app_key": app_key,
+        "payment_type": payment_type,
+        "seva_id": seva_id or None,
+        "seva_name": seva_name,
+        "amount": float(payload.get("amount") or 0) or None,
+        "devotee_name": name,
+        "devotee_phone": normalized_phone,
+        "devotee_email": str(payload.get("email") or "").strip() or None,
+        "gothra": str(payload.get("gothra") or "").strip() or None if payment_type == "seva" else None,
+        "nakshtra": str(payload.get("nakshtra") or "").strip() or None if payment_type == "seva" else None,
+        "rashi": str(payload.get("rashi") or "").strip() or None if payment_type == "seva" else None,
+        "status": "pending",
+        "utr_reference": None,
+        "verified_at": None,
+        "verified_by": None,
+        "created_at": now,
+        "source_ip": str(request.client.host if request.client else ""),
+    }
+
+    await get_collection("mandir_public_payments").insert_one(payment_doc)
+
+    # Build WhatsApp message template
+    temple_doc = await get_collection("mandir_temples").find_one({"tenant_id": tenant_id}) or {}
+    admin_whatsapp = str(temple_doc.get("admin_whatsapp") or "").strip()
+    upi_id = str(temple_doc.get("upi_id") or "").strip()
+    amount_str = f"Rs.{payload.get('amount')}" if payload.get("amount") else ""
+    payment_label = "Donation" if payment_type == "donation" else "Seva payment"
+    whatsapp_message = (
+        f"Namaste, I have made the {seva_name} {payment_label} {amount_str}.\n"
+        f"UTR/Reference: [PASTE UTR HERE]\n"
+        f"Name: {name}\n"
+        f"Mobile: {normalized_phone}\n"
+        f"Payment ID: {payment_id[:8].upper()}"
+    )
+    whatsapp_link = None
+    if admin_whatsapp:
+        from urllib.parse import quote
+        whatsapp_link = f"https://wa.me/{admin_whatsapp.replace('+', '').replace(' ', '')}?text={quote(whatsapp_message)}"
+
+    return {
+        "payment_id": payment_id[:8].upper(),
+        "full_payment_id": payment_id,
+        "status": "pending",
+        "payment_type": payment_type,
+        "seva_name": seva_name,
+        "amount": payload.get("amount"),
+        "upi_id": upi_id or None,
+        "qr_code_image_url": str(temple_doc.get("qr_code_image_url") or "").strip() or None,
+        "admin_whatsapp": admin_whatsapp or None,
+        "whatsapp_link": whatsapp_link,
+        "whatsapp_message_template": whatsapp_message,
+        "message": "Devotee details saved. Please complete payment via UPI and send WhatsApp confirmation to the temple admin.",
+    }
+
+
+@router.get("/public/payments/{payment_id}/status")
+async def mandir_public_payment_status(payment_id: str):
+    col = get_collection("mandir_public_payments")
+    doc = await col.find_one({"$or": [
+        {"id": payment_id},
+        {"id": {"$regex": f"^{payment_id[:8].lower()}"}},
+    ]})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Payment not found")
+    return {
+        "payment_id": str(doc.get("id") or "")[:8].upper(),
+        "seva_name": doc.get("seva_name"),
+        "amount": doc.get("amount"),
+        "status": doc.get("status", "pending"),
+        "verified_at": doc.get("verified_at"),
+    }
+
+
+@router.get("/public-payments")
+async def mandir_list_public_payments(
+    status: str | None = Query(default=None),
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    temple_id: int | None = Query(default=None),
+):
+    tenant_id = await _resolve_tenant_for_mandir_request(current_user, x_tenant_id, temple_id)
+    query: dict[str, Any] = {"tenant_id": tenant_id}
+    if status:
+        query["status"] = status
+
+    col = get_collection("mandir_public_payments")
+    docs = await col.find(query).sort("created_at", -1).limit(500).to_list(length=500)
+    return [_sanitize_mongo_doc(doc) for doc in docs]
+
+
+@router.patch("/public-payments/{payment_id}/verify")
+async def mandir_verify_public_payment(
+    payment_id: str,
+    payload: dict[str, Any],
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    col = get_collection("mandir_public_payments")
+    doc = await col.find_one({"id": payment_id, "tenant_id": tenant_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Payment not found")
+
+    update = {
+        "status": "verified",
+        "verified_at": datetime.now(timezone.utc).isoformat(),
+        "verified_by": str(current_user.get("email") or current_user.get("sub") or "admin"),
+        "utr_reference": str(payload.get("utr_reference") or "").strip() or None,
+    }
+    await col.update_one({"id": payment_id, "tenant_id": tenant_id}, {"$set": update})
+    return {"status": "verified", "payment_id": payment_id[:8].upper()}
 
 
 @router.get("/upi-payments")
