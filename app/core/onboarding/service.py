@@ -195,7 +195,7 @@ async def _sync_mandir_temple_profile_from_request(*, doc: dict, tenant_id: str,
         "admin_name": str(doc.get("admin_full_name") or "").strip() or None,
         "admin_mobile_number": str(doc.get("admin_phone") or "").strip() or None,
         "admin_email": str(doc.get("admin_email") or "").strip().lower() or None,
-        "platform_can_write": bool(existing.get("platform_can_write", True)),
+        "platform_can_write": bool(existing.get("platform_can_write", False)),
         "is_active": bool(existing.get("is_active", True)),
         "onboarding_status": "approved",
         "updated_at": now,
@@ -630,6 +630,7 @@ async def reject_onboarding_request(*, request_id: str, rejected_by: str, payloa
         "status": "rejected",
         "message": "Onboarding request rejected",
     }
+
 
 
 

@@ -237,7 +237,7 @@ async def list_mandir_temples(*, tenant_id: str | None = None, limit: int = 500)
                 "phone": str(doc.get("phone") or doc.get("contact_number") or "").strip() or None,
                 "email": str(doc.get("email") or "").strip().lower() or None,
                 "is_active": bool(doc.get("is_active", True)),
-                "platform_can_write": bool(doc.get("platform_can_write", True)),
+                "platform_can_write": bool(doc.get("platform_can_write", False)),
                 "onboarding_status": str(doc.get("onboarding_status") or "").strip() or None,
                 "updated_at": _to_iso(doc.get("updated_at")),
                 "created_at": _to_iso(doc.get("created_at")),
@@ -461,4 +461,5 @@ async def ensure_demo_mandir_bootstrap() -> None:
         },
         upsert=True,
     )
+
 

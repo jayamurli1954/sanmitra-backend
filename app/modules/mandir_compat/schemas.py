@@ -52,7 +52,7 @@ class MandirFirstLoginOnboardingRequest(BaseModel):
     pincode: str | None = Field(default=None, max_length=20)
 
     platform_demo_temple: bool = Field(
-        default=True,
+        default=False,
         validation_alias=AliasChoices("platform_demo_temple", "is_platform_demo_tenant", "is_demo_tenant"),
     )
 
@@ -116,3 +116,4 @@ class MandirFirstLoginOnboardingResponse(BaseModel):
     temple_profile: dict[str, Any]
     admin_user: dict[str, Any]
     google_login: dict[str, Any] | None = None
+
