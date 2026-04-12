@@ -5826,8 +5826,10 @@ async def mandir_list_public_payments(
 async def mandir_verify_public_payment(
     payment_id: str,
     payload: dict[str, Any],
+    session: AsyncSession = Depends(get_async_session),
     current_user: dict = Depends(get_current_user),
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
 ):
     tenant_id = resolve_tenant_id(current_user, x_tenant_id)
     col = get_collection("mandir_public_payments")
@@ -5835,14 +5837,117 @@ async def mandir_verify_public_payment(
     if not doc:
         raise HTTPException(status_code=404, detail="Payment not found")
 
+    if doc.get("status") == "verified":
+        raise HTTPException(status_code=400, detail="Payment already verified")
+
+    utr_reference = str(payload.get("utr_reference") or "").strip() or None
+    payment_date = str(
+        payload.get("payment_date") or datetime.now(timezone.utc).date().isoformat()
+    ).strip()
+    bank_account_id = payload.get("bank_account_id")  # optional explicit bank account
+
+    payment_type = str(doc.get("payment_type") or "seva").lower()
+    amount = float(doc.get("amount") or 0)
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="Payment amount must be greater than zero")
+
+    devotee_name = str(doc.get("devotee_name") or "").strip() or "Unknown Devotee"
+    devotee_phone = str(doc.get("devotee_phone") or "").strip() or None
+    devotee_email = str(doc.get("devotee_email") or "").strip() or None
+    seva_name = str(doc.get("seva_name") or "").strip()
+    seva_id = str(doc.get("seva_id") or "").strip() or None
+
+    source_record: dict[str, Any] = {}
+    source_type: str
+    source_id: str | None = None
+
+    try:
+        if payment_type == "seva":
+            seva_payload: dict[str, Any] = {
+                "amount_paid": amount,
+                "payment_mode": "UPI",
+                "devotee_name": devotee_name,
+                "devotee_names": devotee_name,
+                "devotee_phone": devotee_phone,
+                "devotee_mobile": devotee_phone,
+                "booking_date": payment_date,
+                "seva_name": seva_name,
+                "seva_id": seva_id or "",
+                "upi_reference_number": utr_reference,
+                "gothra": doc.get("gothra"),
+                "nakshtra": doc.get("nakshtra"),
+                "rashi": doc.get("rashi"),
+                "notes": f"Public portal | Payment ID: {payment_id[:8].upper()}",
+            }
+            if bank_account_id:
+                seva_payload["bank_account_id"] = bank_account_id
+            source_record = await create_seva_booking(
+                payload=seva_payload,
+                session=session,
+                current_user=current_user,
+                x_tenant_id=x_tenant_id,
+                x_app_key=x_app_key,
+            )
+            source_type = "seva_booking"
+            source_id = str(source_record.get("id") or "").strip() or None
+        else:
+            # Donation — map category_name back to standard category
+            _donation_cat_map = {
+                "general donation": "General Donation",
+                "annadanam": "Annadanam",
+                "construction fund": "Construction Fund",
+                "corpus fund": "Corpus Fund",
+                "vastra seva": "Vastra Seva",
+                "nitya puja": "Nitya Puja",
+            }
+            category = _donation_cat_map.get(seva_name.lower(), seva_name) or "General Donation"
+            donation_payload: dict[str, Any] = {
+                "amount": amount,
+                "payment_mode": "UPI",
+                "category": category,
+                "devotee_name": devotee_name,
+                "devotee_phone": devotee_phone,
+                "email": devotee_email,
+                "upi_reference_number": utr_reference,
+                "donation_date": payment_date,
+                "notes": f"Public portal | Payment ID: {payment_id[:8].upper()}",
+            }
+            if bank_account_id:
+                donation_payload["bank_account_id"] = bank_account_id
+            source_record = await create_donation(
+                payload=donation_payload,
+                session=session,
+                current_user=current_user,
+                x_tenant_id=x_tenant_id,
+                x_app_key=x_app_key,
+            )
+            source_type = "donation"
+            source_id = str(source_record.get("donation_id") or source_record.get("id") or "").strip() or None
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to post accounting entry: {exc}") from exc
+
+    now = datetime.now(timezone.utc).isoformat()
     update = {
         "status": "verified",
-        "verified_at": datetime.now(timezone.utc).isoformat(),
+        "verified_at": now,
         "verified_by": str(current_user.get("email") or current_user.get("sub") or "admin"),
-        "utr_reference": str(payload.get("utr_reference") or "").strip() or None,
+        "utr_reference": utr_reference,
+        "source_type": source_type,
+        "source_id": source_id,
     }
     await col.update_one({"id": payment_id, "tenant_id": tenant_id}, {"$set": update})
-    return {"status": "verified", "payment_id": payment_id[:8].upper()}
+
+    receipt_number = str(source_record.get("receipt_number") or "").strip() or None
+    return {
+        "status": "verified",
+        "payment_id": payment_id[:8].upper(),
+        "source_type": source_type,
+        "source_id": source_id,
+        "receipt_number": receipt_number,
+        "message": "Payment verified and accounting entry posted successfully.",
+    }
 
 
 @router.get("/upi-payments")
