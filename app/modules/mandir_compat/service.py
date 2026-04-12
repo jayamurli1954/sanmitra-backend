@@ -42,6 +42,89 @@ def _to_iso(value: object) -> str | None:
         return value
     return None
 
+def _clean_text(value: object) -> str | None:
+    text = str(value or "").strip()
+    return text or None
+
+
+
+def _normalized_text(value: object) -> str:
+    return " ".join(str(value or "").strip().lower().split())
+
+
+
+def _is_placeholder_temple_name(value: object) -> bool:
+    normalized = _normalized_text(value)
+    return normalized in {"temple", "temple trust", "trust", "new tenant"}
+
+
+
+def _pick_first_non_empty(*values: object) -> str | None:
+    for value in values:
+        text = _clean_text(value)
+        if text:
+            return text
+    return None
+
+
+
+def _pick_prefer_non_placeholder(primary: object, *fallbacks: object) -> str | None:
+    primary_text = _clean_text(primary)
+    if primary_text and not _is_placeholder_temple_name(primary_text):
+        return primary_text
+
+    for candidate in fallbacks:
+        candidate_text = _clean_text(candidate)
+        if candidate_text and not _is_placeholder_temple_name(candidate_text):
+            return candidate_text
+
+    return primary_text or _pick_first_non_empty(*fallbacks)
+
+
+
+async def _latest_mandir_onboarding_events_by_tenant(tenant_ids: list[str]) -> dict[str, dict]:
+    if not tenant_ids:
+        return {}
+
+    onboarding_events = get_collection(MANDIR_ONBOARDING_COLLECTION)
+    try:
+        docs = await onboarding_events.find({"tenant_id": {"$in": tenant_ids}}).sort("created_at", -1).to_list(
+            length=max(200, len(tenant_ids) * 3)
+        )
+    except Exception:
+        return {}
+
+    rows: dict[str, dict] = {}
+    for doc in docs:
+        tenant_id = _clean_text(doc.get("tenant_id"))
+        if tenant_id and tenant_id not in rows:
+            rows[tenant_id] = doc
+    return rows
+
+
+
+async def _latest_core_onboarding_requests_by_tenant(tenant_ids: list[str]) -> dict[str, dict]:
+    if not tenant_ids:
+        return {}
+
+    requests = get_collection("core_onboarding_requests")
+    try:
+        docs = await requests.find(
+            {
+                "approved_tenant_id": {"$in": tenant_ids},
+                "status": "approved",
+            }
+        ).sort("approved_at", -1).to_list(length=max(200, len(tenant_ids) * 3))
+    except Exception:
+        return {}
+
+    rows: dict[str, dict] = {}
+    for doc in docs:
+        tenant_id = _clean_text(doc.get("approved_tenant_id"))
+        if tenant_id and tenant_id not in rows:
+            rows[tenant_id] = doc
+    return rows
+
 
 async def _allocate_tenant_id(base_hint: str) -> str:
     base = _slugify(base_hint)
@@ -209,6 +292,10 @@ async def list_mandir_temples(*, tenant_id: str | None = None, limit: int = 500)
     except Exception:
         docs = []
 
+    tenant_ids = [str(doc.get("tenant_id") or "").strip() for doc in docs if str(doc.get("tenant_id") or "").strip()]
+    onboarding_events_by_tenant = await _latest_mandir_onboarding_events_by_tenant(tenant_ids)
+    approved_requests_by_tenant = await _latest_core_onboarding_requests_by_tenant(tenant_ids)
+
     rows: list[dict] = []
     for doc in docs:
         doc_tenant_id = str(doc.get("tenant_id") or "").strip()
@@ -219,33 +306,106 @@ async def list_mandir_temples(*, tenant_id: str | None = None, limit: int = 500)
         if not temple_numeric_id:
             temple_numeric_id = await ensure_temple_numeric_id(doc_tenant_id)
 
-        temple_name = str(doc.get("name") or doc.get("temple_name") or doc.get("trust_name") or "Temple").strip() or "Temple"
-        trust_name = str(doc.get("trust_name") or "").strip() or None
+        onboarding_event = onboarding_events_by_tenant.get(doc_tenant_id) or {}
+        approved_request = approved_requests_by_tenant.get(doc_tenant_id) or {}
+
+        resolved_name = _pick_prefer_non_placeholder(
+            doc.get("name") or doc.get("temple_name") or doc.get("trust_name"),
+            approved_request.get("temple_name"),
+            approved_request.get("tenant_name"),
+            approved_request.get("trust_name"),
+            onboarding_event.get("temple_name"),
+            onboarding_event.get("trust_name"),
+        ) or "Temple"
+
+        resolved_temple_name = _pick_prefer_non_placeholder(
+            doc.get("temple_name"),
+            approved_request.get("temple_name"),
+            approved_request.get("tenant_name"),
+            onboarding_event.get("temple_name"),
+            resolved_name,
+        ) or resolved_name
+
+        resolved_trust_name = _pick_first_non_empty(
+            doc.get("trust_name"),
+            approved_request.get("trust_name"),
+            onboarding_event.get("trust_name"),
+        )
+
+        resolved_city = _pick_first_non_empty(
+            doc.get("city"),
+            approved_request.get("city"),
+            onboarding_event.get("city"),
+        )
+        resolved_state = _pick_first_non_empty(
+            doc.get("state"),
+            approved_request.get("state"),
+            onboarding_event.get("state"),
+        )
+        resolved_phone = _pick_first_non_empty(
+            doc.get("phone"),
+            doc.get("contact_number"),
+            approved_request.get("phone"),
+            onboarding_event.get("temple_contact_number"),
+            onboarding_event.get("admin_mobile_number"),
+        )
+        resolved_email = _pick_first_non_empty(
+            doc.get("email"),
+            approved_request.get("email"),
+            onboarding_event.get("temple_email"),
+            approved_request.get("admin_email"),
+            onboarding_event.get("admin_email"),
+        )
+
+        patch: dict[str, object] = {}
+        existing_name = _clean_text(doc.get("name"))
+        existing_temple_name = _clean_text(doc.get("temple_name"))
+        if (not existing_name or _is_placeholder_temple_name(existing_name)) and resolved_name != existing_name:
+            patch["name"] = resolved_name
+        if (not existing_temple_name or _is_placeholder_temple_name(existing_temple_name)) and resolved_temple_name != existing_temple_name:
+            patch["temple_name"] = resolved_temple_name
+        if not _clean_text(doc.get("trust_name")) and resolved_trust_name:
+            patch["trust_name"] = resolved_trust_name
+        if not _clean_text(doc.get("city")) and resolved_city:
+            patch["city"] = resolved_city
+        if not _clean_text(doc.get("state")) and resolved_state:
+            patch["state"] = resolved_state
+        if not _clean_text(doc.get("phone")) and resolved_phone:
+            patch["phone"] = resolved_phone
+            patch["contact_number"] = resolved_phone
+        if not _clean_text(doc.get("email")) and resolved_email:
+            patch["email"] = resolved_email.lower()
+        if patch:
+            patch["updated_at"] = datetime.now(timezone.utc)
+            try:
+                await temples.update_one({"tenant_id": doc_tenant_id}, {"$set": patch}, upsert=False)
+            except Exception:
+                pass
+
         rows.append(
             {
                 "id": temple_numeric_id,
                 "temple_id": temple_numeric_id,
                 "tenant_id": doc_tenant_id,
-                "name": temple_name,
-                "temple_name": str(doc.get("temple_name") or "").strip() or temple_name,
-                "trust_name": trust_name,
-                "primary_deity": str(doc.get("primary_deity") or "").strip() or None,
-                "address": str(doc.get("address") or "").strip() or None,
-                "city": str(doc.get("city") or "").strip() or None,
-                "state": str(doc.get("state") or "").strip() or None,
-                "pincode": str(doc.get("pincode") or "").strip() or None,
-                "phone": str(doc.get("phone") or doc.get("contact_number") or "").strip() or None,
-                "email": str(doc.get("email") or "").strip().lower() or None,
+                "name": resolved_name,
+                "temple_name": resolved_temple_name,
+                "trust_name": resolved_trust_name,
+                "primary_deity": _clean_text(doc.get("primary_deity")),
+                "address": _pick_first_non_empty(doc.get("address"), approved_request.get("address"), onboarding_event.get("temple_address")),
+                "city": resolved_city,
+                "state": resolved_state,
+                "pincode": _pick_first_non_empty(doc.get("pincode"), approved_request.get("pincode"), onboarding_event.get("pincode")),
+                "phone": resolved_phone,
+                "email": _clean_text(resolved_email).lower() if _clean_text(resolved_email) else None,
                 "is_active": bool(doc.get("is_active", True)),
                 "platform_can_write": bool(doc.get("platform_can_write", False)),
-                "onboarding_status": str(doc.get("onboarding_status") or "").strip() or None,
+                "onboarding_status": _pick_first_non_empty(doc.get("onboarding_status"), approved_request.get("status"), onboarding_event.get("status")),
                 "updated_at": _to_iso(doc.get("updated_at")),
                 "created_at": _to_iso(doc.get("created_at")),
             }
         )
 
     return rows
-
 
 async def create_mandir_first_login_onboarding(
     payload: MandirFirstLoginOnboardingRequest,
