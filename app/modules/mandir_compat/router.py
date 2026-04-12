@@ -4564,6 +4564,56 @@ async def mandir_legacy_login(payload: dict[str, Any], x_app_key: str | None = H
     return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
 
 
+@router.get("/opening-balances/template")
+async def mandir_opening_balances_template():
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+
+    wb = Workbook()
+    sheet = wb.active
+    sheet.title = "Opening Balances"
+
+    headers = ["account_code", "account_name", "opening_balance_debit", "opening_balance_credit"]
+    sheet.append(headers)
+
+    header_fill = PatternFill(start_color="FFA500", end_color="FFA500", fill_type="solid")
+    header_font = Font(bold=True, color="FFFFFF")
+
+    for cell in sheet[1]:
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    example_data = [
+        (11001, "Cash", 50000, None),
+        (11002, "Bank Account", 100000, None),
+        (32001, "General Reserve", None, 150000),
+        (21001, "Loan Payable", None, 50000),
+    ]
+
+    for row_data in example_data:
+        sheet.append(row_data)
+
+    sheet.column_dimensions["A"].width = 15
+    sheet.column_dimensions["B"].width = 25
+    sheet.column_dimensions["C"].width = 25
+    sheet.column_dimensions["D"].width = 25
+
+    for row in sheet.iter_rows(min_row=2, max_col=4):
+        for cell in row:
+            cell.alignment = Alignment(horizontal="right")
+
+    output = BytesIO()
+    wb.save(output)
+    output.seek(0)
+
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=Opening_Balance_Template.xlsx"},
+    )
+
+
 @router.post("/opening-balances/import")
 async def mandir_opening_balances_import(
     file: UploadFile = File(...),
