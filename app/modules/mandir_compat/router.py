@@ -2457,6 +2457,8 @@ async def panchang_today(
         )
         if not temple_doc:
             temple_doc = await get_collection("mandir_temples").find_one({"tenant_id": tenant_id})
+        if not temple_doc:
+            temple_doc = {}
 
         # Get panchang display settings for overrides
         settings_doc = await get_collection("mandir_panchang_settings").find_one(
@@ -2464,9 +2466,16 @@ async def panchang_today(
         ) or {}
 
         # Determine location (use settings override if available, else temple location, else default to Bengaluru)
-        latitude = float(settings_doc.get("latitude", temple_doc.get("latitude", 12.9716))) if settings_doc.get("latitude") or temple_doc.get("latitude") else 12.9716
-        longitude = float(settings_doc.get("longitude", temple_doc.get("longitude", 77.5946))) if settings_doc.get("longitude") or temple_doc.get("longitude") else 77.5946
-        city = settings_doc.get("city_name", temple_doc.get("city", "Bengaluru")) or "Bengaluru"
+        latitude = settings_doc.get("latitude") or temple_doc.get("latitude") or 12.9716
+        longitude = settings_doc.get("longitude") or temple_doc.get("longitude") or 77.5946
+        city = settings_doc.get("city_name") or temple_doc.get("city") or "Bengaluru"
+
+        # Ensure numeric types
+        try:
+            latitude = float(latitude)
+            longitude = float(longitude)
+        except (ValueError, TypeError):
+            latitude, longitude = 12.9716, 77.5946
 
         # Calculate panchang using Swiss Ephemeris
         panchang_service = PanchangService()
