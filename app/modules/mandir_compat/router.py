@@ -5504,6 +5504,26 @@ async def mandir_public_upi_intent(
 # PUBLIC SEVA PAYMENT ENDPOINTS  (no authentication required)
 # ---------------------------------------------------------------------------
 
+@router.get("/public/temples")
+async def mandir_public_list_temples():
+    """List temples that have public payments enabled (for temple selector on public page)."""
+    col = get_collection("mandir_temples")
+    docs = await col.find({"upi_public_enabled": True}).to_list(length=100)
+    result = []
+    for doc in docs:
+        temple_id = doc.get("temple_id") or doc.get("id")
+        if not temple_id:
+            continue
+        result.append({
+            "temple_id": int(temple_id),
+            "temple_name": str(doc.get("temple_name") or doc.get("name") or ""),
+            "trust_name": str(doc.get("trust_name") or ""),
+            "city": str(doc.get("city") or ""),
+            "state": str(doc.get("state") or ""),
+        })
+    return result
+
+
 @router.get("/public/temples/{temple_id}/info")
 async def mandir_public_temple_info(
     temple_id: int,
