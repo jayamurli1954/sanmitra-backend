@@ -71,8 +71,10 @@ def get_abhijit_muhurat_data(sunrise: str, sunset: str) -> Dict:
 
 def get_brahma_muhurat_data(sunrise: str) -> Dict:
     sunrise_min = time_to_minutes(sunrise)
-    # Traditional definition: starts ~96 minutes before sunrise (2 muhurtas of 48 min total window here)
-    start_min = sunrise_min - 96
+    # Brahma Muhurta: approximately 80-96 minutes before sunrise, typically 1.5-2 hours
+    # Standard: 96 minutes (2 muhurtas), but adjusted to ~80-88 minutes for practical accuracy
+    # For most of India: use 80 minutes for better Drik alignment
+    start_min = sunrise_min - 80
     return {
         "start": minutes_to_time(start_min),
         "end": minutes_to_time(start_min + 48),
@@ -97,12 +99,15 @@ def get_dur_muhurta_data(sunrise: str, sunset: str, day_of_week: int) -> List[Di
     ]
 
 def get_varjyam_impl_data(sunrise: str, sunset: str, nakshatra_data: Dict, is_amrita: bool = False) -> List[Dict]:
-    """Shared implementation for Varjyam and Amrita Kalam using dynamic Ghati scaling."""
+    """Shared implementation for Varjyam and Amrita Kalam using Nakshatra-based Ghati scaling.
+
+    Falls back to day-duration based calculation if Nakshatra boundaries aren't available.
+    """
     from datetime import datetime, timedelta
-    
+
     nak_name = nakshatra_data.get("name")
     if not nak_name: return []
-    
+
     try:
         simple_name = nak_name.split(" Pada")[0].strip()
         nak_index = NAKSHATRAS.index(simple_name)
@@ -117,24 +122,71 @@ def get_varjyam_impl_data(sunrise: str, sunset: str, nakshatra_data: Dict, is_am
         if 0 <= nak_index < len(NAKSHATRA_VARJYAM_STARTS):
             start_ghati = NAKSHATRA_VARJYAM_STARTS[nak_index]
 
-    if start_ghati == 0: return []
+    if start_ghati == 0:
+        # No offset for this nakshatra, cannot calculate
+        return []
 
     start_time_str = nakshatra_data.get("start_time")
     end_time_str = nakshatra_data.get("end_time")
-    if not start_time_str or not end_time_str: return []
 
-    start_dt = datetime.strptime(start_time_str, "%Y-%m-%d %H:%M:%S")
-    end_dt = datetime.strptime(end_time_str, "%Y-%m-%d %H:%M:%S")
-    nakshatra_seconds = (end_dt - start_dt).total_seconds()
+    # If nakshatra boundaries unavailable, calculate from sunrise/sunset
+    if not start_time_str or not end_time_str:
+        return _calculate_varjyam_from_day(sunrise, sunset, start_ghati, is_amrita)
+
+    try:
+        start_dt = datetime.strptime(start_time_str, "%Y-%m-%d %H:%M:%S")
+        end_dt = datetime.strptime(end_time_str, "%Y-%m-%d %H:%M:%S")
+        nakshatra_seconds = (end_dt - start_dt).total_seconds()
+    except (ValueError, TypeError):
+        # Fallback if datetime parsing fails
+        return _calculate_varjyam_from_day(sunrise, sunset, start_ghati, is_amrita)
+
     if nakshatra_seconds <= 0:
-        return []
+        # Invalid nakshatra span, fallback
+        return _calculate_varjyam_from_day(sunrise, sunset, start_ghati, is_amrita)
 
     # Standard Panchang rule:
-    # divide actual Nakshatra span into 60 Ghatis and apply offset proportionally.
+    # Divide actual Nakshatra span into 60 Ghatis and apply offset proportionally.
+    # Amrita is 4 ghatis (48 min worth), Varjyam is 4 ghatis.
     one_ghati_seconds = nakshatra_seconds / 60.0
-    event_start_dt = start_dt + timedelta(seconds=(start_ghati * one_ghati_seconds))
+
+    # Clamp ghati offset to valid range (0-60) to avoid extending beyond nakshatra
+    effective_ghati = min(start_ghati, 56)  # Leave room for 4-ghati duration
+
+    event_start_dt = start_dt + timedelta(seconds=(effective_ghati * one_ghati_seconds))
     event_end_dt = event_start_dt + timedelta(seconds=(4 * one_ghati_seconds))
+
+    # Ensure times stay within sensible day bounds (sunrise to sunset)
+    # Convert sunrise/sunset strings to comparable times
+    try:
+        sunrise_dt = datetime.strptime(sunrise, "%H:%M:%S").time()
+        sunset_dt = datetime.strptime(sunset, "%H:%M:%S").time()
+        # Compare times of day
+        if event_start_dt.time() > sunset_dt or event_start_dt.time() < sunrise_dt:
+            # Event is outside normal daytime, skip it
+            return []
+    except (ValueError, TypeError):
+        pass
+
+    # Also clip end time to not extend past sunset if it does
+    try:
+        sunset_dt = datetime.strptime(sunset, "%H:%M:%S")
+        if event_end_dt.time() > sunset_dt.time():
+            # Calculate original duration
+            orig_duration_seconds = (event_end_dt - event_start_dt).total_seconds()
+            # Clamp end to sunset, keeping at least some duration
+            event_end_dt_clamped = start_dt.replace(hour=sunset_dt.hour, minute=sunset_dt.minute, second=sunset_dt.second)
+            if event_end_dt_clamped < event_start_dt:
+                # Won't work, skip this event
+                return []
+            event_end_dt = event_end_dt_clamped
+    except (ValueError, TypeError):
+        pass
+
     duration_minutes = ((event_end_dt - event_start_dt).total_seconds()) / 60.0
+
+    if duration_minutes <= 0:
+        return []
 
     return [{
         "start": event_start_dt.strftime("%H:%M:%S"),
@@ -143,4 +195,54 @@ def get_varjyam_impl_data(sunrise: str, sunset: str, nakshatra_data: Dict, is_am
         "end_datetime": event_end_dt.strftime("%Y-%m-%d %H:%M:%S"),
         "duration_minutes": round(duration_minutes, 2),
         "description": "Amrita Kalam" if is_amrita else "Varjyam",
+    }]
+
+
+def _calculate_varjyam_from_day(sunrise: str, sunset: str, start_ghati: int, is_amrita: bool = False) -> List[Dict]:
+    """Fallback: Calculate Varjyam/Amrita from day duration if Nakshatra boundaries unavailable."""
+    from datetime import datetime, timedelta
+
+    # Convert sunrise to datetime (assume same date)
+    try:
+        sunrise_time = datetime.strptime(f"2000-01-01 {sunrise}", "%Y-%m-%d %H:%M:%S")
+        sunset_time = datetime.strptime(f"2000-01-01 {sunset}", "%Y-%m-%d %H:%M:%S")
+    except (ValueError, TypeError):
+        return []
+
+    day_seconds = (sunset_time - sunrise_time).total_seconds()
+    if day_seconds <= 0:
+        return []
+
+    # Use actual day duration for proportional calculation (more accurate)
+    # Divide the actual day span into 60 ghatis for precise timing
+    one_ghati_seconds = day_seconds / 60.0
+
+    # Clamp ghati to valid range (0-56 to leave room for 4-ghati duration)
+    effective_ghati = min(start_ghati, 56)
+
+    event_start_dt = sunrise_time + timedelta(seconds=(effective_ghati * one_ghati_seconds))
+    event_end_dt = event_start_dt + timedelta(seconds=(4 * one_ghati_seconds))
+
+    # Ensure times stay within day bounds [sunrise, sunset]
+    if event_start_dt > sunset_time:
+        # Event is completely after sunset, skip it
+        return []
+    if event_start_dt < sunrise_time:
+        event_start_dt = sunrise_time
+    if event_end_dt > sunset_time:
+        event_end_dt = sunset_time
+
+    duration_minutes = ((event_end_dt - event_start_dt).total_seconds()) / 60.0
+
+    # Only return valid events with non-zero duration
+    if duration_minutes <= 0:
+        return []
+
+    return [{
+        "start": event_start_dt.strftime("%H:%M:%S"),
+        "end": event_end_dt.strftime("%H:%M:%S"),
+        "start_datetime": event_start_dt.strftime("%Y-%m-%d %H:%M:%S"),
+        "end_datetime": event_end_dt.strftime("%Y-%m-%d %H:%M:%S"),
+        "duration_minutes": round(duration_minutes, 2),
+        "description": "Amrita Kalam (fallback)" if is_amrita else "Varjyam (fallback)",
     }]
