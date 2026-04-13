@@ -605,6 +605,78 @@ async def ensure_temple_upi_config(
         )
 
 
+async def ensure_sevas_copied(*, source_temple_id: int, target_temple_id: int) -> int:
+    """Copy all active sevas from source temple to target temple.
+    Skips sevas that already exist in target (matched by name_english, case-insensitive).
+    Returns number of sevas copied.
+    """
+    source_tenant_id = await resolve_tenant_by_temple_id(source_temple_id)
+    target_tenant_id = await resolve_tenant_by_temple_id(target_temple_id)
+    if not source_tenant_id or not target_tenant_id:
+        return 0
+
+    col = get_collection("mandir_sevas")
+
+    # Load source sevas
+    source_sevas = await col.find(
+        {"tenant_id": source_tenant_id, "is_active": True}
+    ).to_list(length=500)
+
+    if not source_sevas:
+        return 0
+
+    # Load existing target seva names to avoid duplicates
+    existing = await col.find(
+        {"tenant_id": target_tenant_id},
+        {"name_english": 1, "name": 1},
+    ).to_list(length=500)
+    existing_names = {
+        str(d.get("name_english") or d.get("name") or "").strip().lower()
+        for d in existing
+    }
+
+    now = datetime.now(timezone.utc)
+    copied = 0
+    for src in source_sevas:
+        src_name = str(src.get("name_english") or src.get("name") or "").strip()
+        if not src_name or src_name.lower() in existing_names:
+            continue  # already exists or unnamed
+
+        new_doc = {
+            "id": str(uuid4()),
+            "tenant_id": target_tenant_id,
+            "app_key": resolve_app_key("mandirmitra"),
+            "name": src_name,
+            "name_english": src_name,
+            "name_kannada": str(src.get("name_kannada") or ""),
+            "name_sanskrit": str(src.get("name_sanskrit") or ""),
+            "seva_name": src_name,
+            "description": str(src.get("description") or ""),
+            "category": src.get("category") or "Pooja",
+            "amount": src.get("amount") or 0.0,
+            "min_amount": src.get("min_amount"),
+            "max_amount": src.get("max_amount"),
+            "availability": src.get("availability") or "daily",
+            "specific_day": src.get("specific_day"),
+            "except_day": src.get("except_day"),
+            "time_slot": str(src.get("time_slot") or ""),
+            "max_bookings_per_day": src.get("max_bookings_per_day"),
+            "advance_booking_days": src.get("advance_booking_days") or 30,
+            "requires_approval": bool(src.get("requires_approval", False)),
+            "is_active": True,
+            "benefits": str(src.get("benefits") or ""),
+            "instructions": str(src.get("instructions") or ""),
+            "duration_minutes": src.get("duration_minutes"),
+            "created_at": now,
+            "updated_at": now,
+        }
+        await col.insert_one(new_doc)
+        existing_names.add(src_name.lower())
+        copied += 1
+
+    return copied
+
+
 async def ensure_demo_mandir_bootstrap() -> None:
     settings = get_settings()
     if not settings.DEMO_MANDIR_BOOTSTRAP:
