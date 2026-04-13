@@ -5508,7 +5508,13 @@ async def mandir_public_upi_intent(
 async def mandir_public_list_temples():
     """List temples that have public payments enabled (for temple selector on public page)."""
     col = get_collection("mandir_temples")
-    docs = await col.find({"upi_public_enabled": True}).to_list(length=100)
+    # Include temples where public payments are explicitly enabled OR have a UPI ID configured
+    docs = await col.find({
+        "$or": [
+            {"upi_public_enabled": True},
+            {"upi_id": {"$exists": True, "$ne": None, "$ne": ""}},
+        ]
+    }).to_list(length=100)
     result = []
     for doc in docs:
         temple_id = doc.get("temple_id") or doc.get("id")
@@ -5545,7 +5551,7 @@ async def mandir_public_temple_info(
         "address": str(doc.get("address") or ""),
         "city": str(doc.get("city") or ""),
         "state": str(doc.get("state") or ""),
-        "upi_id": str(doc.get("upi_id") or "").strip() if doc.get("upi_public_enabled") else None,
+        "upi_id": str(doc.get("upi_id") or "").strip() or None,
         "upi_payee_name": str(doc.get("upi_payee_name") or doc.get("trust_name") or doc.get("temple_name") or ""),
         "qr_code_image_url": str(doc.get("qr_code_image_url") or "").strip() or None,
         "admin_whatsapp": str(doc.get("admin_whatsapp") or "").strip() or None,
