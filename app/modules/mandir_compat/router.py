@@ -4944,6 +4944,62 @@ async def mandir_panchang_on_date(
         )
 
 
+@router.get("/panchang/on-date-full")
+async def mandir_panchang_on_date_full(
+    target_date: str = Query(...),
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    """Get complete panchang for any date (past/future). Returns full panchang data with all limbs and muhurtas."""
+    try:
+        # Parse the target date
+        target_dt = datetime.strptime(target_date, "%Y-%m-%d")
+
+        tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+        app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+
+        # Get temple location from MongoDB
+        temple_doc = await get_collection("mandir_temples").find_one(
+            {"tenant_id": tenant_id, "app_key": app_key}
+        )
+        if not temple_doc:
+            temple_doc = await get_collection("mandir_temples").find_one({"tenant_id": tenant_id})
+        if not temple_doc:
+            temple_doc = {}
+
+        # Get panchang display settings for overrides
+        settings_doc = await get_collection("mandir_panchang_settings").find_one(
+            {"tenant_id": tenant_id, "app_key": app_key}
+        ) or {}
+
+        # Determine location (use settings override if available, else temple location, else default to Bengaluru)
+        latitude = settings_doc.get("latitude") or temple_doc.get("latitude") or 12.9716
+        longitude = settings_doc.get("longitude") or temple_doc.get("longitude") or 77.5946
+        city = settings_doc.get("city_name") or temple_doc.get("city") or "Bengaluru"
+
+        # Ensure numeric types
+        try:
+            latitude = float(latitude)
+            longitude = float(longitude)
+        except (ValueError, TypeError):
+            latitude, longitude = 12.9716, 77.5946
+
+        # Calculate panchang using Swiss Ephemeris
+        panchang_service = PanchangService()
+        panchang_data = panchang_service.calculate_panchang(target_dt, latitude, longitude, city)
+
+        return panchang_data
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid date format. Use YYYY-MM-DD: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error calculating panchang for date {target_date}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to calculate panchang: {str(e)}"
+        )
+
+
 @router.get("/pincode/lookup")
 async def mandir_pincode_lookup(pincode: str = Query(...), _current_user: dict = Depends(get_current_user)):
     normalized = _normalize_pincode(pincode)
