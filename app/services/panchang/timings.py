@@ -116,16 +116,21 @@ def get_dur_muhurta_data(sunrise: str, sunset: str, day_of_week: int) -> List[Di
     ]
 
 def get_varjyam_impl_data(sunrise: str, sunset: str, nakshatra_data: Dict, is_amrita: bool = False) -> List[Dict]:
-    """Calculate Amrita Kalam (Yoga-based) or Varjyam (Nakshatra Thyajyam).
+    """Calculate Varjyam (Nakshatra Thyajyam) or Amrita Kalam based on nakshatra boundaries.
 
-    Improved implementation based on standard Drik Panchang methods.
+    CRITICAL FIX: Varjyam occurs in evening/night AFTER sunset (e.g., 10:18 PM - 11:51 PM)
+    - Does NOT clamp to sunset like Amrita Kalam
+    - Uses actual nakshatra duration + Thyajyam ghati offsets
+    - Properly handles night-time windows that may cross midnight
     """
+    from datetime import datetime, timedelta
+
     sunrise_min = time_to_minutes(sunrise)
     sunset_min = time_to_minutes(sunset)
     day_duration_min = sunset_min - sunrise_min
 
     if is_amrita:
-        # Amrita Kalam: Yoga-based (improved)
+        # Amrita Kalam: Yoga-based, daytime-only
         # Divide day into 27 equal parts (one per Yoga)
         # Amrita Kalam usually falls in the 10th to 12th part of the day
         part_duration = day_duration_min / 27.0
@@ -150,68 +155,107 @@ def get_varjyam_impl_data(sunrise: str, sunset: str, nakshatra_data: Dict, is_am
             "description": "Amrita Kalam (Yoga-based) • Nectar period • Highly auspicious",
         }]
     else:
-        # Varjyam: Precise Nakshatra Thyajyam Table-based (Traditional method)
+        # Varjyam: Nakshatra Thyajyam Table (occurs in evening/night after sunset)
         # Uses authoritative 27-Nakshatra Thyajyam table (Drik standard)
+        # Key insight: Each nakshatra has a specific inauspicious ghati window within its 60-ghati duration
 
-        # Get nakshatra index
+        # Extract nakshatra information
         nak_name = nakshatra_data.get("name", "")
         try:
-            simple_name = nak_name.split(" Pada")[0].strip()
+            # Handle "Nakshatra Pada N" format
+            simple_name = nak_name.split(" Pada")[0].strip() if " Pada" in nak_name else nak_name
             nak_index = NAKSHATRAS.index(simple_name)
         except (ValueError, IndexError):
             return []  # Cannot determine nakshatra
 
-        # Get Thyajyam ghati range for this nakshatra
+        # Lookup Thyajyam ghati range for this nakshatra
         if nak_index not in NAKSHATRA_THYAJYAM:
             return []
 
         start_ghati, end_ghati = NAKSHATRA_THYAJYAM[nak_index]
 
-        # Get nakshatra boundaries to calculate actual timing
+        # Get nakshatra boundaries (start_time and end_time from core.py's get_nakshatra_data())
         start_time_str = nakshatra_data.get("start_time")
         end_time_str = nakshatra_data.get("end_time")
 
+        # Initialize variables
+        varjyam_start_min = varjyam_end_min = None
+        varjyam_start_datetime = varjyam_end_datetime = None
+
         if not start_time_str or not end_time_str:
-            # Fallback: use day-based approximation if nakshatra boundaries unavailable
-            # 1 Ghati = 24 minutes
+            # Fallback: use day-relative ghati conversion (1 Ghati = 24 minutes)
             varjyam_start_min = sunrise_min + (start_ghati * 24)
             varjyam_end_min = sunrise_min + (end_ghati * 24)
+            varjyam_start_datetime = _minutes_to_datetime(varjyam_start_min)
+            varjyam_end_datetime = _minutes_to_datetime(varjyam_end_min)
         else:
-            # Precise: calculate from nakshatra boundaries
+            # Precise calculation: apply ghati offsets within nakshatra's full duration
             try:
-                from datetime import datetime
                 start_dt = datetime.strptime(start_time_str, "%Y-%m-%d %H:%M:%S")
                 end_dt = datetime.strptime(end_time_str, "%Y-%m-%d %H:%M:%S")
+
+                # Calculate nakshatra duration in seconds
                 nak_duration_seconds = (end_dt - start_dt).total_seconds()
+
+                # Handle edge case: nakshatra spans midnight (end_dt < start_dt in clock time)
+                if nak_duration_seconds < 0:
+                    # Nakshatra extends to next day
+                    end_dt = end_dt + timedelta(days=1)
+                    nak_duration_seconds = (end_dt - start_dt).total_seconds()
+
+                # Duration of one ghati (1/60th of nakshatra) in seconds
                 one_ghati_seconds = nak_duration_seconds / 60.0
 
-                varjyam_start_dt = start_dt + __import__("datetime").timedelta(
-                    seconds=(start_ghati * one_ghati_seconds)
-                )
-                varjyam_end_dt = start_dt + __import__("datetime").timedelta(
-                    seconds=(end_ghati * one_ghati_seconds)
-                )
+                if one_ghati_seconds <= 0:
+                    return []  # Invalid nakshatra duration
 
+                # Calculate Varjyam start and end times within nakshatra duration
+                varjyam_start_dt = start_dt + timedelta(seconds=(start_ghati * one_ghati_seconds))
+                varjyam_end_dt = start_dt + timedelta(seconds=(end_ghati * one_ghati_seconds))
+
+                # Preserve full datetime (handles midnight crossing automatically)
+                varjyam_start_datetime = varjyam_start_dt.strftime("%Y-%m-%d %H:%M:%S")
+                varjyam_end_datetime = varjyam_end_dt.strftime("%Y-%m-%d %H:%M:%S")
+
+                # Convert to minutes for display/validation (use hour/minute from datetime)
                 varjyam_start_min = time_to_minutes(varjyam_start_dt.strftime("%H:%M:%S"))
                 varjyam_end_min = time_to_minutes(varjyam_end_dt.strftime("%H:%M:%S"))
+
             except (ValueError, TypeError, ZeroDivisionError):
                 # Fallback to simple ghati-to-minutes conversion
                 varjyam_start_min = sunrise_min + (start_ghati * 24)
                 varjyam_end_min = sunrise_min + (end_ghati * 24)
+                varjyam_start_datetime = _minutes_to_datetime(varjyam_start_min)
+                varjyam_end_datetime = _minutes_to_datetime(varjyam_end_min)
 
-        # Safety: clamp to day bounds
-        if varjyam_end_min > sunset_min:
-            varjyam_end_min = sunset_min
+        # Validation: ensure we have valid data
+        if varjyam_start_datetime is None or varjyam_end_datetime is None:
+            return []
 
-        if varjyam_start_min >= sunset_min or varjyam_start_min >= varjyam_end_min:
-            return []  # Not visible today
+        # Validate timing makes sense
+        try:
+            start_check = datetime.strptime(varjyam_start_datetime, "%Y-%m-%d %H:%M:%S")
+            end_check = datetime.strptime(varjyam_end_datetime, "%Y-%m-%d %H:%M:%S")
+            if end_check <= start_check:
+                return []  # Invalid: end before start
+        except ValueError:
+            return []
+
+        # Calculate duration properly (handles midnight crossing)
+        try:
+            start_dt_check = datetime.strptime(varjyam_start_datetime, "%Y-%m-%d %H:%M:%S")
+            end_dt_check = datetime.strptime(varjyam_end_datetime, "%Y-%m-%d %H:%M:%S")
+            duration_seconds = (end_dt_check - start_dt_check).total_seconds()
+            duration_minutes = round(duration_seconds / 60.0, 2)
+        except (ValueError, TypeError):
+            duration_minutes = round(abs(varjyam_end_min - varjyam_start_min), 2)
 
         return [{
             "start": minutes_to_time(varjyam_start_min),
             "end": minutes_to_time(varjyam_end_min),
-            "start_datetime": _minutes_to_datetime(varjyam_start_min),
-            "end_datetime": _minutes_to_datetime(varjyam_end_min),
-            "duration_minutes": round(varjyam_end_min - varjyam_start_min, 2),
+            "start_datetime": varjyam_start_datetime,
+            "end_datetime": varjyam_end_datetime,
+            "duration_minutes": duration_minutes,
             "description": "Varjyam (Nakshatra Thyajyam) • Avoid starting new ventures",
         }]
 
