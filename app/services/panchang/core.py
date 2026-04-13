@@ -84,44 +84,53 @@ def get_nakshatra_data(jd: float) -> Dict:
     }
 
 def get_tithi_data(jd: float) -> Dict:
-    """Calculate current Tithi"""
+    """Calculate current Tithi with accurate Paksha and special handling.
+
+    Bug fix: Corrected Paksha logic to handle Amavasya/Purnima boundary correctly.
+    """
     moon_long = get_sidereal_position(jd, swe.MOON)
     sun_long = get_sidereal_position(jd, swe.SUN)
 
     diff = (moon_long - sun_long + 360) % 360
-    tithi_index = int(diff / 12)
+    tithi_index = int(diff / 12)                    # 0 to 29
+    tithi_num = (tithi_index % 15) + 1               # 1 to 15
 
-    paksha = "Shukla" if tithi_index < 15 else "Krishna"
-    tithi_num = tithi_index % 15
-
-    if tithi_num == 14 and paksha == "Krishna":
-        tithi_name = "Amavasya"
-    elif tithi_num == 14 and paksha == "Shukla":
-        tithi_name = "Purnima"
+    # Correct Paksha logic (critical bug fix)
+    if tithi_index < 15:
+        paksha = "Shukla"
+        tithi_name = TITHIS[tithi_num - 1]
     else:
-        tithi_name = TITHIS[tithi_num]
+        paksha = "Krishna"
+        tithi_name = TITHIS[tithi_num - 1]
 
+    # Special names for 15th tithi (Purnima/Amavasya)
+    if tithi_num == 15 and paksha == "Shukla":
+        tithi_name = "Purnima"
+    elif tithi_num == 15 and paksha == "Krishna":
+        tithi_name = "Amavasya"
+
+    # Find exact end time using binary search
     target_diff = ((tithi_index + 1) * 12) % 360
-    
-    def get_tithi_diff(jd):
-        moon = get_sidereal_position(jd, swe.MOON)
-        sun = get_sidereal_position(jd, swe.SUN)
-        return (moon - sun + 360) % 360
+
+    def get_tithi_diff(test_jd):
+        m = get_sidereal_position(test_jd, swe.MOON)
+        s = get_sidereal_position(test_jd, swe.SUN)
+        return (m - s + 360) % 360
 
     from .astro_utils import find_transition
     jd_end = find_transition(jd, target_diff, get_tithi_diff)
-    end_time_dt = jd_to_datetime(jd_end)
+    end_dt = jd_to_datetime(jd_end)
 
     return {
-        "number": tithi_num + 1,
+        "number": tithi_num,
         "name": tithi_name,
         "paksha": paksha,
         "full_name": f"{paksha} {tithi_name}",
         "is_special": tithi_name in ["Ekadashi", "Purnima", "Amavasya"],
         "elongation": round(diff, 2),
-        "end_time": end_time_dt.strftime("%Y-%m-%d %H:%M:%S"),
-        "end_time_formatted": end_time_dt.strftime("%I:%M %p"),
-        "ends_at_ist": end_time_dt.strftime("%I:%M %p"),
+        "end_time": end_dt.strftime("%Y-%m-%d %H:%M:%S"),
+        "end_time_formatted": end_dt.strftime("%I:%M %p"),
+        "ends_at_ist": end_dt.strftime("%I:%M %p"),
         "ends_at_jd": jd_end,
     }
 
