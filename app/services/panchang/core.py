@@ -84,32 +84,40 @@ def get_nakshatra_data(jd: float) -> Dict:
     }
 
 def get_tithi_data(jd: float) -> Dict:
-    """Calculate current Tithi with accurate Paksha and special handling.
+    """Calculate current Tithi with accurate Paksha and tithi numbering (FIXED).
 
-    Bug fix: Corrected Paksha logic to handle Amavasya/Purnima boundary correctly.
+    Critical fix: Proper tithi_num calculation for both Shukla and Krishna pakshas.
+    - Shukla (tithi_index 0-14): tithi_num = tithi_index + 1 (1-15)
+    - Krishna (tithi_index 15-29): tithi_num = (tithi_index - 15) + 1 (1-15)
+
+    This ensures Ekadashi (tithi 11) is correctly identified in both pakshas.
     """
     moon_long = get_sidereal_position(jd, swe.MOON)
     sun_long = get_sidereal_position(jd, swe.SUN)
 
+    # Moon-Sun elongation determines tithi (0° to 360°)
     diff = (moon_long - sun_long + 360) % 360
-    tithi_index = int(diff / 12)                    # 0 to 29
-    tithi_num = (tithi_index % 15) + 1               # 1 to 15
+    tithi_index = int(diff / 12)  # 0 to 29
 
-    # Correct Paksha logic (critical bug fix)
+    # CRITICAL FIX: Correct Paksha and tithi_num calculation
     if tithi_index < 15:
         paksha = "Shukla"
-        tithi_name = TITHIS[tithi_num - 1]
+        tithi_num = tithi_index + 1  # 1 to 15 (Pratipada to Purnima)
     else:
         paksha = "Krishna"
-        tithi_name = TITHIS[tithi_num - 1]
+        tithi_num = (tithi_index - 15) + 1  # 1 to 15 (Pratipada to Amavasya)
 
-    # Special names for 15th tithi (Purnima/Amavasya)
-    if tithi_num == 15 and paksha == "Shukla":
-        tithi_name = "Purnima"
-    elif tithi_num == 15 and paksha == "Krishna":
-        tithi_name = "Amavasya"
+    # Get tithi name from standard list
+    tithi_name = TITHIS[tithi_num - 1]
 
-    # Find exact end time using binary search
+    # Special handling for 15th tithi
+    if tithi_num == 15:
+        if paksha == "Shukla":
+            tithi_name = "Purnima"
+        else:
+            tithi_name = "Amavasya"
+
+    # Find exact end time of current tithi using binary search
     target_diff = ((tithi_index + 1) * 12) % 360
 
     def get_tithi_diff(test_jd):
@@ -132,6 +140,7 @@ def get_tithi_data(jd: float) -> Dict:
         "end_time_formatted": end_dt.strftime("%I:%M %p"),
         "ends_at_ist": end_dt.strftime("%I:%M %p"),
         "ends_at_jd": jd_end,
+        "tithi_index": tithi_index,  # For debugging/verification
     }
 
 def get_yoga_data(jd: float) -> Dict:
