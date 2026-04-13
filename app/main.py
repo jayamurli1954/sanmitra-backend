@@ -64,6 +64,7 @@ async def on_startup() -> None:
             trust_name="PARLATHAYA PRATHISHTANA (R)",
             temple_name="Parlathaya Prathishtana (R)",
             qr_code_image_url="https://mandir-mitra-alpha.vercel.app/qr/temple_3.png",
+            admin_whatsapp="919880044567",
             city="Udupi",
             state="Karnataka",
         )
