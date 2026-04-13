@@ -550,6 +550,61 @@ async def create_mandir_first_login_onboarding(
     }
 
 
+async def ensure_temple_upi_config(
+    *,
+    temple_id: int,
+    upi_id: str,
+    upi_payee_name: str,
+    trust_name: str,
+    temple_name: str,
+    qr_code_image_url: str | None = None,
+    admin_whatsapp: str | None = None,
+    city: str | None = None,
+    state: str | None = None,
+) -> None:
+    """Idempotent: seed/update UPI config for a specific temple by numeric ID.
+    Only sets fields if they are currently missing; never overwrites admin-set values.
+    """
+    temples = get_collection(MANDIR_TEMPLES_COLLECTION)
+    doc = await temples.find_one({"$or": [{"temple_id": temple_id}, {"id": temple_id}]})
+    if not doc:
+        return  # Temple not yet registered
+
+    now = datetime.now(timezone.utc)
+    patch: dict = {}
+
+    # Always ensure public UPI is enabled and UPI ID is set
+    if upi_id and not str(doc.get("upi_id") or "").strip():
+        patch["upi_id"] = upi_id
+    if not doc.get("upi_public_enabled"):
+        patch["upi_public_enabled"] = True
+    if upi_payee_name and not str(doc.get("upi_payee_name") or "").strip():
+        patch["upi_payee_name"] = upi_payee_name
+
+    # Temple identity — only fill if blank or placeholder
+    if trust_name and (not str(doc.get("trust_name") or "").strip() or _is_placeholder_temple_name(doc.get("trust_name"))):
+        patch["trust_name"] = trust_name
+    if temple_name and (not str(doc.get("temple_name") or "").strip() or _is_placeholder_temple_name(doc.get("temple_name"))):
+        patch["temple_name"] = temple_name
+    if city and not str(doc.get("city") or "").strip():
+        patch["city"] = city
+    if state and not str(doc.get("state") or "").strip():
+        patch["state"] = state
+
+    # QR and WhatsApp — only fill if blank
+    if qr_code_image_url and not str(doc.get("qr_code_image_url") or "").strip():
+        patch["qr_code_image_url"] = qr_code_image_url
+    if admin_whatsapp and not str(doc.get("admin_whatsapp") or "").strip():
+        patch["admin_whatsapp"] = admin_whatsapp
+
+    if patch:
+        patch["updated_at"] = now
+        await temples.update_one(
+            {"$or": [{"temple_id": temple_id}, {"id": temple_id}]},
+            {"$set": patch},
+        )
+
+
 async def ensure_demo_mandir_bootstrap() -> None:
     settings = get_settings()
     if not settings.DEMO_MANDIR_BOOTSTRAP:

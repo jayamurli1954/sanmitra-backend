@@ -5799,6 +5799,7 @@ async def mandir_public_create_seva_payment(
         "seva_name": seva_name,
         "amount": payload.get("amount"),
         "upi_id": upi_id or None,
+        "upi_payee_name": str(temple_doc.get("upi_payee_name") or temple_doc.get("trust_name") or temple_doc.get("temple_name") or "").strip() or None,
         "qr_code_image_url": str(temple_doc.get("qr_code_image_url") or "").strip() or None,
         "admin_whatsapp": admin_whatsapp or None,
         "whatsapp_link": whatsapp_link,
