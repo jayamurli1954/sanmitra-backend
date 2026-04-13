@@ -18,6 +18,7 @@ psycopg[binary]
 google-auth
 requests
 reportlab
+pyswisseph
 
 pypdf
 openpyxl

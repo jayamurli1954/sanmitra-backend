@@ -82,6 +82,7 @@ from app.modules.mandir_compat.service import (
     list_mandir_temples,
     resolve_tenant_by_temple_id,
 )
+from app.services.panchang import PanchangService
 
 router = APIRouter(tags=["mandir-compat"])
 MANDIR_COMPAT_DATA_DIR = Path(__file__).resolve().parent / "data"
@@ -2443,37 +2444,42 @@ async def dashboard_stats(
 async def panchang_today(
     current_user: dict = Depends(get_current_user),
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
 ):
-    _tenant_id = resolve_tenant_id(current_user, x_tenant_id)
-    today = date.today().isoformat()
-    return {
-        "date": {
-            "gregorian": {"date": today},
-            "hindu": {
-                "month": "Chaitra",
-                "paksha": "Shukla",
-                "tithi": "Pratipada",
-                "samvat_vikram": "2083",
-                "samvat_shaka": "1948",
-            },
-        },
-        "location": {"city": "Bengaluru", "timezone": "Asia/Kolkata"},
-        "panchang": {
-            "tithi": {"name": "Pratipada", "full_name": "Shukla Pratipada", "end_time": f"{today}T21:00:00"},
-            "nakshatra": {"name": "Rohini", "end_time": f"{today}T18:30:00"},
-            "yoga": {"name": "Shubha"},
-            "karana": {"name": "Bava"},
-        },
-        "timings": {
-            "sunrise": "06:15:00",
-            "sunset": "18:25:00",
-            "rahu_kaal": "10:30 - 12:00",
-            "yamaganda": "15:00 - 16:30",
-            "gulika": "07:30 - 09:00",
-            "abhijit_muhurat": "12:02 - 12:50",
-        },
-        "calculation_metadata": {"source": "compat_fallback"},
-    }
+    """Calculate today's panchang using Swiss Ephemeris with temple location."""
+    try:
+        tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+        app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+
+        # Get temple location from MongoDB
+        temple_doc = await get_collection("mandir_temples").find_one(
+            {"tenant_id": tenant_id, "app_key": app_key}
+        )
+        if not temple_doc:
+            temple_doc = await get_collection("mandir_temples").find_one({"tenant_id": tenant_id})
+
+        # Get panchang display settings for overrides
+        settings_doc = await get_collection("mandir_panchang_settings").find_one(
+            {"tenant_id": tenant_id, "app_key": app_key}
+        ) or {}
+
+        # Determine location (use settings override if available, else temple location, else default to Bengaluru)
+        latitude = float(settings_doc.get("latitude", temple_doc.get("latitude", 12.9716))) if settings_doc.get("latitude") or temple_doc.get("latitude") else 12.9716
+        longitude = float(settings_doc.get("longitude", temple_doc.get("longitude", 77.5946))) if settings_doc.get("longitude") or temple_doc.get("longitude") else 77.5946
+        city = settings_doc.get("city_name", temple_doc.get("city", "Bengaluru")) or "Bengaluru"
+
+        # Calculate panchang using Swiss Ephemeris
+        panchang_service = PanchangService()
+        now = datetime.now()
+        panchang_data = panchang_service.calculate_panchang(now, latitude, longitude, city)
+
+        return panchang_data
+    except Exception as e:
+        logger.error(f"Error calculating panchang: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to calculate panchang: {str(e)}"
+        )
 
 
 @router.get("/donations/payment-accounts")
@@ -4853,8 +4859,54 @@ async def mandir_panchang_cities(_current_user: dict = Depends(get_current_user)
 
 
 @router.get("/panchang/on-date")
-async def mandir_panchang_on_date(target_date: str = Query(...), _current_user: dict = Depends(get_current_user)):
-    return {"target_date": target_date, "nakshatra": {"name": "Rohini"}, "tithi": {"name": "Pratipada"}}
+async def mandir_panchang_on_date(
+    target_date: str = Query(...),
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    """Get panchang for a specific date for Nakshatra lookup."""
+    try:
+        # Parse the target date
+        target_dt = datetime.strptime(target_date, "%Y-%m-%d")
+
+        tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+        app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+
+        # Get temple location from MongoDB
+        temple_doc = await get_collection("mandir_temples").find_one(
+            {"tenant_id": tenant_id, "app_key": app_key}
+        )
+        if not temple_doc:
+            temple_doc = await get_collection("mandir_temples").find_one({"tenant_id": tenant_id})
+
+        # Get panchang display settings for overrides
+        settings_doc = await get_collection("mandir_panchang_settings").find_one(
+            {"tenant_id": tenant_id, "app_key": app_key}
+        ) or {}
+
+        # Determine location
+        latitude = float(settings_doc.get("latitude", temple_doc.get("latitude", 12.9716))) if settings_doc.get("latitude") or temple_doc.get("latitude") else 12.9716
+        longitude = float(settings_doc.get("longitude", temple_doc.get("longitude", 77.5946))) if settings_doc.get("longitude") or temple_doc.get("longitude") else 77.5946
+        city = settings_doc.get("city_name", temple_doc.get("city", "Bengaluru")) or "Bengaluru"
+
+        # Calculate panchang for the target date
+        panchang_service = PanchangService()
+        panchang_data = panchang_service.calculate_panchang(target_dt, latitude, longitude, city)
+
+        return {
+            "lookup_requested_date": target_date,
+            "panchang": panchang_data.get("panchang"),
+            "date": panchang_data.get("date"),
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid date format. Use YYYY-MM-DD: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error calculating panchang for date {target_date}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to calculate panchang: {str(e)}"
+        )
 
 
 @router.get("/pincode/lookup")
