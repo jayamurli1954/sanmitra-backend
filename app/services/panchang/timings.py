@@ -60,26 +60,33 @@ def get_gulika_data(sunrise: str, sunset: str, day_of_week: int) -> Dict:
 def get_abhijit_muhurat_data(sunrise: str, sunset: str) -> Dict:
     sunrise_min = time_to_minutes(sunrise)
     sunset_min = time_to_minutes(sunset)
+    # Abhijit Muhurta: centered around local midday
+    # Standard definition: 24 minutes before midday to 24 minutes after midday
+    # Duration: 48 minutes (1 Muhurta)
+    # This is the most commonly used and reliable method (matches Drik Panchang)
     midday = (sunrise_min + sunset_min) / 2
-    day_duration = sunset_min - sunrise_min
-    duration = day_duration / 15
+    start_min = midday - 24
+    end_min = midday + 24
     return {
-        "start": minutes_to_time(midday - (duration / 2)),
-        "end": minutes_to_time(midday + (duration / 2)),
-        "duration_minutes": duration,
+        "start": minutes_to_time(start_min),
+        "end": minutes_to_time(end_min),
+        "duration_minutes": 48,
+        "description": "Most auspicious period of the day (Abhijit Muhurta - 48 minutes centered on midday)",
     }
 
 def get_brahma_muhurat_data(sunrise: str) -> Dict:
     sunrise_min = time_to_minutes(sunrise)
-    # Brahma Muhurta: approximately 80-96 minutes before sunrise, typically 1.5-2 hours
-    # Standard: 96 minutes (2 muhurtas), but adjusted to ~80-88 minutes for practical accuracy
-    # For most of India: use 80 minutes for better Drik alignment
-    start_min = sunrise_min - 80
+    # Brahma Muhurta: Exactly 2 Muhurtas (96 minutes) before sunrise
+    # Starts at sunrise - 96 minutes, ends at sunrise - 48 minutes
+    # Duration: 48 minutes (1 Muhurta)
+    # This is the standard definition used by Drik Panchang and most authoritative sources
+    start_min = sunrise_min - 96
+    end_min = sunrise_min - 48
     return {
         "start": minutes_to_time(start_min),
-        "end": minutes_to_time(start_min + 48),
+        "end": minutes_to_time(end_min),
         "duration_minutes": 48,
-        "description": "Most auspicious time for meditation, prayer, and spiritual practices",
+        "description": "Most auspicious time for meditation, prayer, and spiritual practices (2 muhurtas before sunrise)",
     }
 
 def get_dur_muhurta_data(sunrise: str, sunset: str, day_of_week: int) -> List[Dict]:
