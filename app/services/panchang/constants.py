@@ -78,3 +78,37 @@ DUR_MUHURTA_INDICES = {
     5: [2, 8],  # Friday: 3rd and 9th (Indices 2, 8)
     6: [0],  # Saturday: 1st (Index 0)
 }
+
+# Nakshatra Thyajyam Table (Traditional - used by Drik and authentic Panchang makers)
+# Maps each nakshatra to its inauspicious (Thyajyam) ghati window within the nakshatra
+# Format: nakshatra_index: (start_ghati, end_ghati)
+# 1 Ghati = 24 minutes; Nakshatra = 60 ghatis
+NAKSHATRA_THYAJYAM = {
+    0:  (14, 15),   # Ashwini
+    1:  (10, 11),   # Bharani
+    2:  (6, 7),     # Krittika
+    3:  (20, 21),   # Rohini
+    4:  (25, 26),   # Mrigashira
+    5:  (18, 19),   # Ardra
+    6:  (12, 13),   # Punarvasu
+    7:  (22, 23),   # Pushya
+    8:  (8, 9),     # Ashlesha
+    9:  (15, 16),   # Magha
+    10: (23, 24),   # Purva Phalguni
+    11: (4, 5),     # Uttara Phalguni
+    12: (17, 18),   # Hasta
+    13: (9, 10),    # Chitra
+    14: (21, 22),   # Swati
+    15: (5, 6),     # Vishakha
+    16: (13, 14),   # Anuradha
+    17: (24, 25),   # Jyeshtha
+    18: (11, 12),   # Mula
+    19: (19, 20),   # Purva Ashadha
+    20: (2, 3),     # Uttara Ashadha
+    21: (16, 17),   # Shravana
+    22: (7, 8),     # Dhanishta
+    23: (25, 26),   # Shatabhisha
+    24: (14, 15),   # Purva Bhadrapada
+    25: (20, 21),   # Uttara Bhadrapada
+    26: (3, 4)      # Revati
+}

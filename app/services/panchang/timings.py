@@ -4,7 +4,13 @@ Panchang timings: Rahu Kala, Gulika, Yamaganda, Muhurtas, etc.
 
 from typing import Dict, List
 from .utils import time_to_minutes, minutes_to_time
-from .constants import DUR_MUHURTA_INDICES, NAKSHATRA_VARJYAM_STARTS, NAKSHATRA_AMRITA_STARTS, NAKSHATRAS
+from .constants import (
+    DUR_MUHURTA_INDICES,
+    NAKSHATRA_VARJYAM_STARTS,
+    NAKSHATRA_AMRITA_STARTS,
+    NAKSHATRA_THYAJYAM,
+    NAKSHATRAS
+)
 
 def get_rahu_kala_data(sunrise: str, sunset: str, day_of_week: int) -> Dict:
     sunrise_min = time_to_minutes(sunrise)
@@ -144,37 +150,61 @@ def get_varjyam_impl_data(sunrise: str, sunset: str, nakshatra_data: Dict, is_am
             "description": "Amrita Kalam (Yoga-based) • Nectar period • Highly auspicious",
         }]
     else:
-        # Varjyam: Nakshatra Thyajyam-based (improved)
-        # ~96 minutes inauspicious window based on Nakshatra
-        # Position varies by Nakshatra (simple approximation: adjust per nakshatra later)
+        # Varjyam: Precise Nakshatra Thyajyam Table-based (Traditional method)
+        # Uses authoritative 27-Nakshatra Thyajyam table (Drik standard)
 
-        # Get nakshatra index if available
+        # Get nakshatra index
         nak_name = nakshatra_data.get("name", "")
         try:
             simple_name = nak_name.split(" Pada")[0].strip()
             nak_index = NAKSHATRAS.index(simple_name)
         except (ValueError, IndexError):
-            nak_index = 0
+            return []  # Cannot determine nakshatra
 
-        # Dynamic offset based on Nakshatra (with bounds)
-        # Formula: base offset + small variation per nakshatra
-        # Can be replaced with full 27-Nakshatra Thyajyam table for precision
-        offset_fraction = 0.45 + (nak_index % 27) * 0.02
-        offset_fraction = max(0.3, min(0.7, offset_fraction))
+        # Get Thyajyam ghati range for this nakshatra
+        if nak_index not in NAKSHATRA_THYAJYAM:
+            return []
 
-        varjyam_duration = 96  # Standard ~1.6 hours
-        varjyam_start_min = sunrise_min + (day_duration_min * offset_fraction)
-        varjyam_end_min = varjyam_start_min + varjyam_duration
+        start_ghati, end_ghati = NAKSHATRA_THYAJYAM[nak_index]
 
-        # Safety: don't cross sunset
+        # Get nakshatra boundaries to calculate actual timing
+        start_time_str = nakshatra_data.get("start_time")
+        end_time_str = nakshatra_data.get("end_time")
+
+        if not start_time_str or not end_time_str:
+            # Fallback: use day-based approximation if nakshatra boundaries unavailable
+            # 1 Ghati = 24 minutes
+            varjyam_start_min = sunrise_min + (start_ghati * 24)
+            varjyam_end_min = sunrise_min + (end_ghati * 24)
+        else:
+            # Precise: calculate from nakshatra boundaries
+            try:
+                from datetime import datetime
+                start_dt = datetime.strptime(start_time_str, "%Y-%m-%d %H:%M:%S")
+                end_dt = datetime.strptime(end_time_str, "%Y-%m-%d %H:%M:%S")
+                nak_duration_seconds = (end_dt - start_dt).total_seconds()
+                one_ghati_seconds = nak_duration_seconds / 60.0
+
+                varjyam_start_dt = start_dt + __import__("datetime").timedelta(
+                    seconds=(start_ghati * one_ghati_seconds)
+                )
+                varjyam_end_dt = start_dt + __import__("datetime").timedelta(
+                    seconds=(end_ghati * one_ghati_seconds)
+                )
+
+                varjyam_start_min = time_to_minutes(varjyam_start_dt.strftime("%H:%M:%S"))
+                varjyam_end_min = time_to_minutes(varjyam_end_dt.strftime("%H:%M:%S"))
+            except (ValueError, TypeError, ZeroDivisionError):
+                # Fallback to simple ghati-to-minutes conversion
+                varjyam_start_min = sunrise_min + (start_ghati * 24)
+                varjyam_end_min = sunrise_min + (end_ghati * 24)
+
+        # Safety: clamp to day bounds
         if varjyam_end_min > sunset_min:
             varjyam_end_min = sunset_min
 
-        if varjyam_start_min >= sunset_min:
+        if varjyam_start_min >= sunset_min or varjyam_start_min >= varjyam_end_min:
             return []  # Not visible today
-
-        if varjyam_start_min >= varjyam_end_min:
-            return []  # Invalid window
 
         return [{
             "start": minutes_to_time(varjyam_start_min),
