@@ -22,6 +22,7 @@ from app.modules.investment.service import ensure_investment_indexes
 from app.modules.legal.service import ensure_legal_indexes
 from app.modules.legal_compat.service import ensure_legal_compat_indexes
 from app.modules.legal_compat.sync_worker import start_legal_sync_worker, stop_legal_sync_worker
+from app.modules.mandir_compat.reminder_worker import start_seva_reminder_worker, stop_seva_reminder_worker
 from app.modules.mandir_compat.service import ensure_demo_mandir_bootstrap, ensure_temple_upi_config, ensure_sevas_copied
 from app.modules.rag.service import ensure_rag_indexes
 from app.modules.temple.service import ensure_donations_indexes
@@ -88,6 +89,12 @@ async def on_startup() -> None:
         _startup_logger.warning("Legal sync worker failed to start: %s", exc, exc_info=True)
 
     try:
+        await start_seva_reminder_worker()
+    except Exception as exc:
+        # Worker is best-effort; API should still boot even if reminder worker is unavailable.
+        _startup_logger.warning("Seva reminder worker failed to start: %s", exc, exc_info=True)
+
+    try:
         await init_postgres()
         # Ensure model metadata is loaded before create_all.
         import app.accounting.models.entities  # noqa: F401
@@ -101,6 +108,7 @@ async def on_startup() -> None:
 
 @app.on_event("shutdown")
 async def on_shutdown() -> None:
+    await stop_seva_reminder_worker()
     await stop_legal_sync_worker()
     await close_mongo()
     await close_postgres()
