@@ -4816,9 +4816,22 @@ async def mandir_panchang_display_settings(
     app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
     doc = await get_collection("mandir_panchang_settings").find_one({"tenant_id": tenant_id, "app_key": app_key}) or {}
     return {
+        # Display mode and language
         "display_mode": str(doc.get("display_mode") or "full"),
         "primary_language": str(doc.get("primary_language") or "English"),
         "show_on_dashboard": bool(doc.get("show_on_dashboard", True)),
+        # Panchang limb visibility flags (Panch Angs: Var, Tithi, Nakshatra, Karana, Yoga)
+        "show_tithi": bool(doc.get("show_tithi", True)),
+        "show_nakshatra": bool(doc.get("show_nakshatra", True)),
+        "show_yoga": bool(doc.get("show_yoga", True)),
+        "show_karana": bool(doc.get("show_karana", True)),
+        # Optional timing displays
+        "show_sun_timings": bool(doc.get("show_sun_timings", True)),
+        "show_rahu_kaal": bool(doc.get("show_rahu_kaal", True)),
+        "show_yamaganda": bool(doc.get("show_yamaganda", True)),
+        "show_gulika": bool(doc.get("show_gulika", True)),
+        "show_abhijit_muhurat": bool(doc.get("show_abhijit_muhurat", True)),
+        # Location settings
         "city_name": doc.get("city_name"),
         "latitude": doc.get("latitude"),
         "longitude": doc.get("longitude"),
@@ -4838,9 +4851,22 @@ async def mandir_panchang_display_settings_update(
     app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
     now = datetime.now(timezone.utc).isoformat()
     allowed = {
+        # Display mode and language
         "display_mode",
         "primary_language",
         "show_on_dashboard",
+        # Panchang limb visibility flags (Panch Angs)
+        "show_tithi",
+        "show_nakshatra",
+        "show_yoga",
+        "show_karana",
+        # Optional timing displays
+        "show_sun_timings",
+        "show_rahu_kaal",
+        "show_yamaganda",
+        "show_gulika",
+        "show_abhijit_muhurat",
+        # Location settings
         "city_name",
         "latitude",
         "longitude",
