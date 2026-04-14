@@ -147,6 +147,11 @@ class Settings:
     RAG_EMBEDDING_OPENAI_MODEL = os.getenv("RAG_EMBEDDING_OPENAI_MODEL", "text-embedding-3-small").strip()
     RAG_EMBEDDING_OPENAI_API_KEY = os.getenv("RAG_EMBEDDING_OPENAI_API_KEY", "").strip()
 
+    # Tavily Web Search (LegalMitra live judgement & news search)
+    TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()
+    ENABLE_WEB_SEARCH = os.getenv("ENABLE_WEB_SEARCH", "true").lower() in {"1", "true", "yes", "on"}
+    WEB_SEARCH_TIMEOUT_SECONDS = int(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "5"))
+
     _IS_PRODUCTION = ENVIRONMENT in {"production", "prod"}
 
     SUPER_ADMIN_BOOTSTRAP = os.getenv(
