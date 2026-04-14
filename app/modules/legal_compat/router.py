@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from difflib import SequenceMatcher
 from email.utils import parsedate_to_datetime
 from html import unescape
 import logging
@@ -294,6 +295,47 @@ async def _fetch_google_news_items(query: str, limit: int = 10) -> list[dict[str
         return []
 
 
+def _deduplicate_items_by_title(items: list[dict[str, Any]], similarity_threshold: float = 0.60) -> list[dict[str, Any]]:
+    """
+    Deduplicate items by grouping similar titles (e.g., same judgment with different wording).
+    Uses transitive clustering to ensure related items are properly grouped.
+    """
+    if not items:
+        return items
+
+    n = len(items)
+    clusters = {i: {i} for i in range(n)}  # Each item starts in its own cluster
+
+    # Find similar pairs and merge clusters
+    for i in range(n):
+        for j in range(i + 1, n):
+            title_i = str(items[i].get("title", "")).lower()
+            title_j = str(items[j].get("title", "")).lower()
+
+            similarity = SequenceMatcher(None, title_i, title_j).ratio()
+
+            if similarity >= similarity_threshold:
+                # Merge clusters
+                cluster_i = clusters[i]
+                cluster_j = clusters[j]
+                if cluster_i is not cluster_j:
+                    merged = cluster_i | cluster_j
+                    for member in merged:
+                        clusters[member] = merged
+
+    # Deduplicate by returning one item per cluster
+    seen_clusters = set()
+    deduplicated = []
+
+    for i in range(n):
+        cluster_id = id(clusters[i])
+        if cluster_id not in seen_clusters:
+            seen_clusters.add(cluster_id)
+            deduplicated.append(items[i])
+
+    return deduplicated
+
+
 async def _fetch_web_major_cases(limit: int = 10) -> list[dict[str, Any]]:
     queries = [
         "Supreme Court India latest judgment order",
@@ -331,10 +373,16 @@ async def _fetch_web_major_cases(limit: int = 10) -> list[dict[str, Any]]:
                     "url": str(item.get("url") or ""),
                 }
             )
-            if len(merged) >= limit:
-                return merged
+            # Fetch more items than limit to allow deduplication
+            if len(merged) >= limit * 2:
+                break
+        if len(merged) >= limit * 2:
+            break
 
-    return merged
+    # Apply smart deduplication to catch similar titles (e.g., same judgment with different wording)
+    deduplicated = _deduplicate_items_by_title(merged, similarity_threshold=0.60)
+
+    return deduplicated[:limit]  # Return only up to limit
 
 
 async def _fetch_web_legal_news(limit: int = 10) -> list[dict[str, Any]]:
@@ -368,10 +416,16 @@ async def _fetch_web_legal_news(limit: int = 10) -> list[dict[str, Any]]:
                     "url": str(item.get("url") or ""),
                 }
             )
-            if len(merged) >= limit:
-                return merged
+            # Fetch more than limit to allow deduplication
+            if len(merged) >= limit * 2:
+                break
+        if len(merged) >= limit * 2:
+            break
 
-    return merged
+    # Apply smart deduplication to catch similar titles
+    deduplicated = _deduplicate_items_by_title(merged, similarity_threshold=0.60)
+
+    return deduplicated[:limit]  # Return only up to limit
 
 
 def _merge_case_items(*sources: list[dict[str, Any]], limit: int = 10) -> list[dict[str, Any]]:
