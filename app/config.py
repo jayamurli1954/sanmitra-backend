@@ -1,6 +1,7 @@
 import logging
 import os
 from functools import lru_cache
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -8,10 +9,17 @@ load_dotenv()
 
 _config_logger = logging.getLogger(__name__)
 
+# Read VERSION file if it exists, otherwise fall back to env var or default
+def _get_app_version() -> str:
+    version_file = Path(__file__).parent.parent / "VERSION"
+    if version_file.exists():
+        return version_file.read_text().strip()
+    return os.getenv("APP_VERSION", "1.2.0")
+
 
 class Settings:
     APP_NAME = os.getenv("APP_NAME", "SanMitra Unified Backend")
-    APP_VERSION = os.getenv("APP_VERSION", "0.1.0")
+    APP_VERSION = _get_app_version()
     ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
 
     MONGODB_URI = os.getenv("MONGODB_URI", "")

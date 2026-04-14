@@ -5656,6 +5656,31 @@ async def mandir_public_upi_intent(
 
 
 # ---------------------------------------------------------------------------
+# VERSION ENDPOINT
+# ---------------------------------------------------------------------------
+
+@router.get("/mandir/version")
+async def mandir_get_version():
+    """Get MandirMitra version info. No authentication required."""
+    from app.config import get_settings
+    from datetime import datetime
+    settings = get_settings()
+    return {
+        "app": "MandirMitra",
+        "version": settings.APP_VERSION,
+        "released_at": "2026-04-14T00:00:00Z",  # Release date of v1.2.0
+        "features": [
+            "Quick Ticket Counter mode",
+            "Seva renewal reminders (Email + SMS)",
+            "Public payment idempotency & audit logging",
+            "Rate limiting on public endpoints",
+            "Multilingual support (en/kn/hi) for public portal",
+            "Indic font rendering for PDFs"
+        ]
+    }
+
+
+# ---------------------------------------------------------------------------
 # PUBLIC SEVA PAYMENT ENDPOINTS  (no authentication required)
 # ---------------------------------------------------------------------------
 
