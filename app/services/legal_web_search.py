@@ -5,7 +5,6 @@ Provides live web search for Indian legal news, judgements, and amendments.
 Designed to enrich LegalMitra's RAG pipeline with real-time legal information.
 """
 
-import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -43,7 +42,7 @@ class LegalWebSearchService:
 
         self.client = TavilyClient(api_key=self.api_key) if self.api_key else None
 
-    async def search_legal_news(self, query: str, max_results: int = 5) -> dict[str, Any]:
+    def search_legal_news(self, query: str, max_results: int = 5) -> dict[str, Any]:
         """
         Search for latest Indian legal news.
 
@@ -67,8 +66,7 @@ class LegalWebSearchService:
             # Add India context to query
             india_query = f"{query} India legal news"
 
-            response = await asyncio.to_thread(
-                self.client.search,
+            response = self.client.search(
                 query=india_query,
                 search_depth="advanced",
                 max_results=min(max_results, 10),
@@ -98,7 +96,7 @@ class LegalWebSearchService:
                 "domains_searched": INDIAN_LEGAL_DOMAINS,
             }
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error(f"Web search timeout for query: {query}")
             return {
                 "success": False,
@@ -117,7 +115,7 @@ class LegalWebSearchService:
                 "source": "error"
             }
 
-    async def search_court_judgements(
+    def search_court_judgements(
         self, query: str, court: str = "Supreme Court", max_results: int = 5
     ) -> dict[str, Any]:
         """
@@ -147,8 +145,7 @@ class LegalWebSearchService:
             else:
                 full_query = f"{court} of India judgement {query}"
 
-            response = await asyncio.to_thread(
-                self.client.search,
+            response = self.client.search(
                 query=full_query,
                 search_depth="advanced",
                 max_results=min(max_results, 10),
@@ -178,7 +175,7 @@ class LegalWebSearchService:
                 "fetched_at": datetime.now(timezone.utc).isoformat(),
             }
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error(f"Judgement search timeout for query: {query}")
             return {
                 "success": False,
@@ -197,7 +194,7 @@ class LegalWebSearchService:
                 "judgements": [],
             }
 
-    async def enrich_rag_context(self, query: str, max_web_results: int = 3) -> dict[str, Any]:
+    def enrich_rag_context(self, query: str, max_web_results: int = 3) -> dict[str, Any]:
         """
         Search web and return context formatted for RAG pipeline injection.
 
@@ -223,8 +220,7 @@ class LegalWebSearchService:
         try:
             india_query = f"{query} India legal"
 
-            response = await asyncio.to_thread(
-                self.client.search,
+            response = self.client.search(
                 query=india_query,
                 search_depth="advanced",
                 max_results=min(max_web_results, 5),
@@ -269,7 +265,7 @@ class LegalWebSearchService:
                 }
             }
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(f"Web search timeout for RAG enrichment: {query}")
             return {
                 "context": "",

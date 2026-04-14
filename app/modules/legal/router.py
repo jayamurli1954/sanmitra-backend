@@ -55,7 +55,7 @@ async def get_legal_news(
     - source: "tavily_web_search"
     - fetched_at: Timestamp when results were fetched
     """
-    return await legal_web_search.search_legal_news(query=query, max_results=max_results)
+    return legal_web_search.search_legal_news(query=query, max_results=max_results)
 
 
 @router.get("/judgements")
@@ -78,7 +78,7 @@ async def get_court_judgements(
     - source: "tavily_web_search"
     - fetched_at: Timestamp when results were fetched
     """
-    return await legal_web_search.search_court_judgements(
+    return legal_web_search.search_court_judgements(
         query=query, court=court, max_results=max_results
     )
 
@@ -101,4 +101,4 @@ async def get_web_search_context(
     - num_sources: Number of sources included
     - metadata: Source information and timestamps
     """
-    return await legal_web_search.enrich_rag_context(query=query)
+    return legal_web_search.enrich_rag_context(query=query)
