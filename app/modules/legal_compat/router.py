@@ -1499,6 +1499,36 @@ async def create_professional_diary(
     }
 
 
+@router.get("/version")
+async def legal_version_info():
+    """Get LegalMitra version and compatibility information.
+
+    Returns version info from the unified backend.
+    """
+    from app.config import Settings
+    from datetime import datetime
+
+    version = Settings.APP_VERSION
+
+    return {
+        "version": version,
+        "service": "legalmitra",
+        "component": "unified-backend",
+        "release_date": "2026-04-14",
+        "status": "stable",
+        "features": [
+            "legal-research",
+            "case-search",
+            "document-drafting",
+            "statute-search",
+            "templates",
+            "diary",
+            "cost-tracking"
+        ],
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
+
+
 
 
 
