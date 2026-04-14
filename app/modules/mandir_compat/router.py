@@ -5742,6 +5742,7 @@ async def mandir_public_temple_info(
 @router.get("/public/temples/{temple_id}/sevas")
 @limiter.limit("30/minute")
 async def mandir_public_temple_sevas(
+    request: Request,
     temple_id: int,
     x_app_key: str | None = Header(default=None, alias="X-App-Key"),
 ):
@@ -5774,6 +5775,7 @@ async def mandir_public_temple_sevas(
 @router.get("/public/temples/{temple_id}/devotee/autofill/{phone}")
 @limiter.limit("20/minute")
 async def mandir_public_devotee_autofill(
+    request: Request,
     temple_id: int,
     phone: str,
     x_app_key: str | None = Header(default=None, alias="X-App-Key"),
