@@ -380,7 +380,7 @@ async def _fetch_web_major_cases(limit: int = 10) -> list[dict[str, Any]]:
             break
 
     # Apply smart deduplication to catch similar titles (e.g., same judgment with different wording)
-    deduplicated = _deduplicate_items_by_title(merged, similarity_threshold=0.60)
+    deduplicated = _deduplicate_items_by_title(merged, similarity_threshold=0.55)
 
     return deduplicated[:limit]  # Return only up to limit
 
@@ -423,7 +423,7 @@ async def _fetch_web_legal_news(limit: int = 10) -> list[dict[str, Any]]:
             break
 
     # Apply smart deduplication to catch similar titles
-    deduplicated = _deduplicate_items_by_title(merged, similarity_threshold=0.60)
+    deduplicated = _deduplicate_items_by_title(merged, similarity_threshold=0.55)
 
     return deduplicated[:limit]  # Return only up to limit
 
