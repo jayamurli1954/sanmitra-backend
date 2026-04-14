@@ -3,6 +3,9 @@ import logging
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from app.core.rate_limiting import limiter
 
 _startup_logger = logging.getLogger(__name__)
 
@@ -30,6 +33,8 @@ from app.modules.temple.service import ensure_donations_indexes
 settings = get_settings()
 
 app = FastAPI(title=settings.APP_NAME, version=settings.APP_VERSION)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,

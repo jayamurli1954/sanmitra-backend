@@ -32,6 +32,7 @@ from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Tabl
 
 from app.core.auth.dependencies import get_current_user
 from app.core.audit.service import log_audit_event
+from app.core.rate_limiting import limiter
 from app.core.tenants.context import resolve_app_key, resolve_tenant_id
 from app.db.mongo import get_collection
 from app.db.postgres import get_async_session
@@ -2117,6 +2118,8 @@ def _build_seva_item(payload: dict[str, Any], *, tenant_id: str, app_key: str) -
         "advance_booking_days": advance_days if advance_days and advance_days > 0 else 30,
         "requires_approval": _safe_bool(payload.get("requires_approval"), False),
         "is_active": _safe_bool(payload.get("is_active"), True),
+        "quick_ticket_enabled": _safe_bool(payload.get("quick_ticket_enabled"), False),
+        "requires_devotee_details": _safe_bool(payload.get("requires_devotee_details"), True),
         "benefits": _safe_optional_str(payload.get("benefits")) or "",
         "instructions": _safe_optional_str(payload.get("instructions")) or "",
         "duration_minutes": _safe_optional_int(payload.get("duration_minutes")),
@@ -2164,6 +2167,10 @@ def _build_seva_patch(payload: dict[str, Any]) -> dict[str, Any]:
         patch["requires_approval"] = _safe_bool(payload.get("requires_approval"), False)
     if "is_active" in payload:
         patch["is_active"] = _safe_bool(payload.get("is_active"), True)
+    if "quick_ticket_enabled" in payload:
+        patch["quick_ticket_enabled"] = _safe_bool(payload.get("quick_ticket_enabled"), False)
+    if "requires_devotee_details" in payload:
+        patch["requires_devotee_details"] = _safe_bool(payload.get("requires_devotee_details"), True)
     if "benefits" in payload:
         patch["benefits"] = _safe_optional_str(payload.get("benefits")) or ""
     if "instructions" in payload:
@@ -2194,6 +2201,8 @@ def _serialize_seva_doc(doc: dict[str, Any]) -> dict[str, Any]:
     row["advance_booking_days"] = _safe_optional_int(row.get("advance_booking_days")) or 30
     row["requires_approval"] = _safe_bool(row.get("requires_approval"), False)
     row["is_active"] = _safe_bool(row.get("is_active"), True)
+    row["quick_ticket_enabled"] = _safe_bool(row.get("quick_ticket_enabled"), False)
+    row["requires_devotee_details"] = _safe_bool(row.get("requires_devotee_details"), True)
     row["is_available_today"] = _compute_seva_available_today(row)
     row["description"] = _safe_optional_str(row.get("description")) or ""
     row["name_kannada"] = _safe_optional_str(row.get("name_kannada")) or ""
@@ -2644,6 +2653,7 @@ async def create_donation(
 @router.get("/donations/{donation_id}/receipt/pdf")
 async def get_donation_receipt_pdf(
     donation_id: str,
+    lang: str | None = Query(default=None, description="Override receipt language (kannada/hindi/tamil/telugu/malayalam)"),
     current_user: dict = Depends(get_current_user),
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
     x_app_key: str | None = Header(default=None, alias="X-App-Key"),
@@ -2687,7 +2697,9 @@ async def get_donation_receipt_pdf(
         temple_profile = _build_temple_receipt_profile(temple_doc)
 
         lang_doc = await get_collection("mandir_panchang_settings").find_one({"tenant_id": tenant_id, "app_key": app_key}) or {}
-        selected_language = _normalize_local_language(lang_doc.get("primary_language") or temple_doc.get("primary_language"))
+        selected_language = _normalize_local_language(
+            lang or lang_doc.get("primary_language") or temple_doc.get("primary_language")
+        )
         if selected_language:
             temple_profile["local_language"] = selected_language
     except Exception:
@@ -5703,6 +5715,7 @@ async def mandir_public_temple_info(
 
 
 @router.get("/public/temples/{temple_id}/sevas")
+@limiter.limit("30/minute")
 async def mandir_public_temple_sevas(
     temple_id: int,
     x_app_key: str | None = Header(default=None, alias="X-App-Key"),
@@ -5734,6 +5747,7 @@ async def mandir_public_temple_sevas(
 
 
 @router.get("/public/temples/{temple_id}/devotee/autofill/{phone}")
+@limiter.limit("20/minute")
 async def mandir_public_devotee_autofill(
     temple_id: int,
     phone: str,
@@ -5823,6 +5837,7 @@ async def mandir_public_donation_categories(
 
 
 @router.post("/public/temples/{temple_id}/seva-payments")
+@limiter.limit("10/minute")
 async def mandir_public_create_seva_payment(
     temple_id: int,
     payload: dict[str, Any],
@@ -5833,6 +5848,36 @@ async def mandir_public_create_seva_payment(
     tenant_id = await resolve_tenant_by_temple_id(temple_id)
     if not tenant_id:
         raise HTTPException(status_code=404, detail="Temple not found")
+
+    # Idempotency: if client sends idempotency_key and a matching pending record
+    # exists (submitted in the last 10 minutes), return it without creating a duplicate.
+    idempotency_key = str(payload.get("idempotency_key") or "").strip()
+    if idempotency_key:
+        from datetime import timedelta
+        cutoff = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+        existing = await get_collection("mandir_public_payments").find_one({
+            "tenant_id": tenant_id,
+            "idempotency_key": idempotency_key,
+            "created_at": {"$gte": cutoff},
+        })
+        if existing:
+            temple_doc_i = await get_collection("mandir_temples").find_one({"tenant_id": tenant_id}) or {}
+            return {
+                "payment_id": existing["id"][:8].upper(),
+                "full_payment_id": existing["id"],
+                "status": existing.get("status", "pending"),
+                "payment_type": existing.get("payment_type", "seva"),
+                "seva_name": existing.get("seva_name", ""),
+                "amount": existing.get("amount"),
+                "upi_id": str(temple_doc_i.get("upi_id") or "").strip() or None,
+                "upi_payee_name": str(temple_doc_i.get("upi_payee_name") or temple_doc_i.get("trust_name") or "").strip() or None,
+                "qr_code_image_url": str(temple_doc_i.get("qr_code_image_url") or "").strip() or None,
+                "admin_whatsapp": str(temple_doc_i.get("admin_whatsapp") or "").strip() or None,
+                "whatsapp_link": existing.get("whatsapp_link"),
+                "whatsapp_message_template": existing.get("whatsapp_message_template"),
+                "message": "Payment already submitted. Please complete UPI payment and send WhatsApp confirmation.",
+                "_idempotent": True,
+            }
 
     payment_type = str(payload.get("payment_type") or "seva").strip().lower()
     if payment_type not in ("seva", "donation"):
@@ -5918,9 +5963,31 @@ async def mandir_public_create_seva_payment(
         "verified_by": None,
         "created_at": now,
         "source_ip": str(request.client.host if request.client else ""),
+        "idempotency_key": idempotency_key or None,
     }
 
     await get_collection("mandir_public_payments").insert_one(payment_doc)
+
+    # Formal audit log for every public payment submission
+    from app.core.audit.service import log_audit_event
+    try:
+        await log_audit_event(
+            tenant_id=tenant_id,
+            user_id=f"public:{normalized_phone}",
+            product="mandirmitra",
+            action="public_payment_submitted",
+            entity_type="mandir_public_payment",
+            entity_id=payment_id,
+            new_value={
+                "payment_type": payment_type,
+                "seva_name": seva_name,
+                "amount": payload.get("amount"),
+                "devotee_phone": normalized_phone,
+            },
+            ip_address=str(request.client.host if request.client else ""),
+        )
+    except Exception:
+        pass  # Audit is best-effort; never block the payment flow
 
     # Build WhatsApp message template
     temple_doc = await get_collection("mandir_temples").find_one({"tenant_id": tenant_id}) or {}
@@ -5939,6 +6006,12 @@ async def mandir_public_create_seva_payment(
     if admin_whatsapp:
         from urllib.parse import quote
         whatsapp_link = f"https://wa.me/{admin_whatsapp.replace('+', '').replace(' ', '')}?text={quote(whatsapp_message)}"
+
+    # Store whatsapp details on payment doc for idempotency replay
+    await get_collection("mandir_public_payments").update_one(
+        {"id": payment_id},
+        {"$set": {"whatsapp_link": whatsapp_link, "whatsapp_message_template": whatsapp_message}},
+    )
 
     return {
         "payment_id": payment_id[:8].upper(),
@@ -6577,6 +6650,7 @@ async def mandir_seva_bookings(
 @router.get("/sevas/bookings/{booking_id}/receipt/pdf")
 async def get_seva_receipt_pdf(
     booking_id: str,
+    lang: str | None = Query(default=None, description="Override receipt language (kannada/hindi/tamil/telugu/malayalam)"),
     current_user: dict = Depends(get_current_user),
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
     x_app_key: str | None = Header(default=None, alias="X-App-Key"),
@@ -6695,7 +6769,9 @@ async def get_seva_receipt_pdf(
         temple_profile = _build_temple_receipt_profile(temple_doc)
 
         lang_doc = await get_collection("mandir_panchang_settings").find_one({"tenant_id": tenant_id, "app_key": app_key}) or {}
-        selected_language = _normalize_local_language(lang_doc.get("primary_language") or temple_doc.get("primary_language"))
+        selected_language = _normalize_local_language(
+            lang or lang_doc.get("primary_language") or temple_doc.get("primary_language")
+        )
         if selected_language:
             temple_profile["local_language"] = selected_language
     except Exception:
