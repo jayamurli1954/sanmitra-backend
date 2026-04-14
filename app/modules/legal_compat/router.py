@@ -826,6 +826,10 @@ async def major_cases(
     if len(cases) < 3:
         cases = _merge_case_items(cases, _static_case_items(), limit=10)
 
+    # Apply smart deduplication to catch similar titles from different sources
+    cases = _deduplicate_items_by_title(cases, similarity_threshold=0.55)
+    cases = cases[:10]  # Limit to 10 after deduplication
+
     return {"cases": cases}
 
 
@@ -903,6 +907,10 @@ async def legal_news(
 
     if len(news) < 3:
         news = _merge_news_items(news, _static_news_items(), limit=10)
+
+    # Apply smart deduplication to catch similar titles from different sources
+    news = _deduplicate_items_by_title(news, similarity_threshold=0.55)
+    news = news[:10]  # Limit to 10 after deduplication
 
     return {"news": news}
 
