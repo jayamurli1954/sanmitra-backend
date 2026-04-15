@@ -1,0 +1,7 @@
+# Test / development dependencies — NOT installed on Render.
+# Run `pip install -r requirements-dev.txt` locally or in CI only.
+
+-r requirements.txt
+
+pytest==7.4.4
+pytest-asyncio==0.23.3

@@ -1,26 +1,45 @@
-fastapi
-uvicorn[standard]
-pymongo
-motor
-python-dotenv
-passlib[bcrypt]
-bcrypt<5
-python-jose[cryptography]
-pydantic[email]
-sqlalchemy
-asyncpg
-alembic
-python-multipart
-pytest
-pytest-asyncio
-httpx
-psycopg[binary]
-google-auth
-requests
-reportlab
-pyswisseph
+# Production runtime dependencies.
+# Versions pinned to what is tested locally — pinning makes pip resolution
+# deterministic and lets Render's pip cache reuse wheels across builds.
+# Test-only deps (pytest, pytest-asyncio) live in requirements-dev.txt.
 
-pypdf
-openpyxl
-slowapi
-tavily-python
+fastapi==0.109.0
+uvicorn[standard]==0.41.0
+
+# Database drivers
+pymongo==4.6.1
+motor==3.3.2
+sqlalchemy==2.0.25
+asyncpg==0.29.0
+alembic==1.18.3
+psycopg[binary]==3.3.3
+
+# Auth / crypto
+passlib[bcrypt]==1.7.4
+bcrypt==4.1.2
+python-jose[cryptography]==3.3.0
+cryptography==42.0.0
+google-auth==2.45.0
+
+# HTTP / multipart
+httpx==0.28.1
+requests==2.31.0
+python-multipart==0.0.22
+
+# Config / validation
+python-dotenv==1.0.1
+pydantic[email]==2.12.5
+
+# Documents / files
+reportlab==4.0.9
+pypdf==6.7.2
+openpyxl==3.1.2
+
+# Astronomy (Panchang)
+pyswisseph==2.10.3.2
+
+# Rate limiting
+slowapi==0.1.9
+
+# Web search (LegalMitra)
+tavily-python==0.7.23
