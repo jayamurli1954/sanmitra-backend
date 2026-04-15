@@ -21,6 +21,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Header, HTT
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from app.config import get_settings
 from app.core.permissions.rbac import Role, require_roles
 from app.core.tenants.context import resolve_app_key, resolve_tenant_id
 from app.db.mongo import get_collection
@@ -926,19 +927,33 @@ async def legal_research(
     tenant_id = resolve_tenant_id(current_user, x_tenant_id)
     app_key = _resolve_compat_app_key(x_app_key)
 
-    rag_payload = RagQueryRequest(
-        query=payload.query,
-        top_k=5,
-        max_candidates=300,
-        include_context=False,
-    )
-    try:
-        result = await query_knowledge(tenant_id=tenant_id, app_key=app_key, payload=rag_payload)
-    except Exception:
+    settings = get_settings()
+    if settings.LEGAL_RAG_ENABLED:
+        rag_payload = RagQueryRequest(
+            query=payload.query,
+            top_k=5,
+            max_candidates=300,
+            include_context=False,
+        )
+        try:
+            result = await query_knowledge(tenant_id=tenant_id, app_key=app_key, payload=rag_payload)
+        except Exception:
+            result = {
+                "answer": "",
+                "citations": [],
+                "strategy": "rag_unavailable",
+                "candidate_count": 0,
+                "context": None,
+            }
+    else:
+        # RAG disabled — go straight to the Gemini Senior Counsel pipeline.
+        # The knowledge base uses hash embeddings and sparse content; bypassing
+        # RAG removes irrelevant-citation noise until a proper semantic corpus
+        # is ready.
         result = {
-            "answer": "I do not have enough indexed content matching this question yet. Please ingest relevant documents for this topic.",
+            "answer": "",
             "citations": [],
-            "strategy": "rag_unavailable",
+            "strategy": "rag_disabled",
             "candidate_count": 0,
             "context": None,
         }

@@ -123,6 +123,11 @@ class Settings:
 
     # Hybrid legal response behavior
     LEGAL_HYBRID_AI_FALLBACK_ENABLED = os.getenv("LEGAL_HYBRID_AI_FALLBACK_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
+    # Set LEGAL_RAG_ENABLED=false to bypass the RAG knowledge-base lookup and send
+    # queries directly to the Gemini Senior Counsel pipeline.  Use this in production
+    # while the RAG corpus (semantic embeddings + authoritative legal documents) is
+    # being rebuilt locally.  Re-enable once local RAG testing is satisfactory.
+    LEGAL_RAG_ENABLED = os.getenv("LEGAL_RAG_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
     LEGAL_FALLBACK_GEMINI_MODEL = os.getenv("LEGAL_FALLBACK_GEMINI_MODEL", "gemini-2.5-flash").strip()
     # Raised from 900 — Gemini fallback answers were truncating mid-sentence
     # because the prompt requests 5-6 structured sections (Quick Answer,
