@@ -45,9 +45,6 @@ services:
         value: hash
       - key: LEGAL_HYBRID_AI_FALLBACK_ENABLED
         value: "true"
-      # RAG disabled — hash embeddings + sparse news corpus produced irrelevant
-      # citations.  Re-enable once semantic embeddings + authoritative legal
-      # documents are validated locally (Option B rebuild).
       - key: LEGAL_RAG_ENABLED
         value: "false"
       - key: RAG_AUTO_SYNC_ENABLED
