@@ -22,7 +22,10 @@ cryptography==42.0.0
 google-auth==2.45.0
 
 # HTTP / multipart
-httpx==0.28.1
+# httpx 0.28 removed the Client(app=...) kwarg that starlette 0.35's
+# TestClient depends on. FastAPI 0.109 pins starlette 0.35.x, so we must
+# stay on httpx<0.28 until FastAPI is upgraded.
+httpx==0.27.2
 requests==2.31.0
 python-multipart==0.0.22
 
