@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
 
@@ -29,8 +29,15 @@ _NEUTRAL_NOTE = (
 )
 
 
+_IST_TZ = timezone(timedelta(hours=5, minutes=30))
+
+
 def _now_utc() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _now_ist() -> datetime:
+    return datetime.now(_IST_TZ)
 
 
 def _normalize_query(query: str) -> str:
@@ -608,10 +615,10 @@ async def _generate_gemini_fallback_answer(query: str, query_type: str = "resear
     settings = get_settings()
     mode = _normalize_query_type(query_type)
     mode_guidance = _query_type_guidance(mode)
-    today_iso = _now_utc().date().isoformat()
+    today_ist = _now_ist().strftime("%d-%m-%Y")
     shared_style = (
         "You are LegalMitra, a specialized Indian legal assistant for advocates and professionals. "
-        f"Today's date is {today_iso} (UTC). Use this date for any time-sensitive references, "
+        f"Today's date is {today_ist} (IST, UTC+5:30). Use this date for any time-sensitive references, "
         "deadlines, or 'as of' statements. Do not invent a different current date. "
         "Provide high-quality, practical, detailed responses. "
         "Do not mention internal systems, indexing, retrieval, embeddings, or model limitations. "
