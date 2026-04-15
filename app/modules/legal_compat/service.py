@@ -164,48 +164,56 @@ End with: **Legal Position:** ✅/⚖️/🆕
 """,
 
     "argument_note": """\
-OUTPUT FORMAT — Argument Note
+OUTPUT FORMAT — STRICT ARGUMENT NOTE
+
+⚠ PROHIBITED: Do NOT write any memo header (MEMORANDUM / To: / From: / Subject: / Date:).
+⚠ PROHIBITED: Do NOT write any introduction, preamble, or context-setting paragraph.
+⚠ START the response immediately with the bold heading "**Submissions:**" — nothing before it.
 
 **Submissions:**
-1. [Precise legal proposition — statute + case]
-2. [Next point]
-… (as many as the facts require; each backed by authority)
+1. [One precise legal proposition — cite the exact statute section + binding SC case with year and ratio in the same line]
+2. [Next proposition — same authority format]
+… (as many submissions as the legal position requires; every line must carry authority)
 
 **Legal Position:** ✅ Settled Law / ⚖️ Divergent Views / 🆕 Res Integra
-**Risk Exposure:** [concise — enforcement, limitation, evidentiary gaps]
+**Risk Exposure:** [concise — limitation period, evidentiary gaps, enforcement difficulty]
 **Suggested Action:** Instruct AoR to… / Settle draft prepared by junior…
 
-No introduction. No textbook narration. Authority for every proposition.
+Authority must accompany every proposition. No narration. No hedging.
 """,
 
     "quick_check": """\
-OUTPUT FORMAT — Quick Check
+OUTPUT FORMAT — STRICT QUICK CHECK
+
+⚠ PROHIBITED: Do NOT write any memo header (MEMORANDUM / To: / From: / Subject: / Date:).
+⚠ PROHIBITED: No introduction. Start the response immediately with "**Provision / Concept:**".
 
 **Provision / Concept:** [exact section + Act + year]
 **Core Rule:** [one sentence — what it mandates or permits]
 **Ingredients / Tests:** [bullet list]
 **Key Exception:** [if any]
 **Limitation / Timeline:** [if applicable]
-**Key SC Case:** [citation + ratio in one line]
+**Key SC Case:** [case name, year, SCC citation — ratio in one line]
 **Legal Position:** ✅/⚖️/🆕
 
-No narration. Precision only.
+Precision only. No narration. No hedging.
 """,
 
     "drafting": """\
-OUTPUT FORMAT — Full Draft Instrument
+OUTPUT FORMAT — FULL DRAFT INSTRUMENT
 
-Produce the complete draft document only.
-• No preamble. No advisory wrapper. No "here is a draft…" introduction.
-• Start directly with the document title.
+⚠ PROHIBITED: Do NOT write any memo header (MEMORANDUM / To: / From: / Subject:).
+⚠ PROHIBITED: No preamble, no "here is a draft", no advisory wrapper.
+⚠ START immediately with the document title (e.g. "NON-DISCLOSURE AGREEMENT").
+
 • Use proper legal numbering (1., 1.1, 1.2…).
 • Include all standard clauses: parties, definitions, operative provisions, term, \
 termination, governing law, jurisdiction, dispute resolution.
-• For NDA/confidentiality: include confidentiality obligations, IP assignment, \
-return of information, and non-solicitation.
+• For NDA/confidentiality: confidentiality obligations, IP assignment, \
+return of information, non-solicitation.
 • Mark blanks as [PARTY NAME], [DATE], [CITY], etc.
-• End with signature block.
-The advocate will review; do not pre-disclaim or hedge within the document.
+• End with a signature block.
+• The advocate will review — do not pre-disclaim or hedge within the document body.
 """,
 }
 
@@ -352,6 +360,11 @@ async def _call_gemini_text(*, prompt: str, max_tokens: int, temperature: float 
             "temperature": temperature,
             "maxOutputTokens": max_tokens,
             "topP": 0.9,
+            # Disable Gemini 2.5 Flash's internal "thinking" budget.
+            # Without this, the model consumes most of maxOutputTokens on hidden
+            # chain-of-thought reasoning, leaving only ~200 visible tokens — which
+            # causes mid-sentence truncation on structured legal responses.
+            "thinkingConfig": {"thinkingBudget": 0},
         },
     }
 
@@ -448,7 +461,7 @@ async def build_hybrid_legal_response(
 
     gemini_answer = await _call_gemini_text(
         prompt=prompt,
-        max_tokens=max(settings.LEGAL_FALLBACK_MAX_TOKENS, 2000),
+        max_tokens=max(settings.LEGAL_FALLBACK_MAX_TOKENS, 4000),
         temperature=0.15,
     )
 
