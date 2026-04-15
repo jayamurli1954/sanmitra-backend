@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 from datetime import datetime, timezone
 from typing import Any
@@ -11,6 +12,8 @@ from fastapi import BackgroundTasks
 
 from app.config import get_settings
 from app.db.mongo import get_collection
+
+_logger = logging.getLogger(__name__)
 
 RAG_SYNC_QUEUE_COLLECTION = "rag_sync_queue"
 _INTRO_ADVISORY = "Important Note: This is informational legal guidance generated from available context."
@@ -539,6 +542,9 @@ async def _call_gemini_text(*, prompt: str, max_tokens: int, temperature: float 
     settings = get_settings()
     api_key = settings.GEMINI_API_KEY
     if not api_key:
+        _logger.warning(
+            "gemini_call skipped: GEMINI_API_KEY not configured — fallback will use canned template"
+        )
         return None
 
     api_base = settings.RAG_GEMINI_API_BASE.rstrip("/")
@@ -554,22 +560,47 @@ async def _call_gemini_text(*, prompt: str, max_tokens: int, temperature: float 
     }
 
     url = f"{api_base}/models/{model}:generateContent"
+    _logger.info(
+        "gemini_call start model=%s prompt_len=%d max_tokens=%d temperature=%.2f",
+        model, len(prompt), max_tokens, temperature,
+    )
     try:
         async with httpx.AsyncClient(timeout=45.0) as client:
             response = await client.post(url, params={"key": api_key}, json=payload)
 
         if response.status_code >= 400:
+            # Trim body for the log — API errors sometimes include the prompt echo.
+            body_excerpt = (response.text or "")[:500]
+            _logger.error(
+                "gemini_call http_error status=%d model=%s body=%s",
+                response.status_code, model, body_excerpt,
+            )
             return None
 
         body = response.json()
         candidates = body.get("candidates") or []
         if not candidates:
+            prompt_feedback = body.get("promptFeedback") or {}
+            _logger.warning(
+                "gemini_call empty_candidates model=%s promptFeedback=%s",
+                model, prompt_feedback,
+            )
             return None
 
         parts = (((candidates[0] or {}).get("content") or {}).get("parts") or [])
         text = "\n".join(str(part.get("text") or "") for part in parts if isinstance(part, dict)).strip()
-        return text or None
-    except Exception:
+        if not text:
+            finish_reason = (candidates[0] or {}).get("finishReason")
+            _logger.warning(
+                "gemini_call empty_text model=%s finishReason=%s",
+                model, finish_reason,
+            )
+            return None
+
+        _logger.info("gemini_call ok model=%s response_len=%d", model, len(text))
+        return text
+    except Exception as exc:
+        _logger.exception("gemini_call exception model=%s err=%s", model, exc)
         return None
 
 
@@ -764,6 +795,13 @@ async def build_hybrid_legal_response(
     # topically-unrelated chunks via shared common tokens; this gate removes them.
     relevant_citations, dropped_citations = _filter_citations_by_relevance(citations, query)
 
+    query_preview = (query or "")[:80]
+    _logger.info(
+        "hybrid_response tenant=%s app=%s rag_citations=%d relevant=%d dropped=%d rag_rejection=%s query=%r",
+        tenant_id, app_key, len(citations), len(relevant_citations),
+        len(dropped_citations), rag_result.get("rejection_reason"), query_preview,
+    )
+
     if relevant_citations:
         # Preserve grounded RAG output when at least one relevant citation survives.
         answer = rag_answer or _general_professional_fallback(query, query_type=query_type)
@@ -788,6 +826,10 @@ async def build_hybrid_legal_response(
 
     fallback_answer = await _generate_gemini_fallback_answer(query, query_type=query_type)
     if fallback_answer:
+        _logger.info(
+            "hybrid_response path=gemini_fallback tenant=%s app=%s response_len=%d",
+            tenant_id, app_key, len(fallback_answer),
+        )
         return {
             "response": _finalize_response_text(fallback_answer, query, query_type),
             "citations": [],
@@ -797,8 +839,15 @@ async def build_hybrid_legal_response(
 
     if rag_answer and (not _rag_answer_insufficient(rag_answer)) and len(rag_answer) >= 180:
         answer = rag_answer
+        fallback_path = "rag_answer_reuse"
     else:
         answer = _general_professional_fallback(query, query_type=query_type)
+        fallback_path = "canned_template"
+
+    _logger.warning(
+        "hybrid_response path=%s tenant=%s app=%s (gemini unavailable or returned empty)",
+        fallback_path, tenant_id, app_key,
+    )
 
     return {
         "response": _finalize_response_text(answer, query, query_type),
