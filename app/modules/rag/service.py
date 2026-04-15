@@ -554,6 +554,36 @@ async def query_knowledge(*, tenant_id: str, app_key: str, payload: RagQueryRequ
             "overlap_ratio": round(overlap_ratio, 4),
         }
 
+    # Per-item relevance filter: drop individual chunks whose text doesn't share
+    # enough meaningful query tokens. Keeps answer lines and citation list in
+    # sync — previously the answer included all top-N items while a downstream
+    # filter dropped some citations, producing dangling [3][4][5] references.
+    if meaningful_tokens:
+        filtered_top: list[dict[str, Any]] = []
+        dropped_for_relevance = 0
+        for item in top:
+            item_ratio, item_hits = _meaningful_overlap_ratio(
+                meaningful_tokens, item.get("text") or ""
+            )
+            if item_hits >= _MIN_MEANINGFUL_OVERLAP_COUNT or item_ratio >= _MIN_MEANINGFUL_OVERLAP_RATIO:
+                filtered_top.append(item)
+            else:
+                dropped_for_relevance += 1
+        top = filtered_top
+
+        if not top:
+            return {
+                "answer": "I do not have enough indexed content matching this question yet. Please ingest relevant documents for this topic.",
+                "citations": [],
+                "strategy": strategy,
+                "candidate_count": len(scored),
+                "context": [] if payload.include_context else None,
+                "rejection_reason": "all_items_filtered_low_overlap",
+                "top_score": round(top_score, 4),
+                "overlap_ratio": round(overlap_ratio, 4),
+                "dropped_for_relevance": dropped_for_relevance,
+            }
+
     answer_lines = ["Based on the indexed legal knowledge base:"]
     for idx, item in enumerate(top, start=1):
         sentence = item.get("answer_sentence") or _extractive_line(item["text"], query_tokens)
