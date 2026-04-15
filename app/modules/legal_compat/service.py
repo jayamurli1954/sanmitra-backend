@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
@@ -665,6 +666,74 @@ async def _generate_gemini_fallback_answer(query: str, query_type: str = "resear
     return candidate
 
 
+_LEGAL_QUERY_WORD_RE = re.compile(r"[a-z0-9]+")
+_LEGAL_QUERY_STOPWORDS = {
+    "what", "which", "when", "where", "who", "whom", "whose",
+    "why", "how", "is", "are", "was", "were", "do", "does",
+    "did", "can", "could", "should", "would", "please", "explain",
+    "briefly", "about", "tell", "me", "the", "for", "and", "with",
+    "a", "an", "of", "in", "on", "to", "by", "as", "or", "if",
+    "this", "that", "these", "those", "be", "been", "being",
+    "have", "has", "had", "from", "any", "all", "there", "here",
+    "under", "over", "into", "per", "via", "than", "then",
+}
+
+
+def _extract_meaningful_query_terms(query: str) -> set[str]:
+    tokens = set(_LEGAL_QUERY_WORD_RE.findall((query or "").lower()))
+    return {t for t in tokens if len(t) >= 4 and t not in _LEGAL_QUERY_STOPWORDS}
+
+
+def _citation_is_relevant(citation: dict[str, Any], query_terms: set[str]) -> tuple[bool, int, float]:
+    """Return (relevant, overlap_count, overlap_ratio) for a single citation.
+
+    Relevance rule: at least 2 meaningful query terms must appear in the citation's
+    snippet/title/legal-metadata, OR at least 30% of meaningful terms overlap.
+    Protects against hash-embedding scoring boosts from shared common tokens.
+    """
+    if not query_terms:
+        return (True, 0, 1.0)
+
+    haystack_parts: list[str] = []
+    for key in ("snippet", "title"):
+        val = citation.get(key)
+        if val:
+            haystack_parts.append(str(val))
+    legal_meta = citation.get("legal_metadata") or {}
+    if isinstance(legal_meta, dict):
+        for val in legal_meta.values():
+            if val:
+                haystack_parts.append(str(val))
+
+    haystack = " ".join(haystack_parts).lower()
+    haystack_tokens = set(_LEGAL_QUERY_WORD_RE.findall(haystack))
+    hits = query_terms.intersection(haystack_tokens)
+    ratio = len(hits) / max(len(query_terms), 1)
+
+    relevant = len(hits) >= 2 or ratio >= 0.30
+    return (relevant, len(hits), ratio)
+
+
+def _filter_citations_by_relevance(
+    citations: list[dict[str, Any]], query: str
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Split citations into (relevant, dropped). Only citations that share 2+
+    topic-specific terms with the query (or 30% overlap) survive."""
+    query_terms = _extract_meaningful_query_terms(query)
+    if not query_terms:
+        return (citations, [])
+
+    relevant: list[dict[str, Any]] = []
+    dropped: list[dict[str, Any]] = []
+    for c in citations:
+        ok, _hits, _ratio = _citation_is_relevant(c, query_terms)
+        if ok:
+            relevant.append(c)
+        else:
+            dropped.append(c)
+    return (relevant, dropped)
+
+
 async def build_hybrid_legal_response(
     *,
     tenant_id: str,
@@ -677,14 +746,20 @@ async def build_hybrid_legal_response(
     citations = list(rag_result.get("citations") or [])
     rag_answer = str(rag_result.get("answer") or "").strip()
 
-    if citations:
-        # Preserve grounded RAG output when citations exist.
+    # Post-RAG citation validation: drop citations whose snippet/metadata does
+    # not overlap with the query's meaningful terms. Hash embeddings can boost
+    # topically-unrelated chunks via shared common tokens; this gate removes them.
+    relevant_citations, dropped_citations = _filter_citations_by_relevance(citations, query)
+
+    if relevant_citations:
+        # Preserve grounded RAG output when at least one relevant citation survives.
         answer = rag_answer or _general_professional_fallback(query, query_type=query_type)
         return {
             "response": answer,
-            "citations": citations,
+            "citations": relevant_citations,
             "strategy": str(rag_result.get("strategy") or "rag"),
             "note": None,
+            "dropped_citation_count": len(dropped_citations),
         }
 
     if background_tasks is not None:

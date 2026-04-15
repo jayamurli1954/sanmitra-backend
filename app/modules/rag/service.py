@@ -13,7 +13,16 @@ RAG_DOCUMENTS_COLLECTION = "rag_documents"
 RAG_CHUNKS_COLLECTION = "rag_chunks"
 
 _WORD_RE = re.compile(r"[a-z0-9]+")
-_MIN_SCORE_FOR_ANSWER = 0.16
+# Raised from 0.16 — previous value let low-quality hash-embedding matches through
+# (e.g. painting-contract query matching GST articles because of shared common tokens).
+_MIN_SCORE_FOR_ANSWER = 0.22
+# Minimum fraction of meaningful query tokens that must appear in the top citation text.
+# With hash embeddings (unordered token buckets) this lexical gate is our main defense
+# against topically-unrelated matches that score highly on common function words.
+_MIN_MEANINGFUL_OVERLAP_RATIO = 0.30
+# Absolute floor: require at least this many meaningful query tokens to appear in the
+# top citation text, regardless of ratio (protects against single-term queries).
+_MIN_MEANINGFUL_OVERLAP_COUNT = 2
 _COMMON_QUERY_STOPWORDS = {
     "what", "which", "when", "where", "who", "whom", "whose",
     "why", "how", "is", "are", "was", "were", "do", "does",
@@ -57,6 +66,21 @@ def _has_meaningful_overlap(meaningful_query_tokens: set[str], text: str) -> boo
         return True
     text_tokens = set(_tokenize(text))
     return bool(meaningful_query_tokens.intersection(text_tokens))
+
+
+def _meaningful_overlap_ratio(meaningful_query_tokens: set[str], text: str) -> tuple[float, int]:
+    """Return (ratio, absolute_count) of meaningful query tokens present in text.
+
+    Used as a stricter relevance gate than _has_meaningful_overlap — which passes
+    on a single shared common token. Hash-based embeddings can produce high scores
+    purely from shared function-like tokens (e.g. "contract", "section"), so we
+    need to confirm multiple topic-specific terms overlap.
+    """
+    if not meaningful_query_tokens:
+        return (1.0, 0)
+    text_tokens = set(_tokenize(text))
+    hits = meaningful_query_tokens.intersection(text_tokens)
+    return (len(hits) / max(len(meaningful_query_tokens), 1), len(hits))
 
 
 def _dedup_signature(item: dict[str, Any], answer_sentence: str) -> tuple[str, str, str, str]:
@@ -498,13 +522,36 @@ async def query_knowledge(*, tenant_id: str, app_key: str, payload: RagQueryRequ
         }
 
     top_score = float(top[0].get("score") or 0.0)
-    if top_score < _MIN_SCORE_FOR_ANSWER or not _has_meaningful_overlap(meaningful_tokens, top[0].get("text") or ""):
+    top_text = top[0].get("text") or ""
+    overlap_ratio, overlap_count = _meaningful_overlap_ratio(meaningful_tokens, top_text)
+
+    # Three-gate relevance check:
+    #   1. Score must clear the raised threshold.
+    #   2. Enough topic-specific tokens must co-occur (ratio OR absolute count),
+    #      so we don't accept matches that are only similar on function words.
+    #   3. Meaningful token set must be non-trivial — very short queries skip the
+    #      ratio check via the absolute count path.
+    score_too_low = top_score < _MIN_SCORE_FOR_ANSWER
+    if meaningful_tokens:
+        overlap_insufficient = (
+            overlap_ratio < _MIN_MEANINGFUL_OVERLAP_RATIO
+            and overlap_count < _MIN_MEANINGFUL_OVERLAP_COUNT
+        )
+    else:
+        overlap_insufficient = False
+
+    if score_too_low or overlap_insufficient:
         return {
             "answer": "I do not have enough indexed content matching this question yet. Please ingest relevant documents for this topic.",
             "citations": [],
             "strategy": strategy,
             "candidate_count": len(scored),
             "context": [] if payload.include_context else None,
+            "rejection_reason": (
+                "low_score" if score_too_low else "insufficient_term_overlap"
+            ),
+            "top_score": round(top_score, 4),
+            "overlap_ratio": round(overlap_ratio, 4),
         }
 
     answer_lines = ["Based on the indexed legal knowledge base:"]
