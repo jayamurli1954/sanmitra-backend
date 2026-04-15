@@ -688,8 +688,14 @@ def _citation_is_relevant(citation: dict[str, Any], query_terms: set[str]) -> tu
     """Return (relevant, overlap_count, overlap_ratio) for a single citation.
 
     Relevance rule: at least 2 meaningful query terms must appear in the citation's
-    snippet/title/legal-metadata, OR at least 30% of meaningful terms overlap.
-    Protects against hash-embedding scoring boosts from shared common tokens.
+    snippet/title/legal-metadata/reference, OR at least 30% of meaningful terms
+    overlap. Protects against hash-embedding scoring boosts from shared common
+    tokens.
+
+    If the citation exposes no inspectable content (no snippet/title/metadata),
+    we cannot judge relevance — treat it as relevant rather than dropping it
+    silently. Real RAG citations always carry title + snippet; this only matters
+    for minimal stubs (e.g. in tests).
     """
     if not query_terms:
         return (True, 0, 1.0)
@@ -705,7 +711,14 @@ def _citation_is_relevant(citation: dict[str, Any], query_terms: set[str]) -> tu
             if val:
                 haystack_parts.append(str(val))
 
-    haystack = " ".join(haystack_parts).lower()
+    haystack = " ".join(haystack_parts).lower().strip()
+    if not haystack:
+        # No inspectable content (snippet/title/legal_metadata all empty) —
+        # don't drop the citation on an empty haystack. `reference` is derived
+        # from the same fields, so checking it adds nothing for content-bearing
+        # citations but would spuriously populate the haystack for stubs.
+        return (True, 0, 1.0)
+
     haystack_tokens = set(_LEGAL_QUERY_WORD_RE.findall(haystack))
     hits = query_terms.intersection(haystack_tokens)
     ratio = len(hits) / max(len(query_terms), 1)
