@@ -608,8 +608,11 @@ async def _generate_gemini_fallback_answer(query: str, query_type: str = "resear
     settings = get_settings()
     mode = _normalize_query_type(query_type)
     mode_guidance = _query_type_guidance(mode)
+    today_iso = _now_utc().date().isoformat()
     shared_style = (
         "You are LegalMitra, a specialized Indian legal assistant for advocates and professionals. "
+        f"Today's date is {today_iso} (UTC). Use this date for any time-sensitive references, "
+        "deadlines, or 'as of' statements. Do not invent a different current date. "
         "Provide high-quality, practical, detailed responses. "
         "Do not mention internal systems, indexing, retrieval, embeddings, or model limitations. "
         "Do not fabricate citations. If uncertain, state practical assumptions clearly."

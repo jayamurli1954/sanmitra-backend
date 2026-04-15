@@ -124,7 +124,11 @@ class Settings:
     # Hybrid legal response behavior
     LEGAL_HYBRID_AI_FALLBACK_ENABLED = os.getenv("LEGAL_HYBRID_AI_FALLBACK_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
     LEGAL_FALLBACK_GEMINI_MODEL = os.getenv("LEGAL_FALLBACK_GEMINI_MODEL", "gemini-2.5-flash").strip()
-    LEGAL_FALLBACK_MAX_TOKENS = int(os.getenv("LEGAL_FALLBACK_MAX_TOKENS", "900"))
+    # Raised from 900 — Gemini fallback answers were truncating mid-sentence
+    # because the prompt requests 5-6 structured sections (Quick Answer,
+    # Business Impact, Key Rules, Action Plan, Risks, If You Want I Can).
+    # 1800 gives enough headroom for all sections to complete.
+    LEGAL_FALLBACK_MAX_TOKENS = int(os.getenv("LEGAL_FALLBACK_MAX_TOKENS", "1800"))
 
     # Auto-sync queue hooks for low-confidence legal queries
     RAG_AUTO_SYNC_ENABLED = os.getenv("RAG_AUTO_SYNC_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
