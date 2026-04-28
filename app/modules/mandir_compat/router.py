@@ -6456,21 +6456,39 @@ async def mandir_get_version():
 # ---------------------------------------------------------------------------
 
 @router.get("/public/temples")
-async def mandir_public_list_temples():
+async def mandir_public_list_temples(
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
     """List temples that have public payments enabled (for temple selector on public page)."""
+    app_key = resolve_app_key((x_app_key or "mandirmitra").strip())
     col = get_collection("mandir_temples")
-    # Include temples where public payments are explicitly enabled OR have a UPI ID configured
-    docs = await col.find({
+    visibility_query: dict[str, Any] = {
         "$or": [
             {"upi_public_enabled": True},
             {"upi_id": {"$exists": True, "$ne": None, "$ne": ""}},
         ]
-    }).to_list(length=100)
+    }
+    if app_key == "mandirmitra":
+        visibility_query["$and"] = [
+            {
+                "$or": [
+                    {"app_key": app_key},
+                    {"app_key": {"$exists": False}},
+                    {"app_key": None},
+                    {"app_key": ""},
+                ]
+            }
+        ]
+    else:
+        visibility_query["app_key"] = app_key
+    docs = await col.find(visibility_query).to_list(length=100)
     result = []
     for doc in docs:
         temple_id = doc.get("temple_id") or doc.get("id")
         if not temple_id:
             continue
+        if app_key == "mandirmitra" and not str(doc.get("app_key") or "").strip():
+            await col.update_one({"_id": doc.get("_id")}, {"$set": {"app_key": app_key}}, upsert=False)
         result.append({
             "temple_id": int(temple_id),
             "temple_name": str(doc.get("temple_name") or doc.get("name") or ""),

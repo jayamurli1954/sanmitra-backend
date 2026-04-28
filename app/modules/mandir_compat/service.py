@@ -292,7 +292,17 @@ async def list_mandir_temples(*, tenant_id: str | None = None, app_key: str = "m
     await ensure_mandir_compat_indexes()
     app_key = str(app_key or "mandirmitra").strip()
     temples = get_collection(MANDIR_TEMPLES_COLLECTION)
-    query: dict = {"app_key": app_key}
+    legacy_app_key_query = [
+        {"app_key": app_key},
+        {"app_key": {"$exists": False}},
+        {"app_key": None},
+        {"app_key": ""},
+    ]
+    query: dict
+    if app_key == "mandirmitra":
+        query = {"$or": legacy_app_key_query}
+    else:
+        query = {"app_key": app_key}
     if tenant_id:
         query["tenant_id"] = str(tenant_id).strip()
 
@@ -313,7 +323,7 @@ async def list_mandir_temples(*, tenant_id: str | None = None, app_key: str = "m
 
         temple_numeric_id = _to_positive_int(doc.get("temple_id")) or _to_positive_int(doc.get("id"))
         if not temple_numeric_id:
-            temple_numeric_id = await ensure_temple_numeric_id(doc_tenant_id)
+            temple_numeric_id = await ensure_temple_numeric_id(doc_tenant_id, app_key=app_key)
 
         onboarding_event = onboarding_events_by_tenant.get(doc_tenant_id) or {}
         approved_request = approved_requests_by_tenant.get(doc_tenant_id) or {}
@@ -367,6 +377,9 @@ async def list_mandir_temples(*, tenant_id: str | None = None, app_key: str = "m
         )
 
         patch: dict[str, object] = {}
+        existing_app_key = str(doc.get("app_key") or "").strip()
+        if app_key == "mandirmitra" and not existing_app_key:
+            patch["app_key"] = app_key
         existing_name = _clean_text(doc.get("name"))
         existing_temple_name = _clean_text(doc.get("temple_name"))
         if (not existing_name or _is_placeholder_temple_name(existing_name)) and resolved_name != existing_name:
@@ -387,7 +400,12 @@ async def list_mandir_temples(*, tenant_id: str | None = None, app_key: str = "m
         if patch:
             patch["updated_at"] = datetime.now(timezone.utc)
             try:
-                await temples.update_one({"tenant_id": doc_tenant_id}, {"$set": patch}, upsert=False)
+                update_filter: dict[str, object] = {"tenant_id": doc_tenant_id}
+                if existing_app_key:
+                    update_filter["app_key"] = existing_app_key
+                else:
+                    update_filter["$or"] = legacy_app_key_query
+                await temples.update_one(update_filter, {"$set": patch}, upsert=False)
             except Exception:
                 pass
 
@@ -396,6 +414,7 @@ async def list_mandir_temples(*, tenant_id: str | None = None, app_key: str = "m
                 "id": temple_numeric_id,
                 "temple_id": temple_numeric_id,
                 "tenant_id": doc_tenant_id,
+                "app_key": app_key,
                 "name": resolved_name,
                 "temple_name": resolved_temple_name,
                 "trust_name": resolved_trust_name,

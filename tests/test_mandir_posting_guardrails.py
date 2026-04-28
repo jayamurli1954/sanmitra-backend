@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app.modules.mandir_compat.router as mandir_router
+import app.modules.mandir_compat.service as mandir_service
 from app.core.auth.dependencies import get_current_user
 from app.db.postgres import get_async_session
 from app.main import app
@@ -56,11 +57,28 @@ class FakeCollection:
     @staticmethod
     def _matches_query(doc, query):
         for key, value in query.items():
+            if key == "$and":
+                if not all(FakeCollection._matches_query(doc, branch) for branch in value):
+                    return False
+                continue
             if key == "$or":
-                return any(FakeCollection._matches_query(doc, branch) for branch in value)
+                if not any(FakeCollection._matches_query(doc, branch) for branch in value):
+                    return False
+                continue
+            if isinstance(value, dict):
+                if "$exists" in value:
+                    exists = key in doc
+                    if exists is not bool(value["$exists"]):
+                        return False
+                if "$ne" in value and doc.get(key) == value["$ne"]:
+                    return False
+                continue
             if doc.get(key) != value:
                 return False
         return True
+
+    async def create_index(self, *_args, **_kwargs):
+        return None
 
     def find(self, query):
         return FakeCursor([dict(doc) for doc in self.docs if self._matches_query(doc, query)])
@@ -126,6 +144,56 @@ class FakeCollection:
             self.docs.pop(idx_to_delete)
             return SimpleNamespace(deleted_count=1)
         return SimpleNamespace(deleted_count=0)
+
+
+@pytest.mark.asyncio
+async def test_platform_temple_listing_recovers_legacy_mandir_app_key(monkeypatch):
+    temples = FakeCollection(
+        [
+            {
+                "_id": FakeObjectId(),
+                "tenant_id": "parlathaya-prathishtana",
+                "temple_id": 3,
+                "temple_name": "Kondappadi Shree Ananthapadmanabha Temple",
+                "trust_name": "Parlathaya Prathishtana (R), Mangalore",
+                "upi_public_enabled": True,
+                "upi_id": "trust@upi",
+            },
+            {
+                "_id": FakeObjectId(),
+                "tenant_id": "gruhamitra-society",
+                "temple_id": 4,
+                "name": "GruhaMitra Society",
+                "app_key": "gruhamitra",
+            },
+        ]
+    )
+    counters = FakeCollection([{"_id": "temple_id_seq", "seq": 4}])
+    empty = FakeCollection()
+
+    def fake_get_collection(name):
+        return {
+            "mandir_temples": temples,
+            "mandir_counters": counters,
+            "mandir_onboarding_events": empty,
+            "core_onboarding_requests": empty,
+            "mandir_donations": empty,
+            "mandir_devotees": empty,
+            "mandir_sevas": empty,
+        }[name]
+
+    monkeypatch.setattr(mandir_service, "_MANDIR_INDEXES_READY", False)
+    monkeypatch.setattr(mandir_service, "get_collection", fake_get_collection)
+
+    rows = await mandir_service.list_mandir_temples(app_key="mandirmitra")
+
+    assert [row["tenant_id"] for row in rows] == ["parlathaya-prathishtana"]
+    assert rows[0]["app_key"] == "mandirmitra"
+    assert rows[0]["trust_name"] == "Parlathaya Prathishtana (R), Mangalore"
+    assert temples.docs[0]["app_key"] == "mandirmitra"
+
+    gruha_rows = await mandir_service.list_mandir_temples(app_key="gruhamitra")
+    assert [row["tenant_id"] for row in gruha_rows] == ["gruhamitra-society"]
 
 
 class DummySession:
