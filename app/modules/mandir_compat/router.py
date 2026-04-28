@@ -3988,17 +3988,18 @@ async def get_current_temple(
     if doc:
         return doc
 
-    assigned_temple_id = await ensure_temple_numeric_id(tenant_id, app_key=app_key)
     now = datetime.now(timezone.utc).isoformat()
+    transient_temple_id = temple_id if temple_id and temple_id > 0 else None
     fallback = {
-        "id": assigned_temple_id,
-        "temple_id": assigned_temple_id,
+        "id": transient_temple_id,
+        "temple_id": transient_temple_id,
         "tenant_id": tenant_id,
         "name": "Temple",
         "trust_name": "Temple Trust",
         "city": "Bengaluru",
         "state": "Karnataka",
         "platform_can_write": False,
+        "is_placeholder": True,
         "is_active": True,
         "updated_at": now,
         "created_at": now,
@@ -6087,24 +6088,7 @@ async def mandir_temples(
     if _is_platform_super_admin(_current_user):
         return []
 
-    fallback_tenant_id = resolve_tenant_id(_current_user, x_tenant_id)
-    fallback_temple_id = await ensure_temple_numeric_id(fallback_tenant_id, app_key=app_key)
-    return [
-        {
-            "id": fallback_temple_id,
-            "temple_id": fallback_temple_id,
-            "tenant_id": fallback_tenant_id,
-            "name": "Temple",
-            "temple_name": "Temple",
-            "trust_name": "Temple Trust",
-            "city": "Bengaluru",
-            "state": "Karnataka",
-            "phone": None,
-            "email": None,
-            "platform_can_write": False,
-            "is_active": True,
-        }
-    ]
+    return []
 
 
 
