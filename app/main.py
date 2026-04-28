@@ -26,7 +26,7 @@ from app.modules.legal.service import ensure_legal_indexes
 from app.modules.legal_compat.service import ensure_legal_compat_indexes
 from app.modules.legal_compat.sync_worker import start_legal_sync_worker, stop_legal_sync_worker
 from app.modules.mandir_compat.reminder_worker import start_seva_reminder_worker, stop_seva_reminder_worker
-from app.modules.mandir_compat.service import ensure_demo_mandir_bootstrap, ensure_temple_upi_config
+from app.modules.mandir_compat.service import ensure_demo_mandir_bootstrap, ensure_parlathaya_public_config, ensure_temple_upi_config
 from app.modules.rag.service import ensure_rag_indexes
 from app.modules.temple.service import ensure_donations_indexes
 
@@ -74,6 +74,7 @@ async def on_startup() -> None:
             city="Udupi",
             state="Karnataka",
         )
+        await ensure_parlathaya_public_config()
         await ensure_audit_indexes()
         await ensure_donations_indexes()
         await ensure_maintenance_indexes()

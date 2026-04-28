@@ -637,6 +637,56 @@ async def ensure_temple_upi_config(
         )
 
 
+def _normalise_public_catalog_name(value: object) -> str:
+    return re.sub(r"\s+", " ", str(value or "").strip().lower())
+
+
+async def ensure_parlathaya_public_config(app_key: str = "mandirmitra") -> None:
+    """Keep Parlathaya public payment catalog tenant-specific.
+
+    This is intentionally narrow: it corrects the onboarded tenant's public
+    catalog without copying Demo Temple sevas or donation categories.
+    """
+    app_key = str(app_key or "mandirmitra").strip()
+    tenant_id = await resolve_tenant_by_temple_id(3, app_key=app_key)
+    if not tenant_id:
+        return
+
+    now = datetime.now(timezone.utc)
+    temples = get_collection(MANDIR_TEMPLES_COLLECTION)
+    await temples.update_one(
+        {"tenant_id": tenant_id, "app_key": app_key},
+        {
+            "$set": {
+                "donation_categories": [
+                    {"id": "general", "name": "General Donation", "description": ""},
+                ],
+                "updated_at": now,
+            }
+        },
+    )
+
+    sevas = get_collection("mandir_sevas")
+    rows = await sevas.find({"tenant_id": tenant_id, "app_key": app_key}).to_list(length=500)
+    inactive_names = {"sarva seva", "sarva seve"}
+    for row in rows:
+        names = (
+            row.get("name"),
+            row.get("name_english"),
+            row.get("seva_name"),
+        )
+        if not any(_normalise_public_catalog_name(name) in inactive_names for name in names):
+            continue
+
+        seva_id = str(row.get("id") or "").strip()
+        if not seva_id:
+            continue
+        await sevas.update_one(
+            {"id": seva_id, "tenant_id": tenant_id, "app_key": app_key},
+            {"$set": {"is_active": False, "updated_at": now}},
+        )
+
+
 async def ensure_sevas_copied(*, source_temple_id: int, target_temple_id: int, app_key: str = "mandirmitra") -> int:
     """Copy all active sevas from source temple to target temple.
     Skips sevas that already exist in target (matched by name_english, case-insensitive).

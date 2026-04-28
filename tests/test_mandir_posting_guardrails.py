@@ -225,6 +225,77 @@ async def test_public_donation_categories_are_temple_specific(monkeypatch):
     assert rows == [{"id": "general", "name": "General Donation", "description": ""}]
 
 
+@pytest.mark.asyncio
+async def test_parlathaya_public_config_is_tenant_specific(monkeypatch):
+    temples = FakeCollection(
+        [
+            {
+                "tenant_id": "tenant-parlathaya",
+                "temple_id": 3,
+                "app_key": "mandirmitra",
+                "donation_categories": [
+                    {"id": "old", "name": "Annadanam", "description": "Food donation"},
+                ],
+            },
+            {
+                "tenant_id": "tenant-demo",
+                "temple_id": 1,
+                "app_key": "mandirmitra",
+                "donation_categories": [
+                    {"id": "annadanam", "name": "Annadanam", "description": "Food donation"},
+                ],
+            },
+        ]
+    )
+    sevas = FakeCollection(
+        [
+            {
+                "id": "seva-parlathaya-sarva",
+                "tenant_id": "tenant-parlathaya",
+                "app_key": "mandirmitra",
+                "name": "Sarva Seve",
+                "is_active": True,
+            },
+            {
+                "id": "seva-parlathaya-nirantara",
+                "tenant_id": "tenant-parlathaya",
+                "app_key": "mandirmitra",
+                "name": "Nirantara Seva Nidhi",
+                "is_active": True,
+            },
+            {
+                "id": "seva-demo-sarva",
+                "tenant_id": "tenant-demo",
+                "app_key": "mandirmitra",
+                "name": "Sarva Seve",
+                "is_active": True,
+            },
+        ]
+    )
+    empty = FakeCollection()
+
+    def fake_get_collection(name):
+        return {
+            "mandir_temples": temples,
+            "mandir_sevas": sevas,
+        }.get(name, empty)
+
+    monkeypatch.setattr(mandir_service, "_MANDIR_INDEXES_READY", False)
+    monkeypatch.setattr(mandir_service, "get_collection", fake_get_collection)
+
+    await mandir_service.ensure_parlathaya_public_config()
+
+    assert temples.docs[0]["donation_categories"] == [
+        {"id": "general", "name": "General Donation", "description": ""},
+    ]
+    assert temples.docs[1]["donation_categories"] == [
+        {"id": "annadanam", "name": "Annadanam", "description": "Food donation"},
+    ]
+    assert sevas.docs[0]["is_active"] is False
+    assert sevas.docs[1]["is_active"] is True
+    assert sevas.docs[2]["is_active"] is True
+
+
 class DummySession:
     async def execute(self, *_args, **_kwargs):
         raise AssertionError("execute() should not be called in these tests")
