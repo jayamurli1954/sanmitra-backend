@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import date
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -11,6 +12,20 @@ import app.modules.mandir_compat.router as mandir_router
 from app.core.auth.dependencies import get_current_user
 from app.db.postgres import get_async_session
 from app.main import app
+
+
+def test_mandir_receipt_number_format_is_simple_sequence():
+    assert mandir_router._format_mandir_receipt_number("DON", 1) == "DON-0000001"
+    assert mandir_router._format_mandir_receipt_number("SEV", 42) == "SEV-0000042"
+    assert mandir_router._format_mandir_sequence_number("JE", 7) == "JE-0000007"
+
+
+def test_kannada_amount_words_for_receipts():
+    assert mandir_router._amount_to_kannada_words(50000) == "ರೂಪಾಯಿ ಐವತ್ತು ಸಾವಿರ ಮಾತ್ರ"
+    assert (
+        mandir_router._amount_words_receipt_line(50000, local_language="kannada")
+        == "ರೂಪಾಯಿ ಐವತ್ತು ಸಾವಿರ ಮಾತ್ರ / Rupees Fifty Thousand Only"
+    )
 
 
 class FakeObjectId:
@@ -73,6 +88,28 @@ class FakeCollection:
 
         return SimpleNamespace(matched_count=0, modified_count=0, upserted_id=None)
 
+    async def find_one_and_update(self, query, update, upsert=False, return_document=False):
+        for doc in self.docs:
+            if self._matches_query(doc, query):
+                for key, value in update.get("$inc", {}).items():
+                    doc[key] = doc.get(key, 0) + value
+                if "$set" in update:
+                    doc.update(update["$set"])
+                return dict(doc)
+
+        if upsert:
+            row = dict(query)
+            row.update(update.get("$setOnInsert", {}))
+            for key, value in update.get("$inc", {}).items():
+                row[key] = row.get(key, 0) + value
+            if "$set" in update:
+                row.update(update["$set"])
+            row.setdefault("_id", FakeObjectId())
+            self.docs.append(row)
+            return dict(row)
+
+        return None
+
     async def insert_one(self, doc):
         row = dict(doc)
         row.setdefault("_id", FakeObjectId())
@@ -128,6 +165,7 @@ def mandir_posting_client(monkeypatch):
     donations = FakeCollection()
     seva_bookings = FakeCollection()
     devotees = FakeCollection()
+    counters = FakeCollection()
     sevas = FakeCollection(
         [
             {
@@ -136,6 +174,7 @@ def mandir_posting_client(monkeypatch):
                 "app_key": "mandirmitra",
                 "name": "Sarva Seve",
                 "category": "pooja",
+                "max_bookings_per_day": 2,
             }
         ]
     )
@@ -147,6 +186,8 @@ def mandir_posting_client(monkeypatch):
             return seva_bookings
         if name == "mandir_devotees":
             return devotees
+        if name == "mandir_counters":
+            return counters
         if name == "mandir_sevas":
             return sevas
         raise AssertionError(f"Unexpected collection: {name}")
@@ -243,11 +284,93 @@ def test_create_seva_booking_uses_payment_method_fallback(mandir_posting_client,
     assert payload["payment_mode"] == "Cash"
     assert "_id" not in payload
     assert payload["id"]
-    assert payload["receipt_number"].startswith("SEV-")
+    assert payload["receipt_number"] == "SEV-0000001"
     assert payload["receipt_pdf_url"] == f"/api/v1/sevas/bookings/{payload['id']}/receipt/pdf"
     assert payload["seva_name"] == "Sarva Seve"
     assert seen["mode"] == "Cash"
     assert len(seva_bookings.docs) == 1
+
+
+def test_seva_booking_date_rejects_non_specific_day():
+    with pytest.raises(mandir_router.HTTPException) as exc:
+        mandir_router._validate_seva_booking_date(
+            {"name": "Pallaki Seve", "specific_day": 6},
+            date(2026, 5, 1),
+        )
+
+    assert exc.value.status_code == 400
+    assert "only on Saturday" in exc.value.detail
+
+
+def test_create_seva_booking_rejects_full_date(mandir_posting_client, monkeypatch):
+    client, _donations, seva_bookings = mandir_posting_client
+    seva_bookings.docs.extend(
+        [
+            {
+                "id": "book-1",
+                "tenant_id": "tenant-1",
+                "app_key": "mandirmitra",
+                "seva_id": "seva-1",
+                "booking_date": "2026-04-06",
+                "status": "confirmed",
+            },
+            {
+                "id": "book-2",
+                "tenant_id": "tenant-1",
+                "app_key": "mandirmitra",
+                "seva_id": "seva-1",
+                "booking_date": "2026-04-06",
+                "status": "confirmed",
+            },
+        ]
+    )
+
+    async def fake_resolve_account(_session, _tenant_id, _raw_account_id, _payment_mode):
+        return 1001
+
+    async def fake_income_account(_session, _tenant_id, _category_name):
+        return 4100
+
+    monkeypatch.setattr(mandir_router, "_resolve_mandir_payment_account_id", fake_resolve_account)
+    monkeypatch.setattr(mandir_router, "_resolve_mandir_income_account", fake_income_account)
+
+    response = client.post(
+        "/api/v1/sevas/bookings/",
+        json={
+            "seva_id": "seva-1",
+            "devotee_id": "dev-1",
+            "devotee_names": "Raghavan Iyer",
+            "booking_date": "2026-04-06",
+            "amount_paid": 500,
+            "payment_mode": "Cash",
+            "payment_account_id": 1001,
+        },
+    )
+
+    assert response.status_code == 400
+    assert "fully booked" in response.json().get("detail", "")
+
+
+def test_seva_date_availability_reports_slots_left(mandir_posting_client):
+    client, _donations, seva_bookings = mandir_posting_client
+    seva_bookings.docs.append(
+        {
+            "id": "book-1",
+            "tenant_id": "tenant-1",
+            "app_key": "mandirmitra",
+            "seva_id": "seva-1",
+            "booking_date": "2026-04-06",
+            "status": "confirmed",
+        }
+    )
+
+    response = client.get("/api/v1/sevas/seva-1/availability", params={"booking_date": "2026-04-06"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["booked_count"] == 1
+    assert payload["slots_left"] == 1
+    assert payload["available"] is True
 
 
 def test_create_seva_booking_rolls_back_when_no_payment_account(mandir_posting_client, monkeypatch):
@@ -502,6 +625,37 @@ def test_panchang_display_settings_put_and_get(mandir_compat_client):
     assert fetched.json()["city_name"] == "Tempe"
 
 
+def test_panchang_city_options_include_coordinates(mandir_compat_client):
+    client, _collections = mandir_compat_client
+
+    response = client.get("/api/v1/panchang/display-settings/cities")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["success"] is True
+    cities = payload["data"]
+    bengaluru = next(city for city in cities if city["name"] == "Bengaluru")
+    assert bengaluru["lat"] == 12.9716
+    assert bengaluru["lon"] == 77.5946
+    assert bengaluru["timezone"] == "Asia/Kolkata"
+
+
+def test_panchang_location_override_does_not_mutate_settings():
+    settings_doc = {"city_name": "Bengaluru", "latitude": "12.9716", "longitude": "77.5946"}
+    temple_doc = {"city": "Bengaluru", "latitude": "12.9716", "longitude": "77.5946"}
+
+    lat, lon, city = mandir_router._resolve_panchang_location(
+        settings_doc,
+        temple_doc,
+        city_name="Chennai",
+        latitude=13.0827,
+        longitude=80.2707,
+    )
+
+    assert (lat, lon, city) == (13.0827, 80.2707, "Chennai")
+    assert settings_doc["city_name"] == "Bengaluru"
+
+
 def test_seva_reschedule_request_and_approval(mandir_compat_client):
     client, collections = mandir_compat_client
     collections["mandir_seva_bookings"].docs.append(
@@ -613,8 +767,10 @@ def mandir_upi_client(monkeypatch):
     async def noop_ensure_sql_accounts(_session, _tenant_id):
         return None
 
-    async def fake_resolve_tenant_by_temple_id(value):
+    async def fake_resolve_tenant_by_temple_id(value, app_key="mandirmitra"):
         mapping = {1: "tenant-1", 2: "tenant-2"}
+        if app_key != "mandirmitra":
+            return None
         return mapping.get(int(value or 0))
 
     monkeypatch.setattr(mandir_router, "get_collection", fake_get_collection)
@@ -669,7 +825,7 @@ def test_upi_quick_log_persists_and_lists_rows(mandir_upi_client, monkeypatch):
     assert response.status_code == 200
     payload = response.json()
     assert payload["payment_purpose"] == "DONATION"
-    assert payload["receipt_number"].startswith("DON-")
+    assert payload["receipt_number"] == "DON-0000001"
     assert payload["amount"] == 501.0
 
     assert len(collections["mandir_upi_payments"].docs) == 1

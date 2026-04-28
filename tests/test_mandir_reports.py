@@ -94,6 +94,7 @@ def report_collections(monkeypatch):
                     'tenant_id': 'tenant-1',
                     'app_key': 'mandirmitra',
                     'created_at': datetime.combine(today, datetime.min.time()).isoformat(),
+                    'receipt_number': 'SEV-0000001',
                     'booking_date': (today + timedelta(days=1)).isoformat(),
                     'seva_name': 'Sarva Seve',
                     'devotee_name': 'Raghavan Iyer',
@@ -181,14 +182,35 @@ async def test_seva_reports_include_only_posted_rows(report_collections):
     )
 
     assert detailed_report['total_count'] == 1
-    assert detailed_report['completed_count'] == 1
-    assert detailed_report['pending_count'] == 0
+    assert detailed_report['completed_count'] == 0
+    assert detailed_report['pending_count'] == 1
     assert detailed_report['sevas'][0]['seva_name'] == 'Sarva Seve'
-    assert detailed_report['sevas'][0]['status'] == 'Completed'
+    assert detailed_report['sevas'][0]['receipt_number'] == 'SEV-0000001'
+    assert detailed_report['sevas'][0]['status'] == 'Pending'
 
     assert schedule_report['total_bookings'] == 1
     assert schedule_report['schedule'][0]['seva_name'] == 'Sarva Seve'
     assert schedule_report['schedule'][0]['status'] in {'Today', 'Upcoming'}
+
+
+@pytest.mark.asyncio
+async def test_detailed_seva_report_marks_past_sevas_completed_and_future_pending(report_collections):
+    today = date.today()
+    session = DummySession()
+    report_collections['mandir_seva_bookings'].docs[0]['booking_date'] = (today - timedelta(days=1)).isoformat()
+
+    detailed_report = await report_helpers.detailed_seva_report(
+        session,
+        tenant_id='tenant-1',
+        app_key='mandirmitra',
+        from_date=today - timedelta(days=2),
+        to_date=today + timedelta(days=1),
+    )
+
+    assert detailed_report['total_count'] == 1
+    assert detailed_report['completed_count'] == 1
+    assert detailed_report['pending_count'] == 0
+    assert detailed_report['sevas'][0]['status'] == 'Completed'
 
 @pytest.mark.asyncio
 async def test_trial_balance_report_backfills_known_account_codes(monkeypatch):

@@ -8,12 +8,13 @@ from app.core.auth.security import create_access_token, create_refresh_token, de
 from app.core.tenants.context import resolve_tenant_id
 
 
-def _base_payload(*, role: str = "tenant_admin", tenant_id: str | None = "t1") -> dict:
+def _base_payload(*, role: str = "tenant_admin", tenant_id: str | None = "t1", app_key: str = "mandirmitra") -> dict:
     return {
         "sub": "u1",
         "email": "u1@example.com",
         "role": role,
         "tenant_id": tenant_id,
+        "app_key": app_key,
     }
 
 
@@ -48,6 +49,24 @@ async def test_get_current_user_accepts_access_token(monkeypatch) -> None:
 
     current_user = await get_current_user(creds)
     assert current_user["sub"] == "u1"
+    assert current_user["app_key"] == "mandirmitra"
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_blocks_app_key_override(monkeypatch) -> None:
+    async def fake_tenant_check(_tenant_id: str | None) -> None:
+        return None
+
+    monkeypatch.setattr("app.core.auth.dependencies.ensure_tenant_is_active", fake_tenant_check)
+
+    token = create_access_token(_base_payload(app_key="mandirmitra"))
+    creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+
+    with pytest.raises(HTTPException) as exc:
+        await get_current_user(creds, x_app_key="gruhamitra")
+
+    assert exc.value.status_code == 403
+    assert exc.value.detail == "App key override not allowed"
 
 
 @pytest.mark.asyncio

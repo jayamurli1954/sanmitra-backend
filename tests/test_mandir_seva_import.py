@@ -124,6 +124,83 @@ def test_seva_bulk_import_rejects_non_csv_files(seva_client):
     assert response.status_code == 400
     assert response.json()["detail"] == "Only CSV files are supported for seva import"
 
+def test_seva_bulk_import_with_utf16_encoding(seva_client):
+    """Test that CSV files with UTF-16 encoding are properly decoded"""
+    client, collection = seva_client
+
+    csv_text = "name_english,category,amount\nMorning Archana,archana,50\nEvening Pooja,pooja,120"
+    # Encode as UTF-16 with BOM
+    csv_bytes = csv_text.encode("utf-16")
+
+    response = client.post(
+        "/api/v1/sevas/import",
+        files={"file": ("sevas.csv", csv_bytes, "text/csv")},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "ok"
+    assert payload["inserted_count"] == 2
+
+
+def test_seva_bulk_import_with_windows1252_encoding(seva_client):
+    """Test that CSV files with Windows-1252 encoding (Excel on Windows) are properly decoded"""
+    client, collection = seva_client
+
+    # Use a character that differs in Windows-1252 vs UTF-8
+    csv_text = "name_english,category,amount\nMorning Archana™,archana,50"
+    # Encode as Windows-1252
+    csv_bytes = csv_text.encode("cp1252")
+
+    response = client.post(
+        "/api/v1/sevas/import",
+        files={"file": ("sevas.csv", csv_bytes, "text/csv")},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "ok"
+    assert payload["inserted_count"] == 1
+
+
+def test_seva_bulk_import_with_iso88591_encoding(seva_client):
+    """Test that CSV files with ISO-8859-1 encoding are properly decoded"""
+    client, collection = seva_client
+
+    csv_text = "name_english,category,amount\nMorning Archana,archana,50"
+    # Encode as ISO-8859-1 (Latin1)
+    csv_bytes = csv_text.encode("iso-8859-1")
+
+    response = client.post(
+        "/api/v1/sevas/import",
+        files={"file": ("sevas.csv", csv_bytes, "text/csv")},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "ok"
+    assert payload["inserted_count"] == 1
+
+
+def test_seva_bulk_import_with_utf8_bom(seva_client):
+    """Test that CSV files with UTF-8 BOM are properly decoded"""
+    client, collection = seva_client
+
+    csv_text = "name_english,category,amount\nMorning Archana,archana,50"
+    # Encode as UTF-8 with BOM
+    csv_bytes = b'\xef\xbb\xbf' + csv_text.encode("utf-8")
+
+    response = client.post(
+        "/api/v1/sevas/import",
+        files={"file": ("sevas.csv", csv_bytes, "text/csv")},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "ok"
+    assert payload["inserted_count"] == 1
+
+
 def test_seva_list_daily_is_available_today(seva_client):
     client, collection = seva_client
 
