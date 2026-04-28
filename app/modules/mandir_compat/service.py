@@ -425,6 +425,7 @@ async def list_mandir_temples(*, tenant_id: str | None = None, app_key: str = "m
                 "pincode": _pick_first_non_empty(doc.get("pincode"), approved_request.get("pincode"), onboarding_event.get("pincode")),
                 "phone": resolved_phone,
                 "email": _clean_text(resolved_email).lower() if _clean_text(resolved_email) else None,
+                "donation_categories": doc.get("donation_categories") if isinstance(doc.get("donation_categories"), list) else None,
                 "is_active": bool(doc.get("is_active", True)),
                 "platform_can_write": bool(doc.get("platform_can_write", False)),
                 "onboarding_status": _pick_first_non_empty(doc.get("onboarding_status"), approved_request.get("status"), onboarding_event.get("status")),

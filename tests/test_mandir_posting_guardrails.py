@@ -196,6 +196,35 @@ async def test_platform_temple_listing_recovers_legacy_mandir_app_key(monkeypatc
     assert [row["tenant_id"] for row in gruha_rows] == ["gruhamitra-society"]
 
 
+@pytest.mark.asyncio
+async def test_public_donation_categories_are_temple_specific(monkeypatch):
+    temples = FakeCollection(
+        [
+            {
+                "tenant_id": "tenant-parlathaya",
+                "temple_id": 3,
+                "app_key": "mandirmitra",
+                "donation_categories": [
+                    {"id": "general", "name": "General Donation", "description": ""},
+                ],
+            }
+        ]
+    )
+
+    monkeypatch.setattr(mandir_router, "get_collection", lambda name: temples)
+
+    async def fake_resolve_tenant_by_temple_id(temple_id, app_key="mandirmitra"):
+        assert temple_id == 3
+        assert app_key == "mandirmitra"
+        return "tenant-parlathaya"
+
+    monkeypatch.setattr(mandir_router, "resolve_tenant_by_temple_id", fake_resolve_tenant_by_temple_id)
+
+    rows = await mandir_router.mandir_public_donation_categories(3, x_app_key="mandirmitra")
+
+    assert rows == [{"id": "general", "name": "General Donation", "description": ""}]
+
+
 class DummySession:
     async def execute(self, *_args, **_kwargs):
         raise AssertionError("execute() should not be called in these tests")

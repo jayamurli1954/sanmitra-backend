@@ -103,6 +103,14 @@ _MANDIR_RECEIPT_PREFIX_BY_KIND = {
     "seva": "SEV",
 }
 _MANDIR_JOURNAL_ENTRY_PREFIX = "JE"
+_DEFAULT_PUBLIC_DONATION_CATEGORIES = [
+    {"id": "general", "name": "General Donation", "description": "General donation to the temple"},
+    {"id": "annadanam", "name": "Annadanam", "description": "Sponsoring food/meals for devotees"},
+    {"id": "construction", "name": "Construction Fund", "description": "Temple construction and renovation"},
+    {"id": "corpus", "name": "Corpus Fund", "description": "Temple corpus fund"},
+    {"id": "vastra_seva", "name": "Vastra Seva", "description": "Clothing and decoration for deity"},
+    {"id": "nitya_puja", "name": "Nitya Puja", "description": "Daily worship sponsorship"},
+]
 
 _PANCHANG_DEFAULT_LOCATION = {
     "name": "Bengaluru",
@@ -3990,6 +3998,11 @@ async def update_current_temple(
     col = get_collection("mandir_temples")
     now = datetime.now(timezone.utc).isoformat()
     update = {k: v for k, v in payload.items() if k not in {"id", "_id", "tenant_id", "temple_id"}}
+    if "donation_categories" in payload:
+        update["donation_categories"] = _normalize_public_donation_categories(
+            payload.get("donation_categories"),
+            fallback_to_default=False,
+        )
     update["updated_at"] = now
 
     await col.update_one(
@@ -6455,6 +6468,40 @@ async def mandir_get_version():
 # PUBLIC SEVA PAYMENT ENDPOINTS  (no authentication required)
 # ---------------------------------------------------------------------------
 
+def _normalize_public_donation_categories(raw: Any, *, fallback_to_default: bool = True) -> list[dict[str, str]]:
+    if not isinstance(raw, list):
+        return [dict(item) for item in _DEFAULT_PUBLIC_DONATION_CATEGORIES] if fallback_to_default else []
+
+    normalized: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for index, item in enumerate(raw):
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        if not name:
+            continue
+        category_id = str(item.get("id") or "").strip().lower()
+        if not category_id:
+            category_id = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_") or f"category_{index + 1}"
+        base_id = category_id
+        suffix = 2
+        while category_id in seen:
+            category_id = f"{base_id}_{suffix}"
+            suffix += 1
+        seen.add(category_id)
+        normalized.append(
+            {
+                "id": category_id[:80],
+                "name": name[:120],
+                "description": str(item.get("description") or "").strip()[:300],
+            }
+        )
+
+    if normalized or not fallback_to_default:
+        return normalized
+    return [dict(item) for item in _DEFAULT_PUBLIC_DONATION_CATEGORIES]
+
+
 @router.get("/public/temples")
 async def mandir_public_list_temples(
     x_app_key: str | None = Header(default=None, alias="X-App-Key"),
@@ -6643,14 +6690,8 @@ async def mandir_public_donation_categories(
     if not tenant_id:
         raise HTTPException(status_code=404, detail="Temple not found")
 
-    return [
-        {"id": "general", "name": "General Donation", "description": "General donation to the temple"},
-        {"id": "annadanam", "name": "Annadanam", "description": "Sponsoring food/meals for devotees"},
-        {"id": "construction", "name": "Construction Fund", "description": "Temple construction and renovation"},
-        {"id": "corpus", "name": "Corpus Fund", "description": "Temple corpus fund"},
-        {"id": "vastra_seva", "name": "Vastra Seva", "description": "Clothing and decoration for deity"},
-        {"id": "nitya_puja", "name": "Nitya Puja", "description": "Daily worship sponsorship"},
-    ]
+    temple_doc = await get_collection("mandir_temples").find_one({"tenant_id": tenant_id, "app_key": app_key}) or {}
+    return _normalize_public_donation_categories(temple_doc.get("donation_categories"))
 
 
 @router.post("/public/temples/{temple_id}/seva-payments")
