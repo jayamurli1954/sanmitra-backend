@@ -753,6 +753,65 @@ def test_panchang_location_override_does_not_mutate_settings():
     assert settings_doc["city_name"] == "Bengaluru"
 
 
+def test_platform_admin_cannot_manage_sevas_for_read_only_tenant(mandir_compat_client):
+    client, collections = mandir_compat_client
+    collections["mandir_temples"].docs.append(
+        {
+            "tenant_id": "tenant-1",
+            "app_key": "mandirmitra",
+            "name": "Parlathaya Prathishtana",
+            "platform_can_write": False,
+        }
+    )
+    app.dependency_overrides[get_current_user] = lambda: {
+        "tenant_id": "platform",
+        "id": "platform-admin",
+        "user_id": "platform-admin",
+        "role": "super_admin",
+        "app_key": "mandirmitra",
+        "is_superuser": True,
+    }
+
+    response = client.post(
+        "/api/v1/sevas/",
+        headers={"X-Tenant-ID": "tenant-1", "X-App-Key": "mandirmitra"},
+        json={"name_english": "Niranthara Seva", "amount": 100},
+    )
+
+    assert response.status_code == 403
+    assert "read-only" in response.json().get("detail", "")
+    assert all(doc.get("name") != "Niranthara Seva" for doc in collections["mandir_sevas"].docs)
+
+
+def test_platform_admin_can_manage_sevas_for_demo_tenant(mandir_compat_client):
+    client, collections = mandir_compat_client
+    collections["mandir_temples"].docs.append(
+        {
+            "tenant_id": "tenant-1",
+            "app_key": "mandirmitra",
+            "name": "Demo Temple",
+            "platform_can_write": True,
+        }
+    )
+    app.dependency_overrides[get_current_user] = lambda: {
+        "tenant_id": "platform",
+        "id": "platform-admin",
+        "user_id": "platform-admin",
+        "role": "super_admin",
+        "app_key": "mandirmitra",
+        "is_superuser": True,
+    }
+
+    response = client.post(
+        "/api/v1/sevas/",
+        headers={"X-Tenant-ID": "tenant-1", "X-App-Key": "mandirmitra"},
+        json={"name_english": "Niranthara Seva", "amount": 100},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["name"] == "Niranthara Seva"
+
+
 def test_seva_reschedule_request_and_approval(mandir_compat_client):
     client, collections = mandir_compat_client
     collections["mandir_seva_bookings"].docs.append(

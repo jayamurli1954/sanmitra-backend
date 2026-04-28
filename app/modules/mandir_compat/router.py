@@ -2912,6 +2912,24 @@ async def _resolve_tenant_for_mandir_request(
     return resolve_tenant_id(current_user, x_tenant_id)
 
 
+async def _assert_platform_can_write_tenant(
+    current_user: dict[str, Any],
+    *,
+    tenant_id: str,
+    app_key: str,
+) -> None:
+    if not _is_platform_super_admin(current_user):
+        return
+
+    doc = await get_collection("mandir_temples").find_one({"tenant_id": tenant_id, "app_key": app_key}) or {}
+    if not bool(doc.get("platform_can_write", False)):
+        tenant_name = str(doc.get("name") or doc.get("trust_name") or "Selected tenant").strip()
+        raise HTTPException(
+            status_code=403,
+            detail=f"{tenant_name} is read-only for the platform administrator.",
+        )
+
+
 async def _payment_accounts(tenant_id: str, app_key: str) -> dict[str, list[dict[str, Any]]]:
     cash_accounts: list[dict[str, Any]] = []
     bank_accounts: list[dict[str, Any]] = []
@@ -3744,6 +3762,7 @@ async def create_seva(
         _to_positive_int(x_temple_id),
     )
     app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    await _assert_platform_can_write_tenant(current_user, tenant_id=tenant_id, app_key=app_key)
 
     item = _build_seva_item(payload, tenant_id=tenant_id, app_key=app_key)
     try:
@@ -3769,6 +3788,7 @@ async def update_seva(
         _to_positive_int(x_temple_id),
     )
     app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    await _assert_platform_can_write_tenant(current_user, tenant_id=tenant_id, app_key=app_key)
 
     patch = _build_seva_patch(payload)
     patch.pop("id", None)
@@ -3804,6 +3824,7 @@ async def delete_seva(
         _to_positive_int(x_temple_id),
     )
     app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    await _assert_platform_can_write_tenant(current_user, tenant_id=tenant_id, app_key=app_key)
 
     col = get_collection("mandir_sevas")
     await col.delete_one({"id": seva_id, "tenant_id": tenant_id, "app_key": app_key})
@@ -3842,6 +3863,7 @@ async def import_sevas(
         _to_positive_int(x_temple_id),
     )
     app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    await _assert_platform_can_write_tenant(current_user, tenant_id=tenant_id, app_key=app_key)
 
     filename = str(file.filename or "").strip().lower()
     if filename and not filename.endswith(".csv"):
