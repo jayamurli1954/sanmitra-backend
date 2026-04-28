@@ -51,7 +51,13 @@ class Settings:
         "https://gruhamitra.vercel.app",
         "https://invest-mitra.vercel.app",
         "http://localhost:3000",
-        "http://localhost:3001"
+        "http://localhost:3001",
+        "http://localhost:3200",
+        "http://127.0.0.1:3200",
+        "http://localhost:3201",
+        "http://127.0.0.1:3201",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
     ]))
     GOOGLE_OAUTH_CLIENT_IDS = [
         client_id.strip()

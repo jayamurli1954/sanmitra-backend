@@ -51,24 +51,38 @@ from app.accounting.service import (
     upsert_coa_mappings,
     upsert_source_accounts,
 )
+from app.accounting.context import AccountingContext, resolve_accounting_context
 from app.core.auth.dependencies import get_current_user
-from app.core.tenants.context import resolve_tenant_id
 from app.db.postgres import get_async_session
 
 router = APIRouter(prefix="/accounting", tags=["accounting"])
+
+
+async def enforce_accounting_route_tenant(
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+    x_accounting_entity_id: str | None = Header(default=None, alias="X-Accounting-Entity-ID"),
+) -> AccountingContext:
+    return resolve_accounting_context(
+        current_user=current_user,
+        x_tenant_id=x_tenant_id,
+        x_app_key=x_app_key,
+        x_accounting_entity_id=x_accounting_entity_id,
+    )
 
 @router.post("/accounts", response_model=AccountResponse)
 async def create_account_endpoint(
     payload: AccountCreateRequest,
     session: AsyncSession = Depends(get_async_session),
-    current_user: dict = Depends(get_current_user),
-    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    accounting_context: AccountingContext = Depends(enforce_accounting_route_tenant),
 ):
-    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
     try:
         account = await create_account(
             session,
-            tenant_id=tenant_id,
+            app_key=accounting_context.app_key,
+            tenant_id=accounting_context.tenant_id,
+            accounting_entity_id=accounting_context.accounting_entity_id,
             code=payload.code,
             name=payload.name,
             account_type=payload.type,
@@ -95,12 +109,15 @@ async def create_account_endpoint(
 @router.get("/accounts", response_model=list[AccountResponse])
 async def list_accounts_endpoint(
     session: AsyncSession = Depends(get_async_session),
-    current_user: dict = Depends(get_current_user),
-    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    accounting_context: AccountingContext = Depends(enforce_accounting_route_tenant),
 ):
-    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
     try:
-        accounts = await list_accounts(session, tenant_id=tenant_id)
+        accounts = await list_accounts(
+            session,
+            app_key=accounting_context.app_key,
+            tenant_id=accounting_context.tenant_id,
+            accounting_entity_id=accounting_context.accounting_entity_id,
+        )
     except (asyncio.TimeoutError, TimeoutError, SQLAlchemyTimeoutError):
         raise HTTPException(status_code=503, detail="Accounting service is temporarily busy. Please retry.")
     except SQLAlchemyError:
@@ -125,12 +142,16 @@ async def list_accounts_endpoint(
 async def upsert_source_accounts_endpoint(
     payload: CoaSourceAccountBulkUpsertRequest,
     session: AsyncSession = Depends(get_async_session),
-    current_user: dict = Depends(get_current_user),
-    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    accounting_context: AccountingContext = Depends(enforce_accounting_route_tenant),
 ):
-    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
     try:
-        rows = await upsert_source_accounts(session, tenant_id=tenant_id, items=payload.items)
+        rows = await upsert_source_accounts(
+            session,
+            app_key=accounting_context.app_key,
+            tenant_id=accounting_context.tenant_id,
+            accounting_entity_id=accounting_context.accounting_entity_id,
+            items=payload.items,
+        )
     except IntegrityError:
         raise HTTPException(status_code=409, detail="Duplicate source account code for source system")
 
@@ -141,11 +162,15 @@ async def upsert_source_accounts_endpoint(
 async def list_source_accounts_endpoint(
     source_system: SourceSystem | None = Query(default=None),
     session: AsyncSession = Depends(get_async_session),
-    current_user: dict = Depends(get_current_user),
-    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    accounting_context: AccountingContext = Depends(enforce_accounting_route_tenant),
 ):
-    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
-    rows = await list_source_accounts(session, tenant_id=tenant_id, source_system=source_system)
+    rows = await list_source_accounts(
+        session,
+        app_key=accounting_context.app_key,
+        tenant_id=accounting_context.tenant_id,
+        accounting_entity_id=accounting_context.accounting_entity_id,
+        source_system=source_system,
+    )
     return [CoaSourceAccountResponse(**row) for row in rows]
 
 
@@ -153,15 +178,15 @@ async def list_source_accounts_endpoint(
 async def upsert_coa_mappings_endpoint(
     payload: CoaMappingBulkUpsertRequest,
     session: AsyncSession = Depends(get_async_session),
-    current_user: dict = Depends(get_current_user),
-    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    accounting_context: AccountingContext = Depends(enforce_accounting_route_tenant),
 ):
-    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
     try:
         rows = await upsert_coa_mappings(
             session,
-            tenant_id=tenant_id,
-            mapped_by=current_user.get("sub", "system"),
+            app_key=accounting_context.app_key,
+            tenant_id=accounting_context.tenant_id,
+            accounting_entity_id=accounting_context.accounting_entity_id,
+            mapped_by=accounting_context.user_id,
             items=payload.items,
         )
     except AccountingNotFoundError as exc:
@@ -175,11 +200,16 @@ async def list_coa_mappings_endpoint(
     source_system: SourceSystem | None = Query(default=None),
     status: MappingStatus | None = Query(default=None),
     session: AsyncSession = Depends(get_async_session),
-    current_user: dict = Depends(get_current_user),
-    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    accounting_context: AccountingContext = Depends(enforce_accounting_route_tenant),
 ):
-    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
-    rows = await list_coa_mappings(session, tenant_id=tenant_id, source_system=source_system, status=status)
+    rows = await list_coa_mappings(
+        session,
+        app_key=accounting_context.app_key,
+        tenant_id=accounting_context.tenant_id,
+        accounting_entity_id=accounting_context.accounting_entity_id,
+        source_system=source_system,
+        status=status,
+    )
     return [CoaMappingResponse(**row) for row in rows]
 
 
@@ -187,11 +217,15 @@ async def list_coa_mappings_endpoint(
 async def coa_mapping_gaps_endpoint(
     source_system: SourceSystem = Query(...),
     session: AsyncSession = Depends(get_async_session),
-    current_user: dict = Depends(get_current_user),
-    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    accounting_context: AccountingContext = Depends(enforce_accounting_route_tenant),
 ):
-    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
-    rows = await get_coa_mapping_gaps(session, tenant_id=tenant_id, source_system=source_system)
+    rows = await get_coa_mapping_gaps(
+        session,
+        app_key=accounting_context.app_key,
+        tenant_id=accounting_context.tenant_id,
+        accounting_entity_id=accounting_context.accounting_entity_id,
+        source_system=source_system,
+    )
     return [CoaMappingGapResponse(**row) for row in rows]
 
 
@@ -200,11 +234,15 @@ async def coa_mapping_gaps_endpoint(
 async def coa_onboarding_status_endpoint(
     source_system: SourceSystem = Query(...),
     session: AsyncSession = Depends(get_async_session),
-    current_user: dict = Depends(get_current_user),
-    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    accounting_context: AccountingContext = Depends(enforce_accounting_route_tenant),
 ):
-    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
-    row = await get_coa_onboarding_status(session, tenant_id=tenant_id, source_system=source_system)
+    row = await get_coa_onboarding_status(
+        session,
+        app_key=accounting_context.app_key,
+        tenant_id=accounting_context.tenant_id,
+        accounting_entity_id=accounting_context.accounting_entity_id,
+        source_system=source_system,
+    )
     return CoaOnboardingStatusResponse(**row)
 
 
@@ -212,16 +250,16 @@ async def coa_onboarding_status_endpoint(
 async def approve_coa_mappings_endpoint(
     payload: CoaMappingApproveRequest,
     session: AsyncSession = Depends(get_async_session),
-    current_user: dict = Depends(get_current_user),
-    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    accounting_context: AccountingContext = Depends(enforce_accounting_route_tenant),
 ):
-    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
     try:
         row = await approve_coa_mappings(
             session,
-            tenant_id=tenant_id,
+            app_key=accounting_context.app_key,
+            tenant_id=accounting_context.tenant_id,
+            accounting_entity_id=accounting_context.accounting_entity_id,
             source_system=payload.source_system,
-            approved_by=current_user.get("sub", "system"),
+            approved_by=accounting_context.user_id,
             source_account_codes=payload.source_account_codes,
         )
     except AccountingValidationError as exc:
@@ -235,16 +273,16 @@ async def approve_coa_mappings_endpoint(
 async def post_source_journal_endpoint(
     payload: SourceJournalPostRequest,
     session: AsyncSession = Depends(get_async_session),
-    current_user: dict = Depends(get_current_user),
-    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    accounting_context: AccountingContext = Depends(enforce_accounting_route_tenant),
     x_idempotency_key: str | None = Header(default=None, alias="X-Idempotency-Key"),
 ):
-    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
     try:
         entry, created, resolved_lines = await post_source_journal_entry(
             session,
-            tenant_id=tenant_id,
-            created_by=current_user.get("sub", "system"),
+            app_key=accounting_context.app_key,
+            tenant_id=accounting_context.tenant_id,
+            accounting_entity_id=accounting_context.accounting_entity_id,
+            created_by=accounting_context.user_id,
             payload=payload,
             idempotency_key=x_idempotency_key,
         )
@@ -257,7 +295,7 @@ async def post_source_journal_endpoint(
 
     return SourceJournalPostResponse(
         id=entry.id,
-        tenant_id=tenant_id,
+        tenant_id=accounting_context.tenant_id,
         created=created,
         total_debit=entry.total_debit,
         total_credit=entry.total_credit,
@@ -269,16 +307,16 @@ async def post_source_journal_endpoint(
 async def post_journal_endpoint(
     payload: JournalPostRequest,
     session: AsyncSession = Depends(get_async_session),
-    current_user: dict = Depends(get_current_user),
-    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    accounting_context: AccountingContext = Depends(enforce_accounting_route_tenant),
     x_idempotency_key: str | None = Header(default=None, alias="X-Idempotency-Key"),
 ):
-    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
     try:
         entry, created = await post_journal_entry(
             session,
-            tenant_id=tenant_id,
-            created_by=current_user.get("sub", "system"),
+            app_key=accounting_context.app_key,
+            tenant_id=accounting_context.tenant_id,
+            accounting_entity_id=accounting_context.accounting_entity_id,
+            created_by=accounting_context.user_id,
             payload=payload,
             idempotency_key=x_idempotency_key,
         )
@@ -291,7 +329,7 @@ async def post_journal_endpoint(
 
     return JournalPostResponse(
         id=entry.id,
-        tenant_id=tenant_id,
+        tenant_id=accounting_context.tenant_id,
         created=created,
         total_debit=entry.total_debit,
         total_credit=entry.total_credit,
@@ -302,12 +340,16 @@ async def post_journal_endpoint(
 async def ledger_endpoint(
     account_id: int,
     session: AsyncSession = Depends(get_async_session),
-    current_user: dict = Depends(get_current_user),
-    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    accounting_context: AccountingContext = Depends(enforce_accounting_route_tenant),
 ):
-    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
     try:
-        _account, lines = await get_ledger_lines(session, tenant_id=tenant_id, account_id=account_id)
+        _account, lines = await get_ledger_lines(
+            session,
+            app_key=accounting_context.app_key,
+            tenant_id=accounting_context.tenant_id,
+            accounting_entity_id=accounting_context.accounting_entity_id,
+            account_id=account_id,
+        )
     except AccountingNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
 
@@ -318,11 +360,16 @@ async def ledger_endpoint(
 async def trial_balance_endpoint(
     as_of: date,
     session: AsyncSession = Depends(get_async_session),
-    current_user: dict = Depends(get_current_user),
-    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    current_user: dict | None = Depends(get_current_user),
+    accounting_context: AccountingContext = Depends(enforce_accounting_route_tenant),
 ):
-    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
-    lines, total_debit, total_credit = await get_trial_balance(session, tenant_id=tenant_id, as_of=as_of)
+    lines, total_debit, total_credit = await get_trial_balance(
+        session,
+        app_key=accounting_context.app_key,
+        tenant_id=accounting_context.tenant_id,
+        accounting_entity_id=accounting_context.accounting_entity_id,
+        as_of=as_of,
+    )
     return TrialBalanceResponse(
         as_of=as_of,
         lines=lines,
@@ -337,13 +384,13 @@ async def pnl_endpoint(
     from_date: date = Query(...),
     to_date: date = Query(...),
     session: AsyncSession = Depends(get_async_session),
-    current_user: dict = Depends(get_current_user),
-    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    accounting_context: AccountingContext = Depends(enforce_accounting_route_tenant),
 ):
-    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
     lines, income_total, expense_total, net_profit = await get_profit_loss(
         session,
-        tenant_id=tenant_id,
+        app_key=accounting_context.app_key,
+        tenant_id=accounting_context.tenant_id,
+        accounting_entity_id=accounting_context.accounting_entity_id,
         from_date=from_date,
         to_date=to_date,
     )
@@ -362,13 +409,13 @@ async def income_expenditure_endpoint(
     from_date: date = Query(...),
     to_date: date = Query(...),
     session: AsyncSession = Depends(get_async_session),
-    current_user: dict = Depends(get_current_user),
-    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    accounting_context: AccountingContext = Depends(enforce_accounting_route_tenant),
 ):
-    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
     lines, income_total, expense_total, net_profit = await get_profit_loss(
         session,
-        tenant_id=tenant_id,
+        app_key=accounting_context.app_key,
+        tenant_id=accounting_context.tenant_id,
+        accounting_entity_id=accounting_context.accounting_entity_id,
         from_date=from_date,
         to_date=to_date,
     )
@@ -387,13 +434,13 @@ async def receipts_payments_endpoint(
     from_date: date = Query(...),
     to_date: date = Query(...),
     session: AsyncSession = Depends(get_async_session),
-    current_user: dict = Depends(get_current_user),
-    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    accounting_context: AccountingContext = Depends(enforce_accounting_route_tenant),
 ):
-    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
     lines, total_receipts, total_payments, net_receipts = await get_receipts_payments(
         session,
-        tenant_id=tenant_id,
+        app_key=accounting_context.app_key,
+        tenant_id=accounting_context.tenant_id,
+        accounting_entity_id=accounting_context.accounting_entity_id,
         from_date=from_date,
         to_date=to_date,
     )
@@ -411,13 +458,13 @@ async def receipts_payments_endpoint(
 async def balance_sheet_endpoint(
     as_of: date = Query(...),
     session: AsyncSession = Depends(get_async_session),
-    current_user: dict = Depends(get_current_user),
-    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    accounting_context: AccountingContext = Depends(enforce_accounting_route_tenant),
 ):
-    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
     assets, liabilities, equity, total_assets, total_liabilities, total_equity = await get_balance_sheet(
         session,
-        tenant_id=tenant_id,
+        app_key=accounting_context.app_key,
+        tenant_id=accounting_context.tenant_id,
+        accounting_entity_id=accounting_context.accounting_entity_id,
         as_of=as_of,
     )
     return BalanceSheetResponse(
@@ -436,11 +483,15 @@ async def balance_sheet_endpoint(
 async def accounts_receivable_endpoint(
     as_of: date = Query(...),
     session: AsyncSession = Depends(get_async_session),
-    current_user: dict = Depends(get_current_user),
-    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    accounting_context: AccountingContext = Depends(enforce_accounting_route_tenant),
 ):
-    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
-    lines, total_balance = await get_accounts_receivable(session, tenant_id=tenant_id, as_of=as_of)
+    lines, total_balance = await get_accounts_receivable(
+        session,
+        app_key=accounting_context.app_key,
+        tenant_id=accounting_context.tenant_id,
+        accounting_entity_id=accounting_context.accounting_entity_id,
+        as_of=as_of,
+    )
     return ARApResponse(as_of=as_of, total_balance=total_balance, lines=lines)
 
 
@@ -448,11 +499,15 @@ async def accounts_receivable_endpoint(
 async def accounts_payable_endpoint(
     as_of: date = Query(...),
     session: AsyncSession = Depends(get_async_session),
-    current_user: dict = Depends(get_current_user),
-    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    accounting_context: AccountingContext = Depends(enforce_accounting_route_tenant),
 ):
-    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
-    lines, total_balance = await get_accounts_payable(session, tenant_id=tenant_id, as_of=as_of)
+    lines, total_balance = await get_accounts_payable(
+        session,
+        app_key=accounting_context.app_key,
+        tenant_id=accounting_context.tenant_id,
+        accounting_entity_id=accounting_context.accounting_entity_id,
+        as_of=as_of,
+    )
     return ARApResponse(as_of=as_of, total_balance=total_balance, lines=lines)
 
 

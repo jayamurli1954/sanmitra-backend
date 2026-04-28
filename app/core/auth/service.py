@@ -30,7 +30,11 @@ _MOBILE_OTP_INDEXES_READY = False
 
 
 def _token_payload_from_user(user: dict, app_key: str | None = None) -> dict:
-    resolved_app_key = resolve_app_key(app_key or user.get("app_key") or get_app_key())
+    user_app_key = str(user.get("app_key") or "").strip()
+    requested_app_key = resolve_app_key(app_key or get_app_key())
+    resolved_app_key = resolve_app_key(user_app_key or requested_app_key)
+    if user_app_key and requested_app_key != resolved_app_key and str(user.get("role") or "").strip() != "super_admin":
+        raise HTTPException(status_code=403, detail="App key mismatch for this account")
     return {
         "sub": user["user_id"],
         "email": user["email"],
@@ -378,6 +382,7 @@ async def verify_mobile_otp(
             full_name=clean_name,
             tenant_id=resolved_tenant,
             role="operator",
+            app_key=app_key,
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -498,6 +503,7 @@ async def login_google_user(id_token: str, tenant_id: str | None = None, app_key
             tenant_id=requested_tenant_id,
             role="operator",
             provider_subject=provider_subject,
+            app_key=app_key,
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -528,7 +534,10 @@ async def rotate_refresh_token(refresh_token: str, app_key: str | None = None):
         await tokens.update_one({"_id": record["_id"]}, {"$set": {"revoked": True, "revoked_at": now}})
         raise HTTPException(status_code=401, detail="Refresh token expired")
 
-    resolved_app_key = resolve_app_key(app_key or record.get("app_key") or payload.get("app_key"))
+    resolved_app_key = resolve_app_key(record.get("app_key") or payload.get("app_key") or app_key)
+    requested_app_key = resolve_app_key(app_key) if app_key else None
+    if requested_app_key and requested_app_key != resolved_app_key and str(record.get("role") or payload.get("role") or "").strip() != "super_admin":
+        raise HTTPException(status_code=403, detail="App key mismatch for this refresh token")
     user_payload = {
         "sub": record.get("user_id") or payload.get("sub"),
         "email": record.get("email") or payload.get("email"),
@@ -577,5 +586,3 @@ async def logout_refresh_token(refresh_token: str) -> None:
         {"jti": payload["jti"], "token_hash": _hash_token(refresh_token)},
         {"$set": {"revoked": True, "revoked_at": datetime.now(timezone.utc)}},
     )
-
-

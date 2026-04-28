@@ -11,7 +11,9 @@ class Account(Base):
     __tablename__ = "accounts"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    app_key: Mapped[str] = mapped_column(String(50), nullable=False, default="mandirmitra", server_default="mandirmitra")
     tenant_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    accounting_entity_id: Mapped[str] = mapped_column(String(100), nullable=False, default="primary", server_default="primary")
     code: Mapped[str | None] = mapped_column(String(30), nullable=True)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     type: Mapped[str] = mapped_column(String(30), nullable=False)
@@ -24,7 +26,7 @@ class Account(Base):
     canonical_mappings: Mapped[list["CoaMapping"]] = relationship(back_populates="canonical_account")
 
     __table_args__ = (
-        UniqueConstraint("tenant_id", "code", name="uq_accounts_tenant_code"),
+        UniqueConstraint("app_key", "tenant_id", "accounting_entity_id", "code", name="uq_accounts_app_tenant_entity_code"),
         CheckConstraint(
             "type IN ('asset','liability','equity','income','expense')",
             name="ck_accounts_type",
@@ -50,6 +52,7 @@ class Account(Base):
             name="ck_accounts_cash_bank_asset",
         ),
         Index("ix_accounts_tenant", "tenant_id"),
+        Index("ix_accounts_app_tenant_entity", "app_key", "tenant_id", "accounting_entity_id"),
     )
 
 
@@ -57,7 +60,9 @@ class JournalEntry(Base):
     __tablename__ = "journal_entries"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    app_key: Mapped[str] = mapped_column(String(50), nullable=False, default="mandirmitra", server_default="mandirmitra")
     tenant_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    accounting_entity_id: Mapped[str] = mapped_column(String(100), nullable=False, default="primary", server_default="primary")
     entry_date: Mapped[date] = mapped_column(Date, nullable=False)
     description: Mapped[str | None] = mapped_column(Text(), nullable=True)
     reference: Mapped[str | None] = mapped_column(String(120), nullable=True)
@@ -70,10 +75,11 @@ class JournalEntry(Base):
     lines: Mapped[list["JournalLine"]] = relationship(back_populates="journal_entry", cascade="all, delete-orphan")
 
     __table_args__ = (
-        UniqueConstraint("tenant_id", "idempotency_key", name="uq_journal_tenant_idempotency"),
+        UniqueConstraint("app_key", "tenant_id", "accounting_entity_id", "idempotency_key", name="uq_journal_app_tenant_entity_idempotency"),
         CheckConstraint("total_debit = total_credit", name="ck_journal_entries_balanced"),
         CheckConstraint("total_debit > 0 AND total_credit > 0", name="ck_journal_entries_positive_totals"),
         Index("ix_journal_entries_tenant", "tenant_id"),
+        Index("ix_journal_entries_app_tenant_entity", "app_key", "tenant_id", "accounting_entity_id"),
         Index("ix_journal_entries_date", "entry_date"),
     )
 
@@ -82,6 +88,9 @@ class JournalLine(Base):
     __tablename__ = "journal_lines"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    app_key: Mapped[str] = mapped_column(String(50), nullable=False, default="mandirmitra", server_default="mandirmitra")
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    accounting_entity_id: Mapped[str] = mapped_column(String(100), nullable=False, default="primary", server_default="primary")
     journal_id: Mapped[int] = mapped_column(ForeignKey("journal_entries.id", ondelete="CASCADE"), nullable=False)
     account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"), nullable=False)
     debit: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False, default=Decimal("0.00"), server_default="0")
@@ -97,6 +106,7 @@ class JournalLine(Base):
         ),
         Index("ix_journal_lines_journal", "journal_id"),
         Index("ix_journal_lines_account", "account_id"),
+        Index("ix_journal_lines_app_tenant_entity", "app_key", "tenant_id", "accounting_entity_id"),
     )
 
 
@@ -104,7 +114,9 @@ class CoaSourceAccount(Base):
     __tablename__ = "coa_source_accounts"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    app_key: Mapped[str] = mapped_column(String(50), nullable=False, default="mandirmitra", server_default="mandirmitra")
     tenant_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    accounting_entity_id: Mapped[str] = mapped_column(String(100), nullable=False, default="primary", server_default="primary")
     source_system: Mapped[str] = mapped_column(String(30), nullable=False)
     source_account_code: Mapped[str] = mapped_column(String(50), nullable=False)
     source_account_name: Mapped[str] = mapped_column(String(200), nullable=False)
@@ -126,17 +138,20 @@ class CoaSourceAccount(Base):
 
     __table_args__ = (
         UniqueConstraint(
+            "app_key",
             "tenant_id",
+            "accounting_entity_id",
             "source_system",
             "source_account_code",
-            name="uq_coa_source_accounts_tenant_system_code",
+            name="uq_coa_source_accounts_app_tenant_entity_system_code",
         ),
         CheckConstraint(
             "source_system IN ('ghar_mitra','mandir_mitra','mitra_books','legal_mitra','invest_mitra')",
             name="ck_coa_source_accounts_system",
         ),
         Index("ix_coa_source_accounts_tenant", "tenant_id"),
-        Index("ix_coa_source_accounts_tenant_system", "tenant_id", "source_system"),
+        Index("ix_coa_source_accounts_app_tenant_entity", "app_key", "tenant_id", "accounting_entity_id"),
+        Index("ix_coa_source_accounts_app_tenant_entity_system", "app_key", "tenant_id", "accounting_entity_id", "source_system"),
     )
 
 
@@ -144,7 +159,9 @@ class CoaMapping(Base):
     __tablename__ = "coa_mappings"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    app_key: Mapped[str] = mapped_column(String(50), nullable=False, default="mandirmitra", server_default="mandirmitra")
     tenant_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    accounting_entity_id: Mapped[str] = mapped_column(String(100), nullable=False, default="primary", server_default="primary")
     source_account_id: Mapped[int] = mapped_column(
         ForeignKey("coa_source_accounts.id", ondelete="CASCADE"),
         nullable=False,
@@ -166,8 +183,9 @@ class CoaMapping(Base):
     canonical_account: Mapped[Account] = relationship(back_populates="canonical_mappings")
 
     __table_args__ = (
-        UniqueConstraint("tenant_id", "source_account_id", name="uq_coa_mappings_tenant_source_account"),
+        UniqueConstraint("app_key", "tenant_id", "accounting_entity_id", "source_account_id", name="uq_coa_mappings_app_tenant_entity_source_account"),
         CheckConstraint("status IN ('active','draft','inactive')", name="ck_coa_mappings_status"),
         Index("ix_coa_mappings_tenant", "tenant_id"),
-        Index("ix_coa_mappings_tenant_status", "tenant_id", "status"),
+        Index("ix_coa_mappings_app_tenant_entity", "app_key", "tenant_id", "accounting_entity_id"),
+        Index("ix_coa_mappings_app_tenant_entity_status", "app_key", "tenant_id", "accounting_entity_id", "status"),
     )

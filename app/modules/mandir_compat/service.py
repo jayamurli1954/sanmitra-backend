@@ -82,13 +82,16 @@ def _pick_prefer_non_placeholder(primary: object, *fallbacks: object) -> str | N
 
 
 
-async def _latest_mandir_onboarding_events_by_tenant(tenant_ids: list[str]) -> dict[str, dict]:
+async def _latest_mandir_onboarding_events_by_tenant(tenant_ids: list[str], app_key: str = "mandirmitra") -> dict[str, dict]:
     if not tenant_ids:
         return {}
 
+    app_key = str(app_key or "mandirmitra").strip()
     onboarding_events = get_collection(MANDIR_ONBOARDING_COLLECTION)
     try:
-        docs = await onboarding_events.find({"tenant_id": {"$in": tenant_ids}}).sort("created_at", -1).to_list(
+        docs = await onboarding_events.find(
+            {"tenant_id": {"$in": tenant_ids}, "app_key": app_key}
+        ).sort("created_at", -1).to_list(
             length=max(200, len(tenant_ids) * 3)
         )
     except Exception:
@@ -103,16 +106,18 @@ async def _latest_mandir_onboarding_events_by_tenant(tenant_ids: list[str]) -> d
 
 
 
-async def _latest_core_onboarding_requests_by_tenant(tenant_ids: list[str]) -> dict[str, dict]:
+async def _latest_core_onboarding_requests_by_tenant(tenant_ids: list[str], app_key: str = "mandirmitra") -> dict[str, dict]:
     if not tenant_ids:
         return {}
 
+    app_key = str(app_key or "mandirmitra").strip()
     requests = get_collection("core_onboarding_requests")
     try:
         docs = await requests.find(
             {
                 "approved_tenant_id": {"$in": tenant_ids},
                 "status": "approved",
+                "app_key": app_key,
             }
         ).sort("approved_at", -1).to_list(length=max(200, len(tenant_ids) * 3))
     except Exception:
@@ -214,8 +219,9 @@ async def _allocate_temple_numeric_id() -> int:
     return new_id
 
 
-async def ensure_temple_numeric_id(tenant_id: str) -> int:
+async def ensure_temple_numeric_id(tenant_id: str, app_key: str = "mandirmitra") -> int:
     tenant_id = str(tenant_id or "").strip()
+    app_key = str(app_key or "mandirmitra").strip()
     if not tenant_id:
         raise HTTPException(status_code=400, detail="tenant_id is required")
 
@@ -224,7 +230,7 @@ async def ensure_temple_numeric_id(tenant_id: str) -> int:
 
     current: dict | None = None
     try:
-        current = await temples.find_one({"tenant_id": tenant_id})
+        current = await temples.find_one({"tenant_id": tenant_id, "app_key": app_key})
     except Exception:
         current = None
 
@@ -238,7 +244,7 @@ async def ensure_temple_numeric_id(tenant_id: str) -> int:
                 patch["id"] = existing_temple_id
             if patch:
                 patch["updated_at"] = datetime.now(timezone.utc)
-                await temples.update_one({"tenant_id": tenant_id}, {"$set": patch}, upsert=False)
+                await temples.update_one({"tenant_id": tenant_id, "app_key": app_key}, {"$set": patch}, upsert=False)
         except Exception:
             pass
         return existing_temple_id
@@ -246,10 +252,11 @@ async def ensure_temple_numeric_id(tenant_id: str) -> int:
     assigned_temple_id = await _allocate_temple_numeric_id()
     now = datetime.now(timezone.utc)
     await temples.update_one(
-        {"tenant_id": tenant_id},
+        {"tenant_id": tenant_id, "app_key": app_key},
         {
             "$set": {
                 "tenant_id": tenant_id,
+                "app_key": app_key,
                 "temple_id": assigned_temple_id,
                 "id": assigned_temple_id,
                 "updated_at": now,
@@ -263,8 +270,9 @@ async def ensure_temple_numeric_id(tenant_id: str) -> int:
     return assigned_temple_id
 
 
-async def resolve_tenant_by_temple_id(temple_id: int | None) -> str | None:
+async def resolve_tenant_by_temple_id(temple_id: int | None, app_key: str = "mandirmitra") -> str | None:
     parsed_id = _to_positive_int(temple_id)
+    app_key = str(app_key or "mandirmitra").strip()
     if not parsed_id:
         return None
 
@@ -272,7 +280,7 @@ async def resolve_tenant_by_temple_id(temple_id: int | None) -> str | None:
     temples = get_collection(MANDIR_TEMPLES_COLLECTION)
 
     try:
-        doc = await temples.find_one({"$or": [{"temple_id": parsed_id}, {"id": parsed_id}]})
+        doc = await temples.find_one({"$or": [{"temple_id": parsed_id}, {"id": parsed_id}], "app_key": app_key})
     except Exception:
         doc = None
 
@@ -280,10 +288,11 @@ async def resolve_tenant_by_temple_id(temple_id: int | None) -> str | None:
     return tenant_id or None
 
 
-async def list_mandir_temples(*, tenant_id: str | None = None, limit: int = 500) -> list[dict]:
+async def list_mandir_temples(*, tenant_id: str | None = None, app_key: str = "mandirmitra", limit: int = 500) -> list[dict]:
     await ensure_mandir_compat_indexes()
+    app_key = str(app_key or "mandirmitra").strip()
     temples = get_collection(MANDIR_TEMPLES_COLLECTION)
-    query: dict = {}
+    query: dict = {"app_key": app_key}
     if tenant_id:
         query["tenant_id"] = str(tenant_id).strip()
 
@@ -293,8 +302,8 @@ async def list_mandir_temples(*, tenant_id: str | None = None, limit: int = 500)
         docs = []
 
     tenant_ids = [str(doc.get("tenant_id") or "").strip() for doc in docs if str(doc.get("tenant_id") or "").strip()]
-    onboarding_events_by_tenant = await _latest_mandir_onboarding_events_by_tenant(tenant_ids)
-    approved_requests_by_tenant = await _latest_core_onboarding_requests_by_tenant(tenant_ids)
+    onboarding_events_by_tenant = await _latest_mandir_onboarding_events_by_tenant(tenant_ids, app_key=app_key)
+    approved_requests_by_tenant = await _latest_core_onboarding_requests_by_tenant(tenant_ids, app_key=app_key)
 
     rows: list[dict] = []
     for doc in docs:
@@ -452,6 +461,7 @@ async def create_mandir_first_login_onboarding(
             full_name=payload.admin_name,
             tenant_id=tenant_id,
             role="tenant_admin",
+            app_key=resolved_app_key,
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -557,6 +567,7 @@ async def ensure_temple_upi_config(
     upi_payee_name: str,
     trust_name: str,
     temple_name: str,
+    app_key: str = "mandirmitra",
     qr_code_image_url: str | None = None,
     admin_whatsapp: str | None = None,
     city: str | None = None,
@@ -565,8 +576,9 @@ async def ensure_temple_upi_config(
     """Idempotent: seed/update UPI config for a specific temple by numeric ID.
     Only sets fields if they are currently missing; never overwrites admin-set values.
     """
+    app_key = str(app_key or "mandirmitra").strip()
     temples = get_collection(MANDIR_TEMPLES_COLLECTION)
-    doc = await temples.find_one({"$or": [{"temple_id": temple_id}, {"id": temple_id}]})
+    doc = await temples.find_one({"$or": [{"temple_id": temple_id}, {"id": temple_id}], "app_key": app_key})
     if not doc:
         return  # Temple not yet registered
 
@@ -605,13 +617,14 @@ async def ensure_temple_upi_config(
         )
 
 
-async def ensure_sevas_copied(*, source_temple_id: int, target_temple_id: int) -> int:
+async def ensure_sevas_copied(*, source_temple_id: int, target_temple_id: int, app_key: str = "mandirmitra") -> int:
     """Copy all active sevas from source temple to target temple.
     Skips sevas that already exist in target (matched by name_english, case-insensitive).
     Returns number of sevas copied.
     """
-    source_tenant_id = await resolve_tenant_by_temple_id(source_temple_id)
-    target_tenant_id = await resolve_tenant_by_temple_id(target_temple_id)
+    app_key = str(app_key or "mandirmitra").strip()
+    source_tenant_id = await resolve_tenant_by_temple_id(source_temple_id, app_key=app_key)
+    target_tenant_id = await resolve_tenant_by_temple_id(target_temple_id, app_key=app_key)
     if not source_tenant_id or not target_tenant_id:
         return 0
 
@@ -619,7 +632,7 @@ async def ensure_sevas_copied(*, source_temple_id: int, target_temple_id: int) -
 
     # Load source sevas
     source_sevas = await col.find(
-        {"tenant_id": source_tenant_id, "is_active": True}
+        {"tenant_id": source_tenant_id, "app_key": app_key, "is_active": True}
     ).to_list(length=500)
 
     if not source_sevas:
@@ -627,7 +640,7 @@ async def ensure_sevas_copied(*, source_temple_id: int, target_temple_id: int) -
 
     # Load existing target seva names to avoid duplicates
     existing = await col.find(
-        {"tenant_id": target_tenant_id},
+        {"tenant_id": target_tenant_id, "app_key": app_key},
         {"name_english": 1, "name": 1},
     ).to_list(length=500)
     existing_names = {
@@ -645,7 +658,7 @@ async def ensure_sevas_copied(*, source_temple_id: int, target_temple_id: int) -
         new_doc = {
             "id": str(uuid4()),
             "tenant_id": target_tenant_id,
-            "app_key": resolve_app_key("mandirmitra"),
+            "app_key": app_key,
             "name": src_name,
             "name_english": src_name,
             "name_kannada": str(src.get("name_kannada") or ""),
@@ -677,11 +690,12 @@ async def ensure_sevas_copied(*, source_temple_id: int, target_temple_id: int) -
     return copied
 
 
-async def ensure_demo_mandir_bootstrap() -> None:
+async def ensure_demo_mandir_bootstrap(app_key: str = "mandirmitra") -> None:
     settings = get_settings()
     if not settings.DEMO_MANDIR_BOOTSTRAP:
         return
 
+    app_key = str(app_key or "mandirmitra").strip()
     await ensure_mandir_compat_indexes()
 
     tenant_id = str(settings.DEMO_MANDIR_TENANT_ID or "").strip()
@@ -712,21 +726,22 @@ async def ensure_demo_mandir_bootstrap() -> None:
                 full_name=admin_name,
                 tenant_id=tenant_id,
                 role="tenant_admin",
+                app_key=app_key,
             )
         except ValueError:
             pass
 
     now = datetime.now(timezone.utc)
-    temple_id = await ensure_temple_numeric_id(tenant_id)
+    temple_id = await ensure_temple_numeric_id(tenant_id, app_key=app_key)
     temples = get_collection(MANDIR_TEMPLES_COLLECTION)
     await temples.update_one(
-        {"tenant_id": tenant_id},
+        {"tenant_id": tenant_id, "app_key": app_key},
         {
             "$set": {
                 "id": temple_id,
                 "temple_id": temple_id,
                 "tenant_id": tenant_id,
-                "app_key": resolve_app_key("mandirmitra"),
+                "app_key": app_key,
                 "name": temple_name,
                 "temple_name": temple_name,
                 "trust_name": trust_name,

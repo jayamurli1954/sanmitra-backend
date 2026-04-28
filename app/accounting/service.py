@@ -43,6 +43,14 @@ def _match_confidence(score: float) -> Decimal:
     return _q(Decimal(str(bounded)))
 
 
+def _accounting_scope(model, *, app_key: str, tenant_id: str, accounting_entity_id: str):
+    return (
+        model.app_key == app_key,
+        model.tenant_id == tenant_id,
+        model.accounting_entity_id == accounting_entity_id,
+    )
+
+
 def suggest_canonical_account(source_code: str, source_name: str, canonical_accounts: list[Account]) -> dict | None:
     if not canonical_accounts:
         return None
@@ -199,6 +207,8 @@ async def create_account(
     session: AsyncSession,
     *,
     tenant_id: str,
+    app_key: str = "mandirmitra",
+    accounting_entity_id: str = "primary",
     code: str | None,
     name: str,
     account_type: str,
@@ -208,7 +218,9 @@ async def create_account(
     is_payable: bool,
 ) -> Account:
     account = Account(
+        app_key=app_key,
         tenant_id=tenant_id,
+        accounting_entity_id=accounting_entity_id,
         code=code,
         name=name,
         type=account_type,
@@ -223,8 +235,18 @@ async def create_account(
     return account
 
 
-async def list_accounts(session: AsyncSession, *, tenant_id: str) -> list[Account]:
-    stmt: Select[tuple[Account]] = select(Account).where(Account.tenant_id == tenant_id).order_by(Account.name.asc())
+async def list_accounts(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    app_key: str = "mandirmitra",
+    accounting_entity_id: str = "primary",
+) -> list[Account]:
+    stmt: Select[tuple[Account]] = (
+        select(Account)
+        .where(*_accounting_scope(Account, app_key=app_key, tenant_id=tenant_id, accounting_entity_id=accounting_entity_id))
+        .order_by(Account.name.asc())
+    )
     rows = await session.execute(stmt)
     return list(rows.scalars().all())
 
@@ -233,6 +255,8 @@ async def post_journal_entry(
     session: AsyncSession,
     *,
     tenant_id: str,
+    app_key: str = "mandirmitra",
+    accounting_entity_id: str = "primary",
     created_by: str,
     payload: JournalPostRequest,
     idempotency_key: str | None,
@@ -241,7 +265,7 @@ async def post_journal_entry(
 
     if idempotency_key:
         existing_stmt = select(JournalEntry).where(
-            JournalEntry.tenant_id == tenant_id,
+            *_accounting_scope(JournalEntry, app_key=app_key, tenant_id=tenant_id, accounting_entity_id=accounting_entity_id),
             JournalEntry.idempotency_key == idempotency_key,
         )
         existing = (await session.execute(existing_stmt)).scalar_one_or_none()
@@ -249,14 +273,19 @@ async def post_journal_entry(
             return existing, False
 
     account_ids = [line[0] for line in normalized_lines]
-    account_stmt = select(Account.id).where(Account.tenant_id == tenant_id, Account.id.in_(account_ids))
+    account_stmt = select(Account.id).where(
+        *_accounting_scope(Account, app_key=app_key, tenant_id=tenant_id, accounting_entity_id=accounting_entity_id),
+        Account.id.in_(account_ids),
+    )
     available_account_ids = set((await session.execute(account_stmt)).scalars().all())
     missing_account_ids = sorted(set(account_ids) - available_account_ids)
     if missing_account_ids:
         raise AccountingNotFoundError(f"Accounts not found for tenant: {missing_account_ids}")
 
     journal_entry = JournalEntry(
+        app_key=app_key,
         tenant_id=tenant_id,
+        accounting_entity_id=accounting_entity_id,
         entry_date=payload.entry_date,
         description=payload.description,
         reference=payload.reference,
@@ -271,6 +300,9 @@ async def post_journal_entry(
     for account_id, debit, credit in normalized_lines:
         session.add(
             JournalLine(
+                app_key=app_key,
+                tenant_id=tenant_id,
+                accounting_entity_id=accounting_entity_id,
                 journal_id=journal_entry.id,
                 account_id=account_id,
                 debit=debit,
@@ -294,6 +326,8 @@ async def upsert_source_accounts(
     session: AsyncSession,
     *,
     tenant_id: str,
+    app_key: str = "mandirmitra",
+    accounting_entity_id: str = "primary",
     items: list[CoaSourceAccountIn],
 ) -> list[dict]:
     normalized_items: list[tuple[str, str, str, str | None]] = []
@@ -316,7 +350,7 @@ async def upsert_source_accounts(
     existing_by_key: dict[tuple[str, str], CoaSourceAccount] = {}
     for source_system, codes in by_system.items():
         stmt = select(CoaSourceAccount).where(
-            CoaSourceAccount.tenant_id == tenant_id,
+            *_accounting_scope(CoaSourceAccount, app_key=app_key, tenant_id=tenant_id, accounting_entity_id=accounting_entity_id),
             CoaSourceAccount.source_system == source_system,
             CoaSourceAccount.source_account_code.in_(codes),
         )
@@ -331,7 +365,9 @@ async def upsert_source_accounts(
 
         if existing is None:
             existing = CoaSourceAccount(
+                app_key=app_key,
                 tenant_id=tenant_id,
+                accounting_entity_id=accounting_entity_id,
                 source_system=source_system,
                 source_account_code=source_account_code,
                 source_account_name=source_account_name,
@@ -354,7 +390,7 @@ async def upsert_source_accounts(
 
     touched_ids = [source_account.id for source_account in touched_accounts]
     mapped_stmt = select(CoaMapping.source_account_id).where(
-        CoaMapping.tenant_id == tenant_id,
+        *_accounting_scope(CoaMapping, app_key=app_key, tenant_id=tenant_id, accounting_entity_id=accounting_entity_id),
         CoaMapping.status == "active",
         CoaMapping.source_account_id.in_(touched_ids),
     )
@@ -378,9 +414,13 @@ async def list_source_accounts(
     session: AsyncSession,
     *,
     tenant_id: str,
+    app_key: str = "mandirmitra",
+    accounting_entity_id: str = "primary",
     source_system: str | None = None,
 ) -> list[dict]:
-    stmt = select(CoaSourceAccount).where(CoaSourceAccount.tenant_id == tenant_id)
+    stmt = select(CoaSourceAccount).where(
+        *_accounting_scope(CoaSourceAccount, app_key=app_key, tenant_id=tenant_id, accounting_entity_id=accounting_entity_id)
+    )
     if source_system:
         stmt = stmt.where(CoaSourceAccount.source_system == source_system)
 
@@ -392,7 +432,7 @@ async def list_source_accounts(
         return []
 
     mapped_stmt = select(CoaMapping.source_account_id).where(
-        CoaMapping.tenant_id == tenant_id,
+        *_accounting_scope(CoaMapping, app_key=app_key, tenant_id=tenant_id, accounting_entity_id=accounting_entity_id),
         CoaMapping.status == "active",
         CoaMapping.source_account_id.in_(source_ids),
     )
@@ -416,6 +456,8 @@ async def upsert_coa_mappings(
     session: AsyncSession,
     *,
     tenant_id: str,
+    app_key: str = "mandirmitra",
+    accounting_entity_id: str = "primary",
     mapped_by: str,
     items: list[CoaMappingIn],
 ) -> list[dict]:
@@ -435,7 +477,7 @@ async def upsert_coa_mappings(
     source_lookup: dict[tuple[str, str], CoaSourceAccount] = {}
     for source_system, codes in source_codes_by_system.items():
         stmt = select(CoaSourceAccount).where(
-            CoaSourceAccount.tenant_id == tenant_id,
+            *_accounting_scope(CoaSourceAccount, app_key=app_key, tenant_id=tenant_id, accounting_entity_id=accounting_entity_id),
             CoaSourceAccount.source_system == source_system,
             CoaSourceAccount.source_account_code.in_(codes),
         )
@@ -449,7 +491,10 @@ async def upsert_coa_mappings(
         raise AccountingNotFoundError(f"Source accounts not found: {formatted}")
 
     canonical_account_ids = {item.canonical_account_id for item in key_to_item.values()}
-    account_stmt = select(Account).where(Account.tenant_id == tenant_id, Account.id.in_(canonical_account_ids))
+    account_stmt = select(Account).where(
+        *_accounting_scope(Account, app_key=app_key, tenant_id=tenant_id, accounting_entity_id=accounting_entity_id),
+        Account.id.in_(canonical_account_ids),
+    )
     canonical_accounts = list((await session.execute(account_stmt)).scalars().all())
     canonical_by_id = {account.id: account for account in canonical_accounts}
 
@@ -459,7 +504,7 @@ async def upsert_coa_mappings(
 
     source_ids = [source_lookup[key].id for key in key_to_item.keys()]
     existing_stmt = select(CoaMapping).where(
-        CoaMapping.tenant_id == tenant_id,
+        *_accounting_scope(CoaMapping, app_key=app_key, tenant_id=tenant_id, accounting_entity_id=accounting_entity_id),
         CoaMapping.source_account_id.in_(source_ids),
     )
     existing_mappings = list((await session.execute(existing_stmt)).scalars().all())
@@ -472,7 +517,9 @@ async def upsert_coa_mappings(
 
         if existing is None:
             existing = CoaMapping(
+                app_key=app_key,
                 tenant_id=tenant_id,
+                accounting_entity_id=accounting_entity_id,
                 source_account_id=source_account.id,
                 canonical_account_id=item.canonical_account_id,
                 status=item.status,
@@ -501,7 +548,10 @@ async def upsert_coa_mappings(
         select(CoaMapping, CoaSourceAccount, Account)
         .join(CoaSourceAccount, CoaSourceAccount.id == CoaMapping.source_account_id)
         .join(Account, Account.id == CoaMapping.canonical_account_id)
-        .where(CoaMapping.id.in_(mapping_ids), CoaMapping.tenant_id == tenant_id)
+        .where(
+            CoaMapping.id.in_(mapping_ids),
+            *_accounting_scope(CoaMapping, app_key=app_key, tenant_id=tenant_id, accounting_entity_id=accounting_entity_id),
+        )
         .order_by(CoaSourceAccount.source_system.asc(), CoaSourceAccount.source_account_code.asc())
     )
     rows = (await session.execute(stmt)).all()
@@ -525,6 +575,8 @@ async def list_coa_mappings(
     session: AsyncSession,
     *,
     tenant_id: str,
+    app_key: str = "mandirmitra",
+    accounting_entity_id: str = "primary",
     source_system: str | None = None,
     status: str | None = None,
 ) -> list[dict]:
@@ -532,7 +584,7 @@ async def list_coa_mappings(
         select(CoaMapping, CoaSourceAccount, Account)
         .join(CoaSourceAccount, CoaSourceAccount.id == CoaMapping.source_account_id)
         .join(Account, Account.id == CoaMapping.canonical_account_id)
-        .where(CoaMapping.tenant_id == tenant_id)
+        .where(*_accounting_scope(CoaMapping, app_key=app_key, tenant_id=tenant_id, accounting_entity_id=accounting_entity_id))
     )
 
     if source_system:
@@ -562,10 +614,12 @@ async def get_coa_mapping_gaps(
     session: AsyncSession,
     *,
     tenant_id: str,
+    app_key: str = "mandirmitra",
+    accounting_entity_id: str = "primary",
     source_system: str,
 ) -> list[dict]:
     source_stmt = select(CoaSourceAccount).where(
-        CoaSourceAccount.tenant_id == tenant_id,
+        *_accounting_scope(CoaSourceAccount, app_key=app_key, tenant_id=tenant_id, accounting_entity_id=accounting_entity_id),
         CoaSourceAccount.source_system == source_system,
         CoaSourceAccount.is_active.is_(True),
     )
@@ -576,13 +630,23 @@ async def get_coa_mapping_gaps(
 
     source_ids = [source_account.id for source_account in source_accounts]
     mapped_stmt = select(CoaMapping.source_account_id).where(
-        CoaMapping.tenant_id == tenant_id,
+        *_accounting_scope(CoaMapping, app_key=app_key, tenant_id=tenant_id, accounting_entity_id=accounting_entity_id),
         CoaMapping.status == "active",
         CoaMapping.source_account_id.in_(source_ids),
     )
     mapped_source_ids = set((await session.execute(mapped_stmt)).scalars().all())
 
-    canonical_accounts = list((await session.execute(select(Account).where(Account.tenant_id == tenant_id))).scalars().all())
+    canonical_accounts = list(
+        (
+            await session.execute(
+                select(Account).where(
+                    *_accounting_scope(Account, app_key=app_key, tenant_id=tenant_id, accounting_entity_id=accounting_entity_id)
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
 
     gaps: list[dict] = []
     for source_account in source_accounts:
@@ -612,10 +676,12 @@ async def get_coa_onboarding_status(
     session: AsyncSession,
     *,
     tenant_id: str,
+    app_key: str = "mandirmitra",
+    accounting_entity_id: str = "primary",
     source_system: str,
 ) -> dict:
     source_stmt = select(CoaSourceAccount).where(
-        CoaSourceAccount.tenant_id == tenant_id,
+        *_accounting_scope(CoaSourceAccount, app_key=app_key, tenant_id=tenant_id, accounting_entity_id=accounting_entity_id),
         CoaSourceAccount.source_system == source_system,
         CoaSourceAccount.is_active.is_(True),
     )
@@ -632,7 +698,7 @@ async def get_coa_onboarding_status(
 
     source_ids = [source_account.id for source_account in source_accounts]
     mapping_stmt = select(CoaMapping.source_account_id, CoaMapping.status).where(
-        CoaMapping.tenant_id == tenant_id,
+        *_accounting_scope(CoaMapping, app_key=app_key, tenant_id=tenant_id, accounting_entity_id=accounting_entity_id),
         CoaMapping.source_account_id.in_(source_ids),
     )
     mapping_rows = (await session.execute(mapping_stmt)).all()
@@ -658,12 +724,14 @@ async def approve_coa_mappings(
     session: AsyncSession,
     *,
     tenant_id: str,
+    app_key: str = "mandirmitra",
+    accounting_entity_id: str = "primary",
     source_system: str,
     approved_by: str,
     source_account_codes: list[str] | None = None,
 ) -> dict:
     source_stmt = select(CoaSourceAccount).where(
-        CoaSourceAccount.tenant_id == tenant_id,
+        *_accounting_scope(CoaSourceAccount, app_key=app_key, tenant_id=tenant_id, accounting_entity_id=accounting_entity_id),
         CoaSourceAccount.source_system == source_system,
         CoaSourceAccount.is_active.is_(True),
     )
@@ -687,7 +755,7 @@ async def approve_coa_mappings(
 
     source_ids = [source_account.id for source_account in source_accounts]
     mapping_stmt = select(CoaMapping).where(
-        CoaMapping.tenant_id == tenant_id,
+        *_accounting_scope(CoaMapping, app_key=app_key, tenant_id=tenant_id, accounting_entity_id=accounting_entity_id),
         CoaMapping.source_account_id.in_(source_ids),
     )
     mappings = list((await session.execute(mapping_stmt)).scalars().all())
@@ -717,6 +785,8 @@ async def post_source_journal_entry(
     session: AsyncSession,
     *,
     tenant_id: str,
+    app_key: str = "mandirmitra",
+    accounting_entity_id: str = "primary",
     created_by: str,
     payload: SourceJournalPostRequest,
     idempotency_key: str | None,
@@ -725,7 +795,7 @@ async def post_source_journal_entry(
 
     source_account_codes = {code for code, _debit, _credit in normalized_lines}
     source_accounts_stmt = select(CoaSourceAccount).where(
-        CoaSourceAccount.tenant_id == tenant_id,
+        *_accounting_scope(CoaSourceAccount, app_key=app_key, tenant_id=tenant_id, accounting_entity_id=accounting_entity_id),
         CoaSourceAccount.source_system == payload.source_system,
         CoaSourceAccount.source_account_code.in_(source_account_codes),
         CoaSourceAccount.is_active.is_(True),
@@ -739,7 +809,7 @@ async def post_source_journal_entry(
 
     source_ids = [source_account.id for source_account in source_accounts]
     mapping_stmt = select(CoaMapping).where(
-        CoaMapping.tenant_id == tenant_id,
+        *_accounting_scope(CoaMapping, app_key=app_key, tenant_id=tenant_id, accounting_entity_id=accounting_entity_id),
         CoaMapping.status == "active",
         CoaMapping.source_account_id.in_(source_ids),
     )
@@ -786,7 +856,9 @@ async def post_source_journal_entry(
 
     entry, created = await post_journal_entry(
         session,
+        app_key=app_key,
         tenant_id=tenant_id,
+        accounting_entity_id=accounting_entity_id,
         created_by=created_by,
         payload=canonical_payload,
         idempotency_key=_source_idempotency_key(payload.source_system, idempotency_key),
@@ -795,9 +867,21 @@ async def post_source_journal_entry(
     return entry, created, resolved_lines
 
 
-async def get_ledger_lines(session: AsyncSession, *, tenant_id: str, account_id: int) -> tuple[Account, list[dict]]:
+async def get_ledger_lines(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    account_id: int,
+    app_key: str = "mandirmitra",
+    accounting_entity_id: str = "primary",
+) -> tuple[Account, list[dict]]:
     account = (
-        await session.execute(select(Account).where(Account.id == account_id, Account.tenant_id == tenant_id))
+        await session.execute(
+            select(Account).where(
+                Account.id == account_id,
+                *_accounting_scope(Account, app_key=app_key, tenant_id=tenant_id, accounting_entity_id=accounting_entity_id),
+            )
+        )
     ).scalar_one_or_none()
     if account is None:
         raise AccountingNotFoundError("Account not found")
@@ -812,7 +896,11 @@ async def get_ledger_lines(session: AsyncSession, *, tenant_id: str, account_id:
             JournalEntry.description,
         )
         .join(JournalEntry, JournalEntry.id == JournalLine.journal_id)
-        .where(JournalEntry.tenant_id == tenant_id, JournalLine.account_id == account_id)
+        .where(
+            *_accounting_scope(JournalEntry, app_key=app_key, tenant_id=tenant_id, accounting_entity_id=accounting_entity_id),
+            *_accounting_scope(JournalLine, app_key=app_key, tenant_id=tenant_id, accounting_entity_id=accounting_entity_id),
+            JournalLine.account_id == account_id,
+        )
         .order_by(JournalEntry.entry_date.asc(), JournalLine.id.asc())
     )
     rows = (await session.execute(stmt)).all()
@@ -846,7 +934,14 @@ async def get_ledger_lines(session: AsyncSession, *, tenant_id: str, account_id:
     return account, output
 
 
-async def get_trial_balance(session: AsyncSession, *, tenant_id: str, as_of: date) -> tuple[list[dict], Decimal, Decimal]:
+async def get_trial_balance(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    as_of: date,
+    app_key: str = "mandirmitra",
+    accounting_entity_id: str = "primary",
+) -> tuple[list[dict], Decimal, Decimal]:
     stmt = (
         select(
             Account.id.label("account_id"),
@@ -857,7 +952,12 @@ async def get_trial_balance(session: AsyncSession, *, tenant_id: str, as_of: dat
         )
         .join(JournalLine, JournalLine.account_id == Account.id)
         .join(JournalEntry, JournalEntry.id == JournalLine.journal_id)
-        .where(Account.tenant_id == tenant_id, JournalEntry.entry_date <= as_of)
+        .where(
+            *_accounting_scope(Account, app_key=app_key, tenant_id=tenant_id, accounting_entity_id=accounting_entity_id),
+            *_accounting_scope(JournalEntry, app_key=app_key, tenant_id=tenant_id, accounting_entity_id=accounting_entity_id),
+            *_accounting_scope(JournalLine, app_key=app_key, tenant_id=tenant_id, accounting_entity_id=accounting_entity_id),
+            JournalEntry.entry_date <= as_of,
+        )
         .group_by(Account.id, Account.code, Account.name)
         .order_by(Account.name.asc())
     )
@@ -913,6 +1013,8 @@ async def _gl_sums_by_account(
     session: AsyncSession,
     *,
     tenant_id: str,
+    app_key: str = "mandirmitra",
+    accounting_entity_id: str = "primary",
     from_date: date | None = None,
     to_date: date | None = None,
     as_of: date | None = None,
@@ -921,7 +1023,11 @@ async def _gl_sums_by_account(
     only_receivable: bool = False,
     only_payable: bool = False,
 ):
-    conditions = [Account.tenant_id == tenant_id]
+    conditions = [
+        *_accounting_scope(Account, app_key=app_key, tenant_id=tenant_id, accounting_entity_id=accounting_entity_id),
+        *_accounting_scope(JournalEntry, app_key=app_key, tenant_id=tenant_id, accounting_entity_id=accounting_entity_id),
+        *_accounting_scope(JournalLine, app_key=app_key, tenant_id=tenant_id, accounting_entity_id=accounting_entity_id),
+    ]
 
     if from_date is not None:
         conditions.append(JournalEntry.entry_date >= from_date)
@@ -958,10 +1064,20 @@ async def _gl_sums_by_account(
     return (await session.execute(stmt)).all()
 
 
-async def get_profit_loss(session: AsyncSession, *, tenant_id: str, from_date: date, to_date: date):
+async def get_profit_loss(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    from_date: date,
+    to_date: date,
+    app_key: str = "mandirmitra",
+    accounting_entity_id: str = "primary",
+):
     rows = await _gl_sums_by_account(
         session,
+        app_key=app_key,
         tenant_id=tenant_id,
+        accounting_entity_id=accounting_entity_id,
         from_date=from_date,
         to_date=to_date,
         account_types=("income", "expense"),
@@ -1001,10 +1117,20 @@ async def get_profit_loss(session: AsyncSession, *, tenant_id: str, from_date: d
     return lines, income_total, expense_total, net_profit
 
 
-async def get_receipts_payments(session: AsyncSession, *, tenant_id: str, from_date: date, to_date: date):
+async def get_receipts_payments(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    from_date: date,
+    to_date: date,
+    app_key: str = "mandirmitra",
+    accounting_entity_id: str = "primary",
+):
     rows = await _gl_sums_by_account(
         session,
+        app_key=app_key,
         tenant_id=tenant_id,
+        accounting_entity_id=accounting_entity_id,
         from_date=from_date,
         to_date=to_date,
         only_cash_bank=True,
@@ -1036,10 +1162,19 @@ async def get_receipts_payments(session: AsyncSession, *, tenant_id: str, from_d
     return lines, _q(total_receipts), _q(total_payments), _q(total_receipts - total_payments)
 
 
-async def get_balance_sheet(session: AsyncSession, *, tenant_id: str, as_of: date):
+async def get_balance_sheet(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    as_of: date,
+    app_key: str = "mandirmitra",
+    accounting_entity_id: str = "primary",
+):
     rows = await _gl_sums_by_account(
         session,
+        app_key=app_key,
         tenant_id=tenant_id,
+        accounting_entity_id=accounting_entity_id,
         as_of=as_of,
         account_types=("asset", "liability", "equity"),
     )
@@ -1076,7 +1211,9 @@ async def get_balance_sheet(session: AsyncSession, *, tenant_id: str, as_of: dat
 
     pnl_rows = await _gl_sums_by_account(
         session,
+        app_key=app_key,
         tenant_id=tenant_id,
+        accounting_entity_id=accounting_entity_id,
         as_of=as_of,
         account_types=("income", "expense"),
     )
@@ -1098,10 +1235,19 @@ async def get_balance_sheet(session: AsyncSession, *, tenant_id: str, as_of: dat
     return assets, liabilities, equity, total_assets, total_liabilities, total_equity
 
 
-async def get_accounts_receivable(session: AsyncSession, *, tenant_id: str, as_of: date):
+async def get_accounts_receivable(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    as_of: date,
+    app_key: str = "mandirmitra",
+    accounting_entity_id: str = "primary",
+):
     rows = await _gl_sums_by_account(
         session,
+        app_key=app_key,
         tenant_id=tenant_id,
+        accounting_entity_id=accounting_entity_id,
         as_of=as_of,
         only_receivable=True,
     )
@@ -1124,10 +1270,19 @@ async def get_accounts_receivable(session: AsyncSession, *, tenant_id: str, as_o
     return lines, _q(total_balance)
 
 
-async def get_accounts_payable(session: AsyncSession, *, tenant_id: str, as_of: date):
+async def get_accounts_payable(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    as_of: date,
+    app_key: str = "mandirmitra",
+    accounting_entity_id: str = "primary",
+):
     rows = await _gl_sums_by_account(
         session,
+        app_key=app_key,
         tenant_id=tenant_id,
+        accounting_entity_id=accounting_entity_id,
         as_of=as_of,
         only_payable=True,
     )

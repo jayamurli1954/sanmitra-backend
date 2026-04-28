@@ -166,13 +166,13 @@ async def _sync_mandir_temple_profile_from_request(*, doc: dict, tenant_id: str,
     temples = get_collection("mandir_temples")
     now = datetime.now(timezone.utc)
 
-    existing = await temples.find_one({"tenant_id": tenant_id}) or {}
+    existing = await temples.find_one({"tenant_id": tenant_id, "app_key": normalized_app_key}) or {}
     temple_numeric_id = existing.get("temple_id") or existing.get("id")
     if temple_numeric_id is None:
         try:
             from app.modules.mandir_compat.service import ensure_temple_numeric_id
 
-            temple_numeric_id = await ensure_temple_numeric_id(tenant_id)
+            temple_numeric_id = await ensure_temple_numeric_id(tenant_id, app_key=normalized_app_key)
         except Exception:
             temple_numeric_id = None
 
@@ -419,6 +419,7 @@ async def approve_onboarding_request(*, request_id: str, approved_by: str, paylo
         tenant_id = await _allocate_tenant_id(tenant_hint)
 
     await ensure_tenant_exists(tenant_id, display_name=tenant_name, created_by=approved_by)
+    app_key = str(doc.get("app_key") or get_app_key() or "mandirmitra").strip().lower()
 
     temp_password = payload.initial_password or _generate_temporary_password()
     admin_email = str(doc.get("admin_email") or "").strip().lower()
@@ -429,11 +430,10 @@ async def approve_onboarding_request(*, request_id: str, approved_by: str, paylo
             full_name=str(doc.get("admin_full_name") or "Temple Admin").strip(),
             tenant_id=tenant_id,
             role="tenant_admin",
+            app_key=app_key,
         )
     except ValueError as exc:
         raise ValueError("Admin user already exists for this onboarding email") from exc
-
-    app_key = str(doc.get("app_key") or get_app_key() or "mandirmitra").strip().lower()
 
     now = datetime.now(timezone.utc)
     result = await _update_pending_onboarding_request(

@@ -195,6 +195,28 @@ def _normalize_status(value: Any, *, default: str = "Completed") -> str:
     }
     return mapping.get(raw, raw.replace("_", " ").title())
 
+
+def _seva_report_status(row: dict[str, Any], *, today: date | None = None) -> str:
+    raw_status = str(row.get("status") or "").strip().lower()
+    if raw_status in {"cancelled", "canceled"}:
+        return "Cancelled"
+    if raw_status in {"reschedule_pending", "pending_reschedule"} or row.get("reschedule_pending"):
+        return "Pending"
+
+    seva_date = _parse_iso_date(
+        row.get("seva_date")
+        or row.get("booking_date")
+        or row.get("scheduled_for")
+        or row.get("date")
+    )
+    if seva_date is None:
+        return _normalize_status(raw_status or row.get("status"), default="Pending")
+
+    current_date = today or date.today()
+    if seva_date >= current_date:
+        return "Pending"
+    return "Completed"
+
 async def _posted_docs(
     session: AsyncSession,
     *,
@@ -338,6 +360,7 @@ async def posted_sevas(
             {
                 'id': booking_id,
                 'booking_id': booking_id,
+                'receipt_number': str(doc.get('receipt_number') or booking_id[:8].upper()),
                 'date': date_value,
                 'receipt_date': created_at.isoformat() if created_at else doc.get('created_at'),
                 'created_at': created_at.isoformat() if created_at else doc.get('created_at'),
@@ -349,7 +372,7 @@ async def posted_sevas(
                 'devotee_mobile': str(doc.get('devotee_mobile') or doc.get('phone') or ''),
                 'amount': _as_float(doc.get('amount_paid') or doc.get('amount'), 0.0),
                 'payment_mode': str(doc.get('payment_mode') or 'Cash'),
-                'status': _normalize_status(doc.get('status') or 'completed'),
+                'status': _seva_report_status(doc),
                 'seva_id': doc.get('seva_id'),
                 'special_request': doc.get('special_request') or doc.get('remarks') or '',
                 'time': doc.get('time') or doc.get('slot') or ''
@@ -453,8 +476,10 @@ async def detailed_seva_report(
     status: str | None = None,
 ) -> dict[str, Any]:
     sevas = await posted_sevas(session, tenant_id=tenant_id, app_key=app_key, from_date=from_date, to_date=to_date)
+    for row in sevas:
+        row['status'] = _seva_report_status(row)
     if status:
-        needle = str(status).strip().lower()
+        needle = _normalize_status(status, default=status).strip().lower()
         sevas = [row for row in sevas if str(row.get('status') or '').strip().lower() == needle]
 
     rows = []
@@ -471,13 +496,14 @@ async def detailed_seva_report(
                 'devotee_name': seva.get('devotee_name'),
                 'devotee_mobile': seva.get('devotee_mobile'),
                 'amount': seva.get('amount', 0.0),
-                'status': seva.get('status') or 'Completed',
+                'status': seva.get('status') or 'Pending',
                 'special_request': seva.get('special_request') or '',
             }
         )
 
     total_amount = sum((Decimal(str(row['amount'])) for row in rows), Decimal('0'))
-    completed_count = len(rows)
+    completed_count = sum(1 for row in rows if str(row.get('status') or '').strip().lower() == 'completed')
+    pending_count = sum(1 for row in rows if str(row.get('status') or '').strip().lower() == 'pending')
     return {
         'from_date': from_date.isoformat(),
         'to_date': to_date.isoformat(),
@@ -485,7 +511,7 @@ async def detailed_seva_report(
         'items': rows,
         'total_count': len(rows),
         'completed_count': completed_count,
-        'pending_count': 0,
+        'pending_count': pending_count,
         'total_amount': _as_float(total_amount, 0.0),
     }
 

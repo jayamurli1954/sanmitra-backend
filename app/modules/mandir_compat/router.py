@@ -30,9 +30,15 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
+try:
+    from weasyprint import HTML
+except Exception:
+    HTML = None
+
 from app.core.auth.dependencies import get_current_user
 from app.core.audit.service import log_audit_event
 from app.core.rate_limiting import limiter
+from app.core.tenants.app_resolvers import resolve_mandir_tenant
 from app.core.tenants.context import resolve_app_key, resolve_tenant_id
 from app.db.mongo import get_collection
 from app.db.postgres import get_async_session
@@ -89,6 +95,42 @@ router = APIRouter(tags=["mandir-compat"])
 MANDIR_COMPAT_DATA_DIR = Path(__file__).resolve().parent / "data"
 MANDIR_LEGACY_COA_PATH = MANDIR_COMPAT_DATA_DIR / "legacy_mandir_coa.json"
 logger = logging.getLogger(__name__)
+
+_MANDIR_COUNTERS_COLLECTION = "mandir_counters"
+_MANDIR_RECEIPT_WIDTH = 7
+_MANDIR_RECEIPT_PREFIX_BY_KIND = {
+    "donation": "DON",
+    "seva": "SEV",
+}
+_MANDIR_JOURNAL_ENTRY_PREFIX = "JE"
+
+_PANCHANG_DEFAULT_LOCATION = {
+    "name": "Bengaluru",
+    "state": "Karnataka",
+    "country": "India",
+    "lat": 12.9716,
+    "lon": 77.5946,
+    "timezone": "Asia/Kolkata",
+    "display": "Bengaluru, Karnataka",
+}
+
+_PANCHANG_CITY_OPTIONS: tuple[dict[str, Any], ...] = (
+    _PANCHANG_DEFAULT_LOCATION,
+    {"name": "Mysuru", "state": "Karnataka", "country": "India", "lat": 12.2958, "lon": 76.6394, "timezone": "Asia/Kolkata", "display": "Mysuru, Karnataka"},
+    {"name": "Mangaluru", "state": "Karnataka", "country": "India", "lat": 12.9141, "lon": 74.8560, "timezone": "Asia/Kolkata", "display": "Mangaluru, Karnataka"},
+    {"name": "Udupi", "state": "Karnataka", "country": "India", "lat": 13.3409, "lon": 74.7421, "timezone": "Asia/Kolkata", "display": "Udupi, Karnataka"},
+    {"name": "Chennai", "state": "Tamil Nadu", "country": "India", "lat": 13.0827, "lon": 80.2707, "timezone": "Asia/Kolkata", "display": "Chennai, Tamil Nadu"},
+    {"name": "Coimbatore", "state": "Tamil Nadu", "country": "India", "lat": 11.0168, "lon": 76.9558, "timezone": "Asia/Kolkata", "display": "Coimbatore, Tamil Nadu"},
+    {"name": "Madurai", "state": "Tamil Nadu", "country": "India", "lat": 9.9252, "lon": 78.1198, "timezone": "Asia/Kolkata", "display": "Madurai, Tamil Nadu"},
+    {"name": "Hyderabad", "state": "Telangana", "country": "India", "lat": 17.3850, "lon": 78.4867, "timezone": "Asia/Kolkata", "display": "Hyderabad, Telangana"},
+    {"name": "Tirupati", "state": "Andhra Pradesh", "country": "India", "lat": 13.6288, "lon": 79.4192, "timezone": "Asia/Kolkata", "display": "Tirupati, Andhra Pradesh"},
+    {"name": "Mumbai", "state": "Maharashtra", "country": "India", "lat": 19.0760, "lon": 72.8777, "timezone": "Asia/Kolkata", "display": "Mumbai, Maharashtra"},
+    {"name": "Pune", "state": "Maharashtra", "country": "India", "lat": 18.5204, "lon": 73.8567, "timezone": "Asia/Kolkata", "display": "Pune, Maharashtra"},
+    {"name": "New Delhi", "state": "Delhi", "country": "India", "lat": 28.6139, "lon": 77.2090, "timezone": "Asia/Kolkata", "display": "New Delhi, Delhi"},
+    {"name": "Kolkata", "state": "West Bengal", "country": "India", "lat": 22.5726, "lon": 88.3639, "timezone": "Asia/Kolkata", "display": "Kolkata, West Bengal"},
+    {"name": "Ahmedabad", "state": "Gujarat", "country": "India", "lat": 23.0225, "lon": 72.5714, "timezone": "Asia/Kolkata", "display": "Ahmedabad, Gujarat"},
+    {"name": "Varanasi", "state": "Uttar Pradesh", "country": "India", "lat": 25.3176, "lon": 82.9739, "timezone": "Asia/Kolkata", "display": "Varanasi, Uttar Pradesh"},
+)
 
 
 _MANDIR_CANONICAL_INCOME_CODES: dict[str, tuple[str, str]] = {
@@ -993,6 +1035,82 @@ def _sanitize_mongo_doc(doc: dict[str, Any]) -> dict[str, Any]:
     return row
 
 
+def _format_mandir_receipt_number(prefix: str, sequence: int) -> str:
+    normalized_prefix = str(prefix or "").strip().upper()
+    if normalized_prefix not in {"DON", "SEV"}:
+        raise ValueError(f"Unsupported MandirMitra receipt prefix: {prefix!r}")
+    if int(sequence) < 1:
+        raise ValueError("Receipt sequence must be positive")
+    return f"{normalized_prefix}-{int(sequence):0{_MANDIR_RECEIPT_WIDTH}d}"
+
+
+def _format_mandir_sequence_number(prefix: str, sequence: int) -> str:
+    normalized_prefix = str(prefix or "").strip().upper()
+    if not normalized_prefix:
+        raise ValueError("Sequence prefix is required")
+    if int(sequence) < 1:
+        raise ValueError("Sequence must be positive")
+    return f"{normalized_prefix}-{int(sequence):0{_MANDIR_RECEIPT_WIDTH}d}"
+
+
+async def _next_receipt_number(
+    *,
+    tenant_id: str,
+    app_key: str,
+    receipt_kind: str,
+    receipt_date: Any = None,
+) -> str:
+    prefix = _MANDIR_RECEIPT_PREFIX_BY_KIND.get(str(receipt_kind or "").strip().lower())
+    if not prefix:
+        raise ValueError(f"Unsupported MandirMitra receipt kind: {receipt_kind!r}")
+
+    now = datetime.now(timezone.utc).isoformat()
+    counter_id = f"{app_key}:{tenant_id}:receipt:{prefix}"
+    counters = get_collection(_MANDIR_COUNTERS_COLLECTION)
+    result = await counters.find_one_and_update(
+        {"_id": counter_id},
+        {
+            "$inc": {"seq": 1},
+            "$set": {"updated_at": now},
+            "$setOnInsert": {
+                "app_key": app_key,
+                "tenant_id": tenant_id,
+                "prefix": prefix,
+                "kind": receipt_kind,
+                "created_at": now,
+            },
+        },
+        upsert=True,
+        return_document=True,
+    )
+    sequence = int((result or {}).get("seq") or 1)
+    return _format_mandir_receipt_number(prefix, sequence)
+
+
+async def _next_journal_entry_number(*, tenant_id: str, app_key: str) -> str:
+    now = datetime.now(timezone.utc).isoformat()
+    counter_id = f"{app_key}:{tenant_id}:journal-entry:{_MANDIR_JOURNAL_ENTRY_PREFIX}"
+    counters = get_collection(_MANDIR_COUNTERS_COLLECTION)
+    result = await counters.find_one_and_update(
+        {"_id": counter_id},
+        {
+            "$inc": {"seq": 1},
+            "$set": {"updated_at": now},
+            "$setOnInsert": {
+                "app_key": app_key,
+                "tenant_id": tenant_id,
+                "prefix": _MANDIR_JOURNAL_ENTRY_PREFIX,
+                "kind": "journal_entry",
+                "created_at": now,
+            },
+        },
+        upsert=True,
+        return_document=True,
+    )
+    sequence = int((result or {}).get("seq") or 1)
+    return _format_mandir_sequence_number(_MANDIR_JOURNAL_ENTRY_PREFIX, sequence)
+
+
 
 def _receipt_number_for_donation(doc: dict[str, Any]) -> str:
     existing = str(doc.get("receipt_number") or "").strip()
@@ -1051,14 +1169,16 @@ def _generate_donation_receipt_pdf_bytes(
     devotee_address = _compose_receipt_address_line(address_source, devotee, fallback="--")
     payload = {
         **temple_profile,
-        "receipt_title": "DONATION RECEIPT",
+        "receipt_title": "Donation Receipt",
+        "receipt_title_local": "ದೇಣಿಗೆ ರಶೀದಿ",
         "line_item_header": "Donation Details",
+        "line_item_local": "ದೇಣಿಗೆ ವಿವರ",
         "service_date_label": "Donation Date",
         "receipt_number": receipt_number,
         "receipt_date": donation_date,
         "party_name": devotee_name,
         "address_value": devotee_address,
-        "amount_words_line": f"Received Rupees {_amount_to_words(amount)}",
+        "amount_words_line": _amount_words_receipt_line(amount, local_language=temple_profile.get("local_language")),
         "payment_line": f"Received with thanks for donation by {payment_mode}.",
         "line_items": [{"description": category, "amount": amount}],
         "total_amount": amount,
@@ -1131,11 +1251,13 @@ def _generate_seva_receipt_pdf_bytes(
 
     payload = {
         **temple_profile,
+        "receipt_title": "Seva Receipt",
+        "receipt_title_local": "ಸೇವಾ ರಶೀದಿ",
         "receipt_number": receipt_number,
         "receipt_date": booking_date,
         "party_name": devotee_name,
         "address_value": devotee_address,
-        "amount_words_line": f"Received Rupees {_amount_to_words(total_amount)}",
+        "amount_words_line": _amount_words_receipt_line(total_amount, local_language=temple_profile.get("local_language")),
         "payment_line": f"Received with thanks for the below mentioned seva by {payment_mode}.",
         "line_items": line_items,
         "total_amount": total_amount,
@@ -1176,24 +1298,56 @@ _ONES_WORDS = [
     "NINETEEN",
 ]
 _TENS_WORDS = ["", "", "TWENTY", "THIRTY", "FORTY", "FIFTY", "SIXTY", "SEVENTY", "EIGHTY", "NINETY"]
+_KANNADA_ONES_WORDS = [
+    "ಸೊನ್ನೆ",
+    "ಒಂದು",
+    "ಎರಡು",
+    "ಮೂರು",
+    "ನಾಲ್ಕು",
+    "ಐದು",
+    "ಆರು",
+    "ಏಳು",
+    "ಎಂಟು",
+    "ಒಂಬತ್ತು",
+    "ಹತ್ತು",
+    "ಹನ್ನೊಂದು",
+    "ಹನ್ನೆರಡು",
+    "ಹದಿಮೂರು",
+    "ಹದಿನಾಲ್ಕು",
+    "ಹದಿನೈದು",
+    "ಹದಿನಾರು",
+    "ಹದಿನೇಳು",
+    "ಹದಿನೆಂಟು",
+    "ಹತ್ತೊಂಬತ್ತು",
+]
+_KANNADA_TENS_WORDS = {
+    20: "ಇಪ್ಪತ್ತು",
+    30: "ಮೂವತ್ತು",
+    40: "ನಲವತ್ತು",
+    50: "ಐವತ್ತು",
+    60: "ಅರವತ್ತು",
+    70: "ಎಪ್ಪತ್ತು",
+    80: "ಎಂಬತ್ತು",
+    90: "ತೊಂಬತ್ತು",
+}
 
 _SUPPORTED_LOCAL_LANGUAGES = {"kannada", "tamil", "telugu", "malayalam", "hindi"}
 
 _LOCAL_LABELS = {
     "kannada": {
-        "receipt_title": "?????",
-        "receipt_number": "????? ??????",
-        "date": "??????",
-        "party": "????/???????",
-        "address": "?????",
-        "line_item": "???? ????",
-        "total": "?????",
-        "gotra": "?????",
-        "nakshatra": "???????",
-        "rashi": "????",
-        "service_date": "???? ??????",
-        "cashier": "??????",
-        "note": "?????: ???? ??????? 10 ????? ????? ?????? ????? ??????????? ??? ??? ???????.",
+        "receipt_title": "ರಸೀದಿ",
+        "receipt_number": "ರಸೀದಿ ಸಂಖ್ಯೆ",
+        "date": "ದಿನಾಂಕ",
+        "party": "ಭಕ್ತ/ದಾನಿ",
+        "address": "ವಿಳಾಸ",
+        "line_item": "ಸೇವಾ ವಿವರ",
+        "total": "ಮೊತ್ತ",
+        "gotra": "ಗೋತ್ರ",
+        "nakshatra": "ನಕ್ಷತ್ರ",
+        "rashi": "ರಾಶಿ",
+        "service_date": "ಸೇವಾ ದಿನಾಂಕ",
+        "cashier": "ನಗದುಗಾರ",
+        "note": "ಸೂಚನೆ: ಸೇವಾಕರ್ತರು ಪೂಜೆಯ ಸಮಯಕ್ಕಿಂತ 10 ನಿಮಿಷ ಮೊದಲು ಹಾಜರಿರಬೇಕು ಮತ್ತು ಅದೇ ದಿನ ಪ್ರಸಾದವನ್ನು ಪಡೆಯಬೇಕು.",
     },
     "tamil": {
         "receipt_title": "?????",
@@ -1333,6 +1487,46 @@ def _amount_to_words(amount: float) -> str:
     except Exception:
         major = 0
     return f"{_integer_to_words(max(major, 0))} ONLY"
+
+
+def _integer_to_kannada_words(value: int) -> str:
+    if value < 20:
+        return _KANNADA_ONES_WORDS[value]
+    if value < 100:
+        tens_value = (value // 10) * 10
+        remainder = value % 10
+        tens = _KANNADA_TENS_WORDS[tens_value]
+        return f"{tens} {_KANNADA_ONES_WORDS[remainder]}".strip() if remainder else tens
+    if value < 1000:
+        hundreds = f"{_KANNADA_ONES_WORDS[value // 100]} ನೂರು"
+        remainder = value % 100
+        return f"{hundreds} {_integer_to_kannada_words(remainder)}".strip() if remainder else hundreds
+    if value < 100000:
+        thousands = f"{_integer_to_kannada_words(value // 1000)} ಸಾವಿರ"
+        remainder = value % 1000
+        return f"{thousands} {_integer_to_kannada_words(remainder)}".strip() if remainder else thousands
+    if value < 10000000:
+        lakhs = f"{_integer_to_kannada_words(value // 100000)} ಲಕ್ಷ"
+        remainder = value % 100000
+        return f"{lakhs} {_integer_to_kannada_words(remainder)}".strip() if remainder else lakhs
+    crores = f"{_integer_to_kannada_words(value // 10000000)} ಕೋಟಿ"
+    remainder = value % 10000000
+    return f"{crores} {_integer_to_kannada_words(remainder)}".strip() if remainder else crores
+
+
+def _amount_to_kannada_words(amount: float) -> str:
+    try:
+        major = int(round(float(amount or 0)))
+    except Exception:
+        major = 0
+    return f"ರೂಪಾಯಿ {_integer_to_kannada_words(max(major, 0))} ಮಾತ್ರ"
+
+
+def _amount_words_receipt_line(amount: float, *, local_language: str | None = None) -> str:
+    english = f"Rupees {_amount_to_words(amount).title()}"
+    if _normalize_local_language(local_language) == "kannada":
+        return f"{_amount_to_kannada_words(amount)} / {english}"
+    return f"Received {english}"
 
 
 
@@ -1572,7 +1766,10 @@ def _build_temple_receipt_profile(temple_doc: dict[str, Any] | None) -> dict[str
     website = _as_text(temple_doc.get("website") or temple_doc.get("temple_website"))
     header_local_line = _as_text(temple_doc.get("header_local_line"))
     local_language = _normalize_local_language(
-        temple_doc.get("local_language") or temple_doc.get("primary_language") or temple_doc.get("language")
+        temple_doc.get("receipt_local_language")
+        or temple_doc.get("local_language")
+        or temple_doc.get("primary_language")
+        or temple_doc.get("language")
     )
     return {
         "trust_name": trust_name,
@@ -1616,6 +1813,210 @@ def _default_labels(local_language: str | None, use_local_labels: bool) -> dict[
     }
 
 
+def _receipt_html_escape(value: Any, fallback: str = "-") -> str:
+    return escape(_as_text(value, fallback), {'"': "&quot;", "'": "&#x27;"})
+
+
+def _receipt_weasy_font_css(local_language: str | None) -> str:
+    candidates = []
+    nirmala = Path(r"C:\Windows\Fonts\Nirmala.ttc")
+    if nirmala.exists():
+        candidates.append(nirmala)
+    for candidate in _font_candidate_paths(local_language):
+        path = Path(candidate)
+        if path.exists() and path.suffix.lower() in {".ttf", ".otf", ".ttc"}:
+            candidates.append(path)
+
+    if not candidates:
+        return ""
+
+    font_faces = []
+    for index, path in enumerate(candidates[:3]):
+        font_faces.append(
+            "@font-face {"
+            f"font-family: 'MandirReceiptLocal{index}';"
+            f"src: url('{path.resolve().as_uri()}');"
+            "}"
+        )
+    return "\n".join(font_faces)
+
+
+def _build_receipt_pdf_bytes_weasy(
+    payload: dict[str, Any],
+    *,
+    local_language: str,
+    labels: dict[str, str],
+    local_labels: dict[str, str],
+    use_local_labels: bool,
+) -> bytes:
+    if HTML is None:
+        raise RuntimeError("weasyprint is not available")
+
+    line_items = payload.get("line_items") or []
+    if not line_items:
+        line_items = [{"description": "-", "amount": payload.get("total_amount", 0)}]
+
+    total_amount = payload.get("total_amount")
+    if total_amount is None:
+        total_amount = sum(_safe_float(item.get("amount"), 0.0) for item in line_items)
+
+    def bilingual(local_key: str, english_value: Any, fallback_key: str) -> str:
+        english = _as_text(english_value)
+        if not english:
+            return labels[fallback_key]
+        local = _as_text(payload.get(f"{local_key}_local")) or local_labels.get(local_key, "")
+        return _bilingual_label(local, english, use_local_labels)
+
+    receipt_title = bilingual("receipt_title", payload.get("receipt_title"), "receipt_title")
+    receipt_no_label = _as_text(payload.get("receipt_number_label")) or labels["receipt_number"]
+    date_label = _as_text(payload.get("date_label")) or labels["date"]
+    party_label = labels["party"] if payload.get("party_label") is None else _as_text(payload.get("party_label"), "")
+    address_label = _as_text(payload.get("address_label")) or labels["address"]
+    line_item_header = bilingual("line_item", payload.get("line_item_header"), "line_item")
+    total_label = _as_text(payload.get("total_label")) or labels["total"]
+    gotra_label = _as_text(payload.get("gotra_label")) or labels["gotra"]
+    star_label = _as_text(payload.get("nakshatra_label")) or labels["nakshatra"]
+    rashi_label = _as_text(payload.get("rashi_label")) or labels["rashi"]
+    service_date_label = bilingual("service_date", payload.get("service_date_label"), "service_date")
+
+    header_local_line = _as_text(payload.get("header_local_line"))
+    trust_name = _as_text(payload.get("trust_name"))
+    temple_name = _as_text(payload.get("temple_name"), "Temple")
+    primary_header = trust_name or temple_name
+    secondary_header = temple_name if trust_name and temple_name and trust_name != temple_name else ""
+    address_line = " ".join(
+        part
+        for part in [
+            _as_text(payload.get("address")),
+            _as_text(payload.get("city")),
+            _as_text(payload.get("state")),
+            _as_text(payload.get("pincode")),
+        ]
+        if part
+    )
+
+    header_parts = []
+    if header_local_line:
+        header_parts.append(f"<div class='local-header'>{_receipt_html_escape(header_local_line)}</div>")
+    header_parts.append(f"<div class='trust'>{_receipt_html_escape(primary_header)}</div>")
+    if secondary_header:
+        header_parts.append(f"<div class='temple'>{_receipt_html_escape(secondary_header)}</div>")
+    if address_line:
+        header_parts.append(f"<div>{_receipt_html_escape(address_line)}</div>")
+    if _as_text(payload.get("website")):
+        header_parts.append(f"<div>{_receipt_html_escape(payload.get('website'))}</div>")
+    if _as_text(payload.get("email")):
+        header_parts.append(f"<div>{_receipt_html_escape(payload.get('email'))}</div>")
+    if _as_text(payload.get("phone")):
+        header_parts.append(f"<div>Phone : {_receipt_html_escape(payload.get('phone'))}</div>")
+
+    rows_html = []
+    for item in line_items:
+        major, minor = _split_amount(item.get("amount"))
+        rows_html.append(
+            "<tr>"
+            f"<td class='desc'>{_receipt_html_escape(item.get('description'))}</td>"
+            f"<td class='amt'>{_receipt_html_escape(major)}</td>"
+            f"<td class='amt'>{_receipt_html_escape(minor)}</td>"
+            "</tr>"
+        )
+
+    total_major, total_minor = _split_amount(total_amount)
+    rows_html.append(
+        "<tr>"
+        f"<td class='desc total'>{_receipt_html_escape(total_label)}</td>"
+        f"<td class='amt total'>{_receipt_html_escape(total_major)}</td>"
+        f"<td class='amt total'>{_receipt_html_escape(total_minor)}</td>"
+        "</tr>"
+    )
+
+    note_lines = [
+        _as_text(payload.get("note_local"), labels.get("note_local", "")) if use_local_labels else "",
+        _as_text(payload.get("note_english"), ""),
+    ]
+    note_html = "<br/>".join(_receipt_html_escape(line) for line in note_lines if line)
+
+    astro_html = ""
+    if bool(payload.get("include_astro_row", True)):
+        astro_html = (
+            "<div class='meta-row'>"
+            f"{_receipt_html_escape(gotra_label)}: {_receipt_html_escape(payload.get('gotra'), '--')}"
+            f"&nbsp;&nbsp; {_receipt_html_escape(star_label)}: {_receipt_html_escape(payload.get('nakshatra'), '--')}"
+            f"&nbsp;&nbsp; {_receipt_html_escape(rashi_label)}: {_receipt_html_escape(payload.get('rashi'), '--')}"
+            "</div>"
+        )
+
+    service_html = ""
+    if bool(payload.get("include_service_row", True)):
+        service_html = (
+            "<div class='meta-row'>"
+            f"{_receipt_html_escape(service_date_label)}: {_receipt_html_escape(payload.get('service_date'), '--')}"
+            "</div>"
+        )
+
+    system_line = payload.get("system_generated_line")
+    if system_line is None:
+        system_line = "This is a system generated receipt and does not require any signature."
+
+    css = f"""
+    {_receipt_weasy_font_css(local_language)}
+    @page {{ size: A5; margin: 8mm; }}
+    body {{
+        font-family: 'MandirReceiptLocal0', 'MandirReceiptLocal1', 'Nirmala UI', Arial, sans-serif;
+        font-size: 9px;
+        line-height: 1.35;
+        color: #111;
+    }}
+    .header {{ text-align: center; margin-bottom: 5px; }}
+    .trust {{ font-weight: 700; font-size: 12px; }}
+    .temple {{ font-size: 9px; }}
+    .local-header {{ font-weight: 700; font-size: 11px; }}
+    table.receipt {{ width: 100%; border-collapse: collapse; border: 1px solid #888; }}
+    table.receipt td {{ border: 1px solid #aaa; padding: 4px 6px; vertical-align: middle; }}
+    .title {{ text-align: center; font-weight: 700; background: #f2f2f2; font-size: 10px; }}
+    .right {{ text-align: right; }}
+    .center {{ text-align: center; }}
+    .desc {{ width: 72%; }}
+    .amt {{ width: 14%; text-align: right; }}
+    .total {{ font-weight: 700; }}
+    .note {{ text-align: center; background: #f8f8f8; }}
+    .meta-row {{ margin-top: 5px; font-size: 8px; }}
+    .powered {{ text-align: right; color: #555; font-size: 7px; margin-top: 4px; }}
+    """
+    html = f"""
+    <!doctype html>
+    <html lang="{_receipt_html_escape(local_language)}">
+    <head><meta charset="utf-8"/><style>{css}</style></head>
+    <body>
+      <div class="header">{''.join(header_parts)}</div>
+      <table class="receipt">
+        <tr><td class="title" colspan="3">{_receipt_html_escape(receipt_title)}</td></tr>
+        <tr>
+          <td colspan="2">{_receipt_html_escape(receipt_no_label)}: {_receipt_html_escape(payload.get('receipt_number'), '-')}</td>
+          <td class="right">{_receipt_html_escape(date_label)}:<br/>{_receipt_html_escape(payload.get('receipt_date'), '-')}</td>
+        </tr>
+        <tr><td colspan="3">{_receipt_html_escape(party_label)}: {_receipt_html_escape(payload.get('party_name'), '-')}</td></tr>
+        <tr><td colspan="3">{_receipt_html_escape(address_label)}: {_receipt_html_escape(payload.get('address_value'), '--')}</td></tr>
+        <tr><td colspan="3">{_receipt_html_escape(payload.get('amount_words_line'), 'Received with thanks')}</td></tr>
+        <tr><td colspan="3">{_receipt_html_escape(payload.get('payment_line'), 'Received with thanks.')}</td></tr>
+        <tr>
+          <td class="desc total">{_receipt_html_escape(line_item_header)}</td>
+          <td class="center total">Rs</td>
+          <td class="center total">-</td>
+        </tr>
+        {''.join(rows_html)}
+        <tr><td class="note" colspan="3">{note_html or '-'}</td></tr>
+      </table>
+      {astro_html}
+      {service_html}
+      <div class="center">{_receipt_html_escape(system_line, '')}</div>
+      <div class="powered">{_receipt_html_escape(payload.get('powered_by_line'), '')}</div>
+    </body>
+    </html>
+    """
+    return HTML(string=html, base_url=str(Path.cwd().resolve())).write_pdf()
+
+
 
 def _build_receipt_pdf_bytes(payload: dict[str, Any]) -> bytes:
     local_language = _normalize_local_language(payload.get("local_language"))
@@ -1628,6 +2029,19 @@ def _build_receipt_pdf_bytes(payload: dict[str, Any]) -> bytes:
         requested_local_labels = True
     use_local_labels = bool(requested_local_labels) and has_local_font and local_language in _SUPPORTED_LOCAL_LANGUAGES
     labels = _default_labels(local_language, use_local_labels)
+    local_labels = _LOCAL_LABELS.get(local_language or "", {})
+
+    if use_local_labels and local_language:
+        try:
+            return _build_receipt_pdf_bytes_weasy(
+                payload,
+                local_language=local_language,
+                labels=labels,
+                local_labels=local_labels,
+                use_local_labels=use_local_labels,
+            )
+        except Exception as exc:
+            logger.warning("Weasy bilingual receipt rendering failed; falling back to ReportLab: %s", exc)
 
     buffer = BytesIO()
     doc = SimpleDocTemplate(
@@ -1765,18 +2179,24 @@ def _build_receipt_pdf_bytes(payload: dict[str, Any]) -> bytes:
     if total_amount is None:
         total_amount = sum(_safe_float(item.get("amount"), 0.0) for item in line_items)
 
-    receipt_title = _as_text(payload.get("receipt_title")) or labels["receipt_title"]
+    receipt_title_raw = _as_text(payload.get("receipt_title"))
+    receipt_title_local = _as_text(payload.get("receipt_title_local")) or local_labels.get("receipt_title", "")
+    receipt_title = _bilingual_label(receipt_title_local, receipt_title_raw, use_local_labels) if receipt_title_raw else labels["receipt_title"]
     receipt_no_label = _as_text(payload.get("receipt_number_label")) or labels["receipt_number"]
     date_label = _as_text(payload.get("date_label")) or labels["date"]
     party_label_raw = payload.get("party_label")
     party_label = labels["party"] if party_label_raw is None else _as_text(party_label_raw, "")
     address_label = _as_text(payload.get("address_label")) or labels["address"]
-    line_item_header = _as_text(payload.get("line_item_header")) or labels["line_item"]
+    line_item_header_raw = _as_text(payload.get("line_item_header"))
+    line_item_local = _as_text(payload.get("line_item_local")) or local_labels.get("line_item", "")
+    line_item_header = _bilingual_label(line_item_local, line_item_header_raw, use_local_labels) if line_item_header_raw else labels["line_item"]
     total_label = _as_text(payload.get("total_label")) or labels["total"]
     gotra_label = _as_text(payload.get("gotra_label")) or labels["gotra"]
     star_label = _as_text(payload.get("nakshatra_label")) or labels["nakshatra"]
     rashi_label = _as_text(payload.get("rashi_label")) or labels["rashi"]
-    service_date_label = _as_text(payload.get("service_date_label")) or labels["service_date"]
+    service_date_label_raw = _as_text(payload.get("service_date_label"))
+    service_date_local = _as_text(payload.get("service_date_local")) or local_labels.get("service_date", "")
+    service_date_label = _bilingual_label(service_date_local, service_date_label_raw, use_local_labels) if service_date_label_raw else labels["service_date"]
     signatory_label = _as_text(payload.get("signatory_label"), labels["cashier"])
 
     rows: list[list[Any]] = []
@@ -1969,6 +2389,106 @@ _IST_TIMEZONE = ZoneInfo("Asia/Kolkata")
 def _today_weekday_js_index() -> int:
     # JavaScript Date.getDay convention: Sunday=0 ... Saturday=6.
     return (datetime.now(_IST_TIMEZONE).weekday() + 1) % 7
+
+
+def _weekday_js_index_for_date(value: date) -> int:
+    # JavaScript Date.getDay convention: Sunday=0 ... Saturday=6.
+    return (value.weekday() + 1) % 7
+
+
+def _parse_booking_date(value: Any) -> date | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    normalized = raw.replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(normalized).date()
+    except Exception:
+        for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
+            try:
+                return datetime.strptime(raw[:10], fmt).date()
+            except Exception:
+                continue
+    return None
+
+
+def _validate_seva_booking_date(seva_doc: dict[str, Any] | None, booking_date: date) -> None:
+    if not seva_doc:
+        return
+
+    target_day = _weekday_js_index_for_date(booking_date)
+    specific_day = _normalize_seva_day(seva_doc.get("specific_day"))
+    except_day = _normalize_seva_day(seva_doc.get("except_day"))
+    day_names = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+
+    if specific_day is not None and target_day != specific_day:
+        raise HTTPException(
+            status_code=400,
+            detail=f"This seva is available only on {day_names[specific_day]}. Please select a {day_names[specific_day]} date.",
+        )
+    if except_day is not None and target_day == except_day:
+        raise HTTPException(
+            status_code=400,
+            detail=f"This seva is not available on {day_names[except_day]}. Please select another date.",
+        )
+
+    availability = _normalize_seva_availability(seva_doc.get("availability"))
+    if availability == "weekday" and target_day not in {1, 2, 3, 4, 5}:
+        raise HTTPException(status_code=400, detail="This seva is available only on weekdays.")
+    if availability == "weekend" and target_day not in {0, 6}:
+        raise HTTPException(status_code=400, detail="This seva is available only on weekends.")
+    if availability == "festival_only":
+        raise HTTPException(status_code=400, detail="This seva is available only on configured festival dates.")
+
+
+async def _count_seva_bookings_for_date(
+    *,
+    tenant_id: str,
+    app_key: str,
+    seva_id: str,
+    booking_date: date,
+) -> int:
+    booking_date_text = booking_date.isoformat()
+    docs = await get_collection("mandir_seva_bookings").find(
+        {
+            "tenant_id": tenant_id,
+            "app_key": app_key,
+            "seva_id": str(seva_id),
+            "booking_date": booking_date_text,
+        }
+    ).to_list(length=5000)
+    return sum(
+        1
+        for doc in docs
+        if str(doc.get("status") or "").strip().lower() not in {"cancelled", "canceled"}
+    )
+
+
+async def _validate_seva_booking_capacity(
+    seva_doc: dict[str, Any] | None,
+    *,
+    tenant_id: str,
+    app_key: str,
+    seva_id: str,
+    booking_date: date,
+) -> tuple[int | None, int, int | None]:
+    max_bookings = _safe_optional_int((seva_doc or {}).get("max_bookings_per_day"))
+    booked_count = await _count_seva_bookings_for_date(
+        tenant_id=tenant_id,
+        app_key=app_key,
+        seva_id=seva_id,
+        booking_date=booking_date,
+    )
+    if max_bookings is None or max_bookings <= 0:
+        return None, booked_count, None
+
+    slots_left = max(max_bookings - booked_count, 0)
+    if slots_left <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail=f"This seva is fully booked for {booking_date.strftime('%d-%m-%Y')}. Please select another date.",
+        )
+    return max_bookings, booked_count, slots_left
 
 
 def _compute_seva_available_today(row: dict[str, Any]) -> bool:
@@ -2245,8 +2765,8 @@ def _seva_import_template_csv() -> str:
     writer.writerow(
         {
             "name_english": "Daily Archana",
-            "name_kannada": "",
-            "name_sanskrit": "",
+            "name_kannada": "ದೈನಿಕ ಆರ್ಚನೆ",
+            "name_sanskrit": "दैनिक आरचना",
             "description": "Daily morning archana seva",
             "category": "archana",
             "amount": "50",
@@ -2256,6 +2776,29 @@ def _seva_import_template_csv() -> str:
             "specific_day": "",
             "except_day": "",
             "time_slot": "Morning 6:00 AM",
+            "max_bookings_per_day": "",
+            "advance_booking_days": "30",
+            "requires_approval": "false",
+            "is_active": "true",
+            "benefits": "",
+            "instructions": "",
+            "duration_minutes": "",
+        }
+    )
+    writer.writerow(
+        {
+            "name_english": "Sarva Seva",
+            "name_kannada": "ಸರ್ವ ಸೇವೆ",
+            "name_sanskrit": "सर्व सेवा",
+            "description": "Comprehensive daily worship services",
+            "category": "pooja",
+            "amount": "500",
+            "min_amount": "",
+            "max_amount": "",
+            "availability": "daily",
+            "specific_day": "",
+            "except_day": "",
+            "time_slot": "Daily",
             "max_bookings_per_day": "",
             "advance_booking_days": "30",
             "requires_approval": "false",
@@ -2352,9 +2895,10 @@ async def _resolve_tenant_for_mandir_request(
     current_user: dict[str, Any],
     x_tenant_id: str | None,
     temple_id: int | None,
+    app_key: str = "mandirmitra",
 ) -> str:
     if temple_id and _is_platform_super_admin(current_user):
-        mapped_tenant_id = await resolve_tenant_by_temple_id(temple_id)
+        mapped_tenant_id = await resolve_tenant_by_temple_id(temple_id, app_key=app_key)
         if mapped_tenant_id:
             return mapped_tenant_id
     return resolve_tenant_id(current_user, x_tenant_id)
@@ -2416,8 +2960,14 @@ async def dashboard_stats(
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
     x_app_key: str | None = Header(default=None, alias="X-App-Key"),
 ):
-    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
-    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    tenant_context = resolve_mandir_tenant(
+        current_user=current_user,
+        x_tenant_id=x_tenant_id,
+        x_app_key=x_app_key,
+        operation="seva booking",
+    )
+    tenant_id = tenant_context.tenant_id
+    app_key = tenant_context.app_key
 
     now = datetime.now(timezone.utc)
     today = now.date().isoformat()
@@ -2449,8 +2999,56 @@ async def dashboard_stats(
     return {"donations": summarize(donations), "sevas": summarize(sevas)}
 
 
+def _panchang_city_options() -> list[dict[str, Any]]:
+    return [dict(city) for city in _PANCHANG_CITY_OPTIONS]
+
+
+def _safe_panchang_float(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _resolve_panchang_location(
+    settings_doc: dict[str, Any],
+    temple_doc: dict[str, Any],
+    *,
+    city_name: str | None = None,
+    latitude: float | str | None = None,
+    longitude: float | str | None = None,
+) -> tuple[float, float, str]:
+    override_lat = _safe_panchang_float(latitude)
+    override_lon = _safe_panchang_float(longitude)
+    if override_lat is not None and override_lon is not None:
+        return override_lat, override_lon, str(city_name or "Selected Location").strip() or "Selected Location"
+
+    settings_lat = _safe_panchang_float(settings_doc.get("latitude"))
+    settings_lon = _safe_panchang_float(settings_doc.get("longitude"))
+    settings_city = str(settings_doc.get("city_name") or "").strip()
+    if settings_lat is not None and settings_lon is not None:
+        return settings_lat, settings_lon, settings_city or str(_PANCHANG_DEFAULT_LOCATION["name"])
+
+    temple_lat = _safe_panchang_float(temple_doc.get("latitude"))
+    temple_lon = _safe_panchang_float(temple_doc.get("longitude"))
+    temple_city = str(temple_doc.get("city") or temple_doc.get("city_name") or "").strip()
+    if temple_lat is not None and temple_lon is not None:
+        return temple_lat, temple_lon, temple_city or str(_PANCHANG_DEFAULT_LOCATION["name"])
+
+    return (
+        float(_PANCHANG_DEFAULT_LOCATION["lat"]),
+        float(_PANCHANG_DEFAULT_LOCATION["lon"]),
+        str(_PANCHANG_DEFAULT_LOCATION["name"]),
+    )
+
+
 @router.get("/panchang/today")
 async def panchang_today(
+    city_name: str | None = Query(default=None),
+    latitude: float | None = Query(default=None),
+    longitude: float | None = Query(default=None),
     current_user: dict = Depends(get_current_user),
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
     x_app_key: str | None = Header(default=None, alias="X-App-Key"),
@@ -2474,17 +3072,13 @@ async def panchang_today(
             {"tenant_id": tenant_id, "app_key": app_key}
         ) or {}
 
-        # Determine location (use settings override if available, else temple location, else default to Bengaluru)
-        latitude = settings_doc.get("latitude") or temple_doc.get("latitude") or 12.9716
-        longitude = settings_doc.get("longitude") or temple_doc.get("longitude") or 77.5946
-        city = settings_doc.get("city_name") or temple_doc.get("city") or "Bengaluru"
-
-        # Ensure numeric types
-        try:
-            latitude = float(latitude)
-            longitude = float(longitude)
-        except (ValueError, TypeError):
-            latitude, longitude = 12.9716, 77.5946
+        latitude, longitude, city = _resolve_panchang_location(
+            settings_doc,
+            temple_doc,
+            city_name=city_name,
+            latitude=latitude,
+            longitude=longitude,
+        )
 
         # Calculate panchang using Swiss Ephemeris
         panchang_service = PanchangService()
@@ -2551,8 +3145,14 @@ async def create_donation(
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
     x_app_key: str | None = Header(default=None, alias="X-App-Key"),
 ):
-    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
-    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    tenant_context = resolve_mandir_tenant(
+        current_user=current_user,
+        x_tenant_id=x_tenant_id,
+        x_app_key=x_app_key,
+        operation="donation creation",
+    )
+    tenant_id = tenant_context.tenant_id
+    app_key = tenant_context.app_key
     await _ensure_default_mandir_sql_accounts_safe(session, tenant_id, raise_on_failure=True)
 
     donation_id = str(uuid4())
@@ -2603,7 +3203,12 @@ async def create_donation(
     }
 
     donation["id"] = donation_id
-    donation["receipt_number"] = _receipt_number_for_donation(donation)
+    donation["receipt_number"] = await _next_receipt_number(
+        tenant_id=tenant_id,
+        app_key=app_key,
+        receipt_kind="donation",
+        receipt_date=now,
+    )
     donation["receipt_pdf_url"] = f"/api/v1/donations/{donation_id}/receipt/pdf"
 
     col = get_collection("mandir_donations")
@@ -2630,7 +3235,7 @@ async def create_donation(
             journal_payload = JournalPostRequest(
                 entry_date=datetime.now(timezone.utc).date(),
                 description=f"{category} from {donation['devotee']['name']}",
-                reference=f"DON-{donation_id[:8].upper()}",
+                reference=donation["receipt_number"],
                 lines=[
                     JournalLineIn(account_id=resolved_account_id, debit=Decimal(str(amount)), credit=Decimal("0")),
                     JournalLineIn(account_id=income_acc_id, debit=Decimal("0"), credit=Decimal(str(amount))),
@@ -2638,6 +3243,7 @@ async def create_donation(
             )
             await post_journal_entry(
                 session=session,
+                app_key=app_key,
                 tenant_id=tenant_id,
                 created_by="mandir_compat_system",
                 payload=journal_payload,
@@ -2698,7 +3304,14 @@ async def get_donation_receipt_pdf(
 
         lang_doc = await get_collection("mandir_panchang_settings").find_one({"tenant_id": tenant_id, "app_key": app_key}) or {}
         selected_language = _normalize_local_language(
-            lang or lang_doc.get("primary_language") or temple_doc.get("primary_language")
+            lang
+            or lang_doc.get("receipt_local_language")
+            or temple_doc.get("receipt_local_language")
+            or lang_doc.get("local_language")
+            or temple_doc.get("local_language")
+            or lang_doc.get("primary_language")
+            or temple_doc.get("primary_language")
+            or "kannada"
         )
         if selected_language:
             temple_profile["local_language"] = selected_language
@@ -3063,6 +3676,51 @@ async def list_sevas(
         return []
 
 
+@router.get("/sevas/{seva_id}/availability")
+async def seva_date_availability(
+    seva_id: str,
+    booking_date: str = Query(..., description="Booking date in YYYY-MM-DD format"),
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_context = resolve_mandir_tenant(
+        current_user=current_user,
+        x_tenant_id=x_tenant_id,
+        x_app_key=x_app_key,
+        operation="seva date availability check",
+    )
+    tenant_id = tenant_context.tenant_id
+    app_key = tenant_context.app_key
+
+    parsed_date = _parse_booking_date(booking_date)
+    if parsed_date is None:
+        raise HTTPException(status_code=400, detail="Please enter a valid booking date.")
+
+    seva_doc = await get_collection("mandir_sevas").find_one({"id": str(seva_id), "tenant_id": tenant_id, "app_key": app_key})
+    if not seva_doc:
+        seva_doc = await get_collection("mandir_sevas").find_one({"id": str(seva_id), "tenant_id": tenant_id})
+    if not seva_doc:
+        raise HTTPException(status_code=404, detail="Seva not found")
+
+    _validate_seva_booking_date(seva_doc, parsed_date)
+    max_bookings, booked_count, slots_left = await _validate_seva_booking_capacity(
+        seva_doc,
+        tenant_id=tenant_id,
+        app_key=app_key,
+        seva_id=str(seva_id),
+        booking_date=parsed_date,
+    )
+    return {
+        "seva_id": str(seva_id),
+        "booking_date": parsed_date.isoformat(),
+        "available": slots_left is None or slots_left > 0,
+        "max_bookings_per_day": max_bookings,
+        "booked_count": booked_count,
+        "slots_left": slots_left,
+    }
+
+
 @router.post("/sevas/")
 @router.post("/sevas")
 async def create_seva(
@@ -3185,10 +3843,34 @@ async def import_sevas(
     if not raw:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
 
-    try:
-        text = raw.decode("utf-8-sig")
-    except UnicodeDecodeError as exc:
-        raise HTTPException(status_code=400, detail="Unable to decode CSV file as UTF-8") from exc
+    # Try multiple encodings to handle files from Excel, Google Sheets, etc.
+    # Excel on Windows often uses Windows-1252 (cp1252)
+    # Google Sheets exports UTF-8, but some systems may use UTF-16
+    encodings_to_try = [
+        "utf-8-sig",  # UTF-8 with BOM
+        "utf-8",      # UTF-8 without BOM
+        "cp1252",     # Windows-1252 (Excel on Windows)
+        "iso-8859-1", # Latin1 (fallback)
+    ]
+
+    # Check if file looks like UTF-16
+    if raw.startswith(b'\xff\xfe') or raw.startswith(b'\xfe\xff'):
+        encodings_to_try.insert(0, "utf-16")
+
+    text = None
+    decode_errors = []
+
+    for encoding in encodings_to_try:
+        try:
+            text = raw.decode(encoding)
+            break
+        except (UnicodeDecodeError, LookupError) as e:
+            decode_errors.append(f"{encoding}: {str(e)[:50]}")
+            continue
+
+    if text is None:
+        error_detail = "Unable to decode CSV file. Tried encodings: " + ", ".join(encodings_to_try)
+        raise HTTPException(status_code=400, detail=error_detail)
 
     reader = csv.DictReader(StringIO(text))
     if not reader.fieldnames:
@@ -3266,15 +3948,17 @@ async def seva_payment_accounts(
 async def get_current_temple(
     current_user: dict = Depends(get_current_user),
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
     temple_id: int | None = Query(default=None),
 ):
-    tenant_id = await _resolve_tenant_for_mandir_request(current_user, x_tenant_id, temple_id)
+    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    tenant_id = await _resolve_tenant_for_mandir_request(current_user, x_tenant_id, temple_id, app_key=app_key)
     col = get_collection("mandir_temples")
-    doc = await col.find_one({"tenant_id": tenant_id})
+    doc = await col.find_one({"tenant_id": tenant_id, "app_key": app_key})
     if doc:
         return doc
 
-    assigned_temple_id = await ensure_temple_numeric_id(tenant_id)
+    assigned_temple_id = await ensure_temple_numeric_id(tenant_id, app_key=app_key)
     now = datetime.now(timezone.utc).isoformat()
     fallback = {
         "id": assigned_temple_id,
@@ -3297,17 +3981,19 @@ async def update_current_temple(
     payload: dict[str, Any],
     current_user: dict = Depends(get_current_user),
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
     temple_id: int | None = Query(default=None),
 ):
-    tenant_id = await _resolve_tenant_for_mandir_request(current_user, x_tenant_id, temple_id)
-    assigned_temple_id = await ensure_temple_numeric_id(tenant_id)
+    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    tenant_id = await _resolve_tenant_for_mandir_request(current_user, x_tenant_id, temple_id, app_key=app_key)
+    assigned_temple_id = await ensure_temple_numeric_id(tenant_id, app_key=app_key)
     col = get_collection("mandir_temples")
     now = datetime.now(timezone.utc).isoformat()
     update = {k: v for k, v in payload.items() if k not in {"id", "_id", "tenant_id", "temple_id"}}
     update["updated_at"] = now
 
     await col.update_one(
-        {"tenant_id": tenant_id},
+        {"tenant_id": tenant_id, "app_key": app_key},
         {
             "$set": {**update, "id": assigned_temple_id, "temple_id": assigned_temple_id},
             "$setOnInsert": {
@@ -3595,8 +4281,44 @@ async def mandir_create_bank_account(
     return _sanitize_mongo_doc(doc)
 
 @router.get("/bank-reconciliation/accounts")
-async def mandir_bank_rec_accounts(_current_user: dict = Depends(get_current_user)):
-    return []
+async def mandir_bank_rec_accounts(
+    session: AsyncSession = Depends(get_async_session),
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    await _ensure_default_mandir_sql_accounts_safe(session, tenant_id)
+
+    sql_accounts = await list_accounts(session, app_key=app_key, tenant_id=tenant_id)
+    bank_accounts = []
+    cash_bank_accounts = []
+
+    for account in sql_accounts:
+        if not bool(getattr(account, "is_cash_bank", False)):
+            continue
+
+        name = str(getattr(account, "name", "") or "").lower()
+        code = str(getattr(account, "code", "") or "").strip()
+        row = {
+            "id": int(account.id),
+            "account_id": int(account.id),
+            "code": code,
+            "name": str(getattr(account, "name", "") or "").strip(),
+            "type": str(getattr(account, "type", "") or "").strip(),
+            "account_code": code,
+            "account_name": str(getattr(account, "name", "") or "").strip(),
+            "account_type": str(getattr(account, "type", "") or "").strip(),
+            "is_cash_bank": True,
+            "cash_bank_nature": "bank" if "bank" in name else "cash",
+        }
+        cash_bank_accounts.append(row)
+        if "bank" in name or code == "12001":
+            row["cash_bank_nature"] = "bank"
+            bank_accounts.append(row)
+
+    return bank_accounts or cash_bank_accounts
 
 
 @router.post("/bank-reconciliation/match")
@@ -4133,8 +4855,14 @@ async def mandir_create_journal_entry(
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
     x_app_key: str | None = Header(default=None, alias="X-App-Key"),
 ):
-    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
-    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    tenant_context = resolve_mandir_tenant(
+        current_user=current_user,
+        x_tenant_id=x_tenant_id,
+        x_app_key=x_app_key,
+        operation="journal entry creation",
+    )
+    tenant_id = tenant_context.tenant_id
+    app_key = tenant_context.app_key
     await _ensure_default_mandir_sql_accounts_safe(session, tenant_id, raise_on_failure=True)
 
     normalized_lines, total_debit, total_credit = await _normalize_mandir_journal_lines(
@@ -4146,7 +4874,7 @@ async def mandir_create_journal_entry(
     entry_id = str(uuid4())
     now = datetime.now(timezone.utc).isoformat()
     entry_date = _parse_journal_entry_date(payload.get("entry_date"))
-    entry_number = f"JE-{entry_id[:8].upper()}"
+    entry_number = await _next_journal_entry_number(tenant_id=tenant_id, app_key=app_key)
 
     entry_doc = {
         "id": entry_id,
@@ -4181,8 +4909,14 @@ async def mandir_update_journal_entry(
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
     x_app_key: str | None = Header(default=None, alias="X-App-Key"),
 ):
-    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
-    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    tenant_context = resolve_mandir_tenant(
+        current_user=current_user,
+        x_tenant_id=x_tenant_id,
+        x_app_key=x_app_key,
+        operation="journal entry update",
+    )
+    tenant_id = tenant_context.tenant_id
+    app_key = tenant_context.app_key
 
     collection = get_collection("mandir_journal_entries")
     existing = await collection.find_one({"id": str(entry_id), "tenant_id": tenant_id, "app_key": app_key})
@@ -4228,8 +4962,14 @@ async def mandir_post_journal_entry(
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
     x_app_key: str | None = Header(default=None, alias="X-App-Key"),
 ):
-    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
-    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    tenant_context = resolve_mandir_tenant(
+        current_user=current_user,
+        x_tenant_id=x_tenant_id,
+        x_app_key=x_app_key,
+        operation="journal entry posting",
+    )
+    tenant_id = tenant_context.tenant_id
+    app_key = tenant_context.app_key
     await _ensure_default_mandir_sql_accounts_safe(session, tenant_id, raise_on_failure=True)
 
     collection = get_collection("mandir_journal_entries")
@@ -4316,8 +5056,14 @@ async def mandir_cancel_journal_entry(
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
     x_app_key: str | None = Header(default=None, alias="X-App-Key"),
 ):
-    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
-    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    tenant_context = resolve_mandir_tenant(
+        current_user=current_user,
+        x_tenant_id=x_tenant_id,
+        x_app_key=x_app_key,
+        operation="seva booking",
+    )
+    tenant_id = tenant_context.tenant_id
+    app_key = tenant_context.app_key
 
     collection = get_collection("mandir_journal_entries")
     existing = await collection.find_one({"id": str(entry_id), "tenant_id": tenant_id, "app_key": app_key})
@@ -4902,12 +5648,15 @@ async def mandir_panchang_display_settings_update(
 
 @router.get("/panchang/display-settings/cities")
 async def mandir_panchang_cities(_current_user: dict = Depends(get_current_user)):
-    return [{"name": "Bengaluru", "state": "Karnataka"}, {"name": "Chennai", "state": "Tamil Nadu"}]
+    return {"success": True, "data": _panchang_city_options()}
 
 
 @router.get("/panchang/on-date")
 async def mandir_panchang_on_date(
     target_date: str = Query(...),
+    city_name: str | None = Query(default=None),
+    latitude: float | None = Query(default=None),
+    longitude: float | None = Query(default=None),
     current_user: dict = Depends(get_current_user),
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
     x_app_key: str | None = Header(default=None, alias="X-App-Key"),
@@ -4932,10 +5681,16 @@ async def mandir_panchang_on_date(
             {"tenant_id": tenant_id, "app_key": app_key}
         ) or {}
 
-        # Determine location
-        latitude = float(settings_doc.get("latitude", temple_doc.get("latitude", 12.9716))) if settings_doc.get("latitude") or temple_doc.get("latitude") else 12.9716
-        longitude = float(settings_doc.get("longitude", temple_doc.get("longitude", 77.5946))) if settings_doc.get("longitude") or temple_doc.get("longitude") else 77.5946
-        city = settings_doc.get("city_name", temple_doc.get("city", "Bengaluru")) or "Bengaluru"
+        if not temple_doc:
+            temple_doc = {}
+
+        latitude, longitude, city = _resolve_panchang_location(
+            settings_doc,
+            temple_doc,
+            city_name=city_name,
+            latitude=latitude,
+            longitude=longitude,
+        )
 
         # Calculate panchang for the target date
         panchang_service = PanchangService()
@@ -4959,6 +5714,9 @@ async def mandir_panchang_on_date(
 @router.get("/panchang/on-date-full")
 async def mandir_panchang_on_date_full(
     target_date: str = Query(...),
+    city_name: str | None = Query(default=None),
+    latitude: float | None = Query(default=None),
+    longitude: float | None = Query(default=None),
     current_user: dict = Depends(get_current_user),
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
     x_app_key: str | None = Header(default=None, alias="X-App-Key"),
@@ -4985,17 +5743,13 @@ async def mandir_panchang_on_date_full(
             {"tenant_id": tenant_id, "app_key": app_key}
         ) or {}
 
-        # Determine location (use settings override if available, else temple location, else default to Bengaluru)
-        latitude = settings_doc.get("latitude") or temple_doc.get("latitude") or 12.9716
-        longitude = settings_doc.get("longitude") or temple_doc.get("longitude") or 77.5946
-        city = settings_doc.get("city_name") or temple_doc.get("city") or "Bengaluru"
-
-        # Ensure numeric types
-        try:
-            latitude = float(latitude)
-            longitude = float(longitude)
-        except (ValueError, TypeError):
-            latitude, longitude = 12.9716, 77.5946
+        latitude, longitude, city = _resolve_panchang_location(
+            settings_doc,
+            temple_doc,
+            city_name=city_name,
+            latitude=latitude,
+            longitude=longitude,
+        )
 
         # Calculate panchang using Swiss Ephemeris
         panchang_service = PanchangService()
@@ -5283,12 +6037,14 @@ async def mandir_setup_wizard_status(_current_user: dict = Depends(get_current_u
 async def mandir_temples(
     _current_user: dict = Depends(get_current_user),
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
 ):
+    app_key = resolve_app_key((x_app_key or _current_user.get("app_key") or "mandirmitra").strip())
     if _is_platform_super_admin(_current_user):
-        rows = await list_mandir_temples(limit=500)
+        rows = await list_mandir_temples(app_key=app_key, limit=500)
     else:
         tenant_id = resolve_tenant_id(_current_user, x_tenant_id)
-        rows = await list_mandir_temples(tenant_id=tenant_id, limit=20)
+        rows = await list_mandir_temples(tenant_id=tenant_id, app_key=app_key, limit=20)
 
     if rows:
         return [_sanitize_mongo_doc(row) for row in rows]
@@ -5297,7 +6053,7 @@ async def mandir_temples(
         return []
 
     fallback_tenant_id = resolve_tenant_id(_current_user, x_tenant_id)
-    fallback_temple_id = await ensure_temple_numeric_id(fallback_tenant_id)
+    fallback_temple_id = await ensure_temple_numeric_id(fallback_tenant_id, app_key=app_key)
     return [
         {
             "id": fallback_temple_id,
@@ -5323,8 +6079,9 @@ async def _resolve_temple_target_tenant(
     *,
     current_user: dict,
     x_tenant_id: str | None,
+    app_key: str = "mandirmitra",
 ) -> str:
-    target_tenant_id = await resolve_tenant_by_temple_id(temple_id)
+    target_tenant_id = await resolve_tenant_by_temple_id(temple_id, app_key=app_key)
     if not target_tenant_id:
         raise HTTPException(status_code=404, detail="Temple not found")
 
@@ -5340,15 +6097,17 @@ async def mandir_activate_temple(
     temple_id: int,
     current_user: dict = Depends(get_current_user),
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
 ):
-    tenant_id = await _resolve_temple_target_tenant(temple_id, current_user=current_user, x_tenant_id=x_tenant_id)
+    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    tenant_id = await _resolve_temple_target_tenant(temple_id, current_user=current_user, x_tenant_id=x_tenant_id, app_key=app_key)
     now = datetime.now(timezone.utc).isoformat()
     await get_collection("mandir_temples").update_one(
-        {"tenant_id": tenant_id},
+        {"tenant_id": tenant_id, "app_key": app_key},
         {"$set": {"is_active": True, "updated_at": now}},
         upsert=False,
     )
-    doc = await get_collection("mandir_temples").find_one({"tenant_id": tenant_id}) or {"tenant_id": tenant_id}
+    doc = await get_collection("mandir_temples").find_one({"tenant_id": tenant_id, "app_key": app_key}) or {"tenant_id": tenant_id}
     return {"status": "activated", "temple_id": temple_id, "temple": _sanitize_mongo_doc(doc)}
 
 
@@ -5357,15 +6116,17 @@ async def mandir_deactivate_temple(
     temple_id: int,
     current_user: dict = Depends(get_current_user),
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
 ):
-    tenant_id = await _resolve_temple_target_tenant(temple_id, current_user=current_user, x_tenant_id=x_tenant_id)
+    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    tenant_id = await _resolve_temple_target_tenant(temple_id, current_user=current_user, x_tenant_id=x_tenant_id, app_key=app_key)
     now = datetime.now(timezone.utc).isoformat()
     await get_collection("mandir_temples").update_one(
-        {"tenant_id": tenant_id},
+        {"tenant_id": tenant_id, "app_key": app_key},
         {"$set": {"is_active": False, "updated_at": now}},
         upsert=False,
     )
-    doc = await get_collection("mandir_temples").find_one({"tenant_id": tenant_id}) or {"tenant_id": tenant_id}
+    doc = await get_collection("mandir_temples").find_one({"tenant_id": tenant_id, "app_key": app_key}) or {"tenant_id": tenant_id}
     return {"status": "deactivated", "temple_id": temple_id, "temple": _sanitize_mongo_doc(doc)}
 
 
@@ -5375,11 +6136,13 @@ async def mandir_remove_temple(
     payload: dict[str, Any] | None = None,
     current_user: dict = Depends(get_current_user),
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
 ):
     if not _is_platform_super_admin(current_user):
         raise HTTPException(status_code=403, detail="Only platform administrators can remove temples")
 
-    target_tenant_id = await _resolve_temple_target_tenant(temple_id, current_user=current_user, x_tenant_id=x_tenant_id)
+    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    target_tenant_id = await _resolve_temple_target_tenant(temple_id, current_user=current_user, x_tenant_id=x_tenant_id, app_key=app_key)
     expected = f"DELETE {temple_id}"
     confirm_text = str((payload or {}).get("confirm_text") or "").strip()
     if confirm_text != expected:
@@ -5472,10 +6235,12 @@ async def mandir_temples_module_config_update(
     payload: dict[str, Any],
     _current_user: dict = Depends(get_current_user),
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
     temple_id: int | None = Query(default=None),
 ):
     tenant_id = await _resolve_tenant_for_mandir_request(_current_user, x_tenant_id, temple_id)
-    assigned_temple_id = await ensure_temple_numeric_id(tenant_id)
+    app_key = resolve_app_key((x_app_key or _current_user.get("app_key") or "mandirmitra").strip())
+    assigned_temple_id = await ensure_temple_numeric_id(tenant_id, app_key=app_key)
     col = get_collection("mandir_temples")
 
     allowed_keys = {
@@ -5494,18 +6259,19 @@ async def mandir_temples_module_config_update(
     update["temple_id"] = assigned_temple_id
 
     await col.update_one(
-        {"tenant_id": tenant_id},
+        {"tenant_id": tenant_id, "app_key": app_key},
         {
             "$set": update,
             "$setOnInsert": {
                 "tenant_id": tenant_id,
+                "app_key": app_key,
                 "created_at": datetime.now(timezone.utc).isoformat(),
             },
         },
         upsert=True,
     )
 
-    doc = await col.find_one({"tenant_id": tenant_id}) or {}
+    doc = await col.find_one({"tenant_id": tenant_id, "app_key": app_key}) or {}
     return {
         "module_donations_enabled": bool(doc.get("module_donations_enabled", True)),
         "module_sevas_enabled": bool(doc.get("module_sevas_enabled", True)),
@@ -5538,11 +6304,13 @@ def _mandir_upi_config_view(doc: dict[str, Any], temple_id: int) -> dict[str, An
 async def mandir_upi_payments_config(
     current_user: dict = Depends(get_current_user),
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
     temple_id: int | None = Query(default=None),
 ):
-    tenant_id = await _resolve_tenant_for_mandir_request(current_user, x_tenant_id, temple_id)
-    assigned_temple_id = await ensure_temple_numeric_id(tenant_id)
-    doc = await get_collection("mandir_temples").find_one({"tenant_id": tenant_id}) or {}
+    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    tenant_id = await _resolve_tenant_for_mandir_request(current_user, x_tenant_id, temple_id, app_key=app_key)
+    assigned_temple_id = await ensure_temple_numeric_id(tenant_id, app_key=app_key)
+    doc = await get_collection("mandir_temples").find_one({"tenant_id": tenant_id, "app_key": app_key}) or {}
     return _mandir_upi_config_view(doc, assigned_temple_id)
 
 
@@ -5551,10 +6319,12 @@ async def mandir_upi_payments_config_update(
     payload: dict[str, Any],
     current_user: dict = Depends(get_current_user),
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
     temple_id: int | None = Query(default=None),
 ):
-    tenant_id = await _resolve_tenant_for_mandir_request(current_user, x_tenant_id, temple_id)
-    assigned_temple_id = await ensure_temple_numeric_id(tenant_id)
+    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    tenant_id = await _resolve_tenant_for_mandir_request(current_user, x_tenant_id, temple_id, app_key=app_key)
+    assigned_temple_id = await ensure_temple_numeric_id(tenant_id, app_key=app_key)
 
     upi_id = str(payload.get("upi_id") or "").strip().lower()
     upi_payee_name = str(payload.get("upi_payee_name") or "").strip()
@@ -5583,11 +6353,12 @@ async def mandir_upi_payments_config_update(
 
     col = get_collection("mandir_temples")
     await col.update_one(
-        {"tenant_id": tenant_id},
+        {"tenant_id": tenant_id, "app_key": app_key},
         {
             "$set": update,
             "$setOnInsert": {
                 "tenant_id": tenant_id,
+                "app_key": app_key,
                 "created_at": datetime.now(timezone.utc).isoformat(),
             },
         },
@@ -5606,7 +6377,7 @@ async def mandir_public_upi_intent(
     x_app_key: str | None = Header(default=None, alias="X-App-Key"),
 ):
     app_key = resolve_app_key((x_app_key or "mandirmitra").strip())
-    tenant_id = await resolve_tenant_by_temple_id(temple_id)
+    tenant_id = await resolve_tenant_by_temple_id(temple_id, app_key=app_key)
     if not tenant_id:
         raise HTTPException(status_code=404, detail="Temple not found")
 
@@ -5716,11 +6487,11 @@ async def mandir_public_temple_info(
     x_app_key: str | None = Header(default=None, alias="X-App-Key"),
 ):
     app_key = resolve_app_key((x_app_key or "mandirmitra").strip())
-    tenant_id = await resolve_tenant_by_temple_id(temple_id)
+    tenant_id = await resolve_tenant_by_temple_id(temple_id, app_key=app_key)
     if not tenant_id:
         raise HTTPException(status_code=404, detail="Temple not found")
 
-    doc = await get_collection("mandir_temples").find_one({"tenant_id": tenant_id}) or {}
+    doc = await get_collection("mandir_temples").find_one({"tenant_id": tenant_id, "app_key": app_key}) or {}
     if not doc:
         raise HTTPException(status_code=404, detail="Temple not found")
 
@@ -5747,7 +6518,7 @@ async def mandir_public_temple_sevas(
     x_app_key: str | None = Header(default=None, alias="X-App-Key"),
 ):
     app_key = resolve_app_key((x_app_key or "mandirmitra").strip())
-    tenant_id = await resolve_tenant_by_temple_id(temple_id)
+    tenant_id = await resolve_tenant_by_temple_id(temple_id, app_key=app_key)
     if not tenant_id:
         raise HTTPException(status_code=404, detail="Temple not found")
 
@@ -5781,7 +6552,7 @@ async def mandir_public_devotee_autofill(
     x_app_key: str | None = Header(default=None, alias="X-App-Key"),
 ):
     app_key = resolve_app_key((x_app_key or "mandirmitra").strip())
-    tenant_id = await resolve_tenant_by_temple_id(temple_id)
+    tenant_id = await resolve_tenant_by_temple_id(temple_id, app_key=app_key)
     if not tenant_id:
         raise HTTPException(status_code=404, detail="Temple not found")
 
@@ -5849,7 +6620,8 @@ async def mandir_public_donation_categories(
     temple_id: int,
     x_app_key: str | None = Header(default=None, alias="X-App-Key"),
 ):
-    tenant_id = await resolve_tenant_by_temple_id(temple_id)
+    app_key = resolve_app_key((x_app_key or "mandirmitra").strip())
+    tenant_id = await resolve_tenant_by_temple_id(temple_id, app_key=app_key)
     if not tenant_id:
         raise HTTPException(status_code=404, detail="Temple not found")
 
@@ -5872,7 +6644,7 @@ async def mandir_public_create_seva_payment(
     x_app_key: str | None = Header(default=None, alias="X-App-Key"),
 ):
     app_key = resolve_app_key((x_app_key or "mandirmitra").strip())
-    tenant_id = await resolve_tenant_by_temple_id(temple_id)
+    tenant_id = await resolve_tenant_by_temple_id(temple_id, app_key=app_key)
     if not tenant_id:
         raise HTTPException(status_code=404, detail="Temple not found")
 
@@ -6257,8 +7029,14 @@ async def mandir_upi_quick_log(
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
     x_app_key: str | None = Header(default=None, alias="X-App-Key"),
 ):
-    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
-    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    tenant_context = resolve_mandir_tenant(
+        current_user=current_user,
+        x_tenant_id=x_tenant_id,
+        x_app_key=x_app_key,
+        operation="UPI quick log",
+    )
+    tenant_id = tenant_context.tenant_id
+    app_key = tenant_context.app_key
 
     amount = _safe_float(payload.get("amount"), 0.0)
     if amount <= 0:
@@ -6432,8 +7210,14 @@ async def create_seva_booking(
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
     x_app_key: str | None = Header(default=None, alias="X-App-Key"),
 ):
-    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
-    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    tenant_context = resolve_mandir_tenant(
+        current_user=current_user,
+        x_tenant_id=x_tenant_id,
+        x_app_key=x_app_key,
+        operation="seva booking",
+    )
+    tenant_id = tenant_context.tenant_id
+    app_key = tenant_context.app_key
     await _ensure_default_mandir_sql_accounts_safe(session, tenant_id, raise_on_failure=True)
 
     booking_id = str(uuid4())
@@ -6443,12 +7227,25 @@ async def create_seva_booking(
     seva_id = payload.get("seva_id")
     seva_name = str(payload.get("seva_name") or "Seva Booking")
     col_sevas = get_collection("mandir_sevas")
+    seva_doc: dict[str, Any] | None = None
     if seva_id:
-        seva_doc = await col_sevas.find_one({"id": str(seva_id), "tenant_id": tenant_id})
+        seva_doc = await col_sevas.find_one({"id": str(seva_id), "tenant_id": tenant_id, "app_key": app_key})
         if not seva_doc:
-            seva_doc = await col_sevas.find_one({"id": str(seva_id), "tenant_id": tenant_id, "app_key": app_key})
+            seva_doc = await col_sevas.find_one({"id": str(seva_id), "tenant_id": tenant_id})
         if seva_doc and seva_doc.get("name"):
             seva_name = str(seva_doc["name"])
+
+    booking_date = _parse_booking_date(payload.get("booking_date"))
+    if booking_date is None:
+        raise HTTPException(status_code=400, detail="Please enter a valid booking date.")
+    _validate_seva_booking_date(seva_doc, booking_date)
+    await _validate_seva_booking_capacity(
+        seva_doc,
+        tenant_id=tenant_id,
+        app_key=app_key,
+        seva_id=str(seva_id),
+        booking_date=booking_date,
+    )
 
     # Compute expiry_date from seva's duration_days (for annual/subscription sevas)
     seva_expiry_date: str | None = None
@@ -6522,7 +7319,12 @@ async def create_seva_booking(
             "state": devotee_snapshot.get("state"),
             "pincode": devotee_snapshot.get("pincode"),
         }
-    booking["receipt_number"] = _receipt_number_for_seva(booking)
+    booking["receipt_number"] = await _next_receipt_number(
+        tenant_id=tenant_id,
+        app_key=app_key,
+        receipt_kind="seva",
+        receipt_date=booking.get("booking_date") or now,
+    )
     booking["receipt_pdf_url"] = f"/api/v1/sevas/bookings/{booking_id}/receipt/pdf"
     if seva_expiry_date:
         booking["expiry_date"] = seva_expiry_date
@@ -6553,7 +7355,7 @@ async def create_seva_booking(
             journal_payload = JournalPostRequest(
                 entry_date=datetime.now(timezone.utc).date(),
                 description=f"Seva Booking ({seva_name}) - {devotee_names}",
-                reference=f"SEV-{booking_id[:8].upper()}",
+                reference=booking["receipt_number"],
                 lines=[
                     JournalLineIn(account_id=resolved_account_id, debit=Decimal(str(amount)), credit=Decimal("0")),
                     JournalLineIn(account_id=income_acc_id, debit=Decimal("0"), credit=Decimal(str(amount))),
@@ -6561,6 +7363,7 @@ async def create_seva_booking(
             )
             await post_journal_entry(
                 session=session,
+                app_key=app_key,
                 tenant_id=tenant_id,
                 created_by="mandir_compat_system",
                 payload=journal_payload,
@@ -6797,7 +7600,14 @@ async def get_seva_receipt_pdf(
 
         lang_doc = await get_collection("mandir_panchang_settings").find_one({"tenant_id": tenant_id, "app_key": app_key}) or {}
         selected_language = _normalize_local_language(
-            lang or lang_doc.get("primary_language") or temple_doc.get("primary_language")
+            lang
+            or lang_doc.get("receipt_local_language")
+            or temple_doc.get("receipt_local_language")
+            or lang_doc.get("local_language")
+            or temple_doc.get("local_language")
+            or lang_doc.get("primary_language")
+            or temple_doc.get("primary_language")
+            or "kannada"
         )
         if selected_language:
             temple_profile["local_language"] = selected_language

@@ -63,7 +63,9 @@ async def record_maintenance_collection(
         )
         journal_entry, created = await post_journal_entry(
             session,
+            app_key="gruhamitra",
             tenant_id=tenant_id,
+            accounting_entity_id="primary",
             created_by=created_by,
             payload=journal_payload,
             idempotency_key=f"maintenance:{collection_id}",

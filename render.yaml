@@ -21,10 +21,22 @@ services:
         sync: false
       - key: POSTGRES_URI
         sync: false
+      - key: PG_CONNECT_TIMEOUT_SECONDS
+        value: "5"
+      - key: PG_POOL_SIZE
+        value: "8"
+      - key: PG_MAX_OVERFLOW
+        value: "0"
+      - key: PG_POOL_TIMEOUT_SECONDS
+        value: "5"
+      - key: PG_POOL_RECYCLE_SECONDS
+        value: "300"
       - key: PG_AUTO_CREATE_TABLES
         value: "false"
       - key: JWT_SECRET
         generateValue: true
+      - key: OTP_PEPPER
+        sync: false
       - key: JWT_ALGORITHM
         value: HS256
       - key: ACCESS_TOKEN_EXPIRE_MINUTES
@@ -39,7 +51,17 @@ services:
         value: mandirmitra,gruhamitra,mitrabooks,legalmitra,investmitra
       - key: GOOGLE_OAUTH_CLIENT_IDS
         sync: false
+      - key: AUTH_PUBLIC_BASE_URL
+        sync: false
+      - key: AUTH_EMAIL_DEBUG_RETURN_LINK
+        value: "false"
+      - key: MOBILE_OTP_DEBUG_RETURN_CODE
+        value: "false"
+      - key: MANDIR_ONBOARDING_SECRET
+        sync: false
       - key: SUPER_ADMIN_BOOTSTRAP
+        value: "false"
+      - key: DEMO_MANDIR_BOOTSTRAP
         value: "false"
       - key: RAG_EMBEDDING_PROVIDER
         value: hash

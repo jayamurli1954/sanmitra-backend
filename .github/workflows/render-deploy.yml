@@ -11,6 +11,10 @@ on:
         options:
           - staging
           - production
+      version_tag:
+        description: "Required for production, e.g. backend-v1.2.1"
+        required: false
+        type: string
 
 concurrency:
   group: render-deploy-${{ github.event.inputs.target }}
@@ -23,6 +27,24 @@ jobs:
     environment: staging
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install --prefer-binary -r requirements-dev.txt
+
+      - name: Release Preflight
+        run: |
+          python scripts/release_preflight.py --target staging
+
       - name: Validate Staging Deploy Hook
         run: |
           if [ -z "${{ secrets.RENDER_STAGING_DEPLOY_HOOK }}" ]; then
@@ -40,6 +62,33 @@ jobs:
     environment: production
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install --prefer-binary -r requirements-dev.txt
+
+      - name: Require Production Version Tag
+        run: |
+          if [ -z "${{ github.event.inputs.version_tag }}" ]; then
+            echo "version_tag is required for production deploy"
+            exit 1
+          fi
+
+      - name: Release Preflight
+        run: |
+          python scripts/release_preflight.py --target production --expected-tag "${{ github.event.inputs.version_tag }}" --require-current-tag
+
       - name: Validate Production Deploy Hook
         run: |
           if [ -z "${{ secrets.RENDER_PRODUCTION_DEPLOY_HOOK }}" ]; then

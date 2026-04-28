@@ -5,6 +5,7 @@ from pymongo.errors import DuplicateKeyError, OperationFailure
 
 from app.config import get_settings
 from app.core.auth.security import hash_password
+from app.core.tenants.context import get_app_key, resolve_app_key
 from app.core.tenants.service import ensure_tenant_exists
 from app.db.mongo import get_collection
 
@@ -22,6 +23,7 @@ def _mobile_provider_subject(mobile: str) -> str:
 async def ensure_users_indexes() -> None:
     users = get_collection(USERS_COLLECTION)
     await users.create_index("email", unique=True)
+    await users.create_index([("app_key", 1), ("tenant_id", 1), ("role", 1)])
     await users.create_index([("tenant_id", 1), ("role", 1)])
     # Prefer scoped uniqueness for provider subject. Older MongoDB versions may
     # reject some partial index expressions; fall back to sparse uniqueness.
@@ -62,6 +64,7 @@ async def ensure_seed_user() -> None:
         "email": seed_email,
         "full_name": "SanMitra Admin",
         "tenant_id": "seed-tenant-1",
+        "app_key": resolve_app_key("mandirmitra"),
         "role": "tenant_admin",
         "hashed_password": hash_password("admin123"),
         "auth_provider": "password",
@@ -98,6 +101,7 @@ async def ensure_super_admin_user() -> None:
     if existing:
         update_fields = {
             "role": "super_admin",
+            "app_key": resolve_app_key(getattr(settings, "DEFAULT_APP_KEY", "mandirmitra")),
             "is_active": True,
             "updated_at": now,
         }
@@ -120,6 +124,7 @@ async def ensure_super_admin_user() -> None:
         "email": email,
         "full_name": full_name,
         "tenant_id": tenant_id,
+        "app_key": resolve_app_key(getattr(settings, "DEFAULT_APP_KEY", "mandirmitra")),
         "role": "super_admin",
         "hashed_password": hash_password(password),
         "auth_provider": "password",
@@ -150,11 +155,20 @@ async def get_user_by_mobile(mobile: str):
         raise RuntimeError(f"MongoDB mobile user lookup failed: {exc}") from exc
 
 
-async def create_user(*, email: str, password: str, full_name: str, tenant_id: str, role: str):
+async def create_user(
+    *,
+    email: str,
+    password: str,
+    full_name: str,
+    tenant_id: str,
+    role: str,
+    app_key: str | None = None,
+):
     await ensure_users_indexes()
 
     normalized_email = email.strip().lower()
     normalized_tenant_id = tenant_id.strip()
+    normalized_app_key = resolve_app_key(app_key or get_app_key())
     await ensure_tenant_exists(normalized_tenant_id)
 
     users = get_collection(USERS_COLLECTION)
@@ -164,6 +178,7 @@ async def create_user(*, email: str, password: str, full_name: str, tenant_id: s
         "email": normalized_email,
         "full_name": full_name.strip(),
         "tenant_id": normalized_tenant_id,
+        "app_key": normalized_app_key,
         "role": role.strip(),
         "hashed_password": hash_password(password),
         "auth_provider": "password",
@@ -183,15 +198,25 @@ async def create_user(*, email: str, password: str, full_name: str, tenant_id: s
         "email": doc["email"],
         "full_name": doc["full_name"],
         "tenant_id": doc["tenant_id"],
+        "app_key": doc["app_key"],
         "role": doc["role"],
         "is_active": doc["is_active"],
     }
 
 
-async def create_user_from_google(*, email: str, full_name: str, tenant_id: str, role: str, provider_subject: str):
+async def create_user_from_google(
+    *,
+    email: str,
+    full_name: str,
+    tenant_id: str,
+    role: str,
+    provider_subject: str,
+    app_key: str | None = None,
+):
     await ensure_users_indexes()
 
     normalized_tenant_id = tenant_id.strip()
+    normalized_app_key = resolve_app_key(app_key or get_app_key())
     await ensure_tenant_exists(normalized_tenant_id)
 
     users = get_collection(USERS_COLLECTION)
@@ -201,6 +226,7 @@ async def create_user_from_google(*, email: str, full_name: str, tenant_id: str,
         "email": email.strip().lower(),
         "full_name": full_name.strip(),
         "tenant_id": normalized_tenant_id,
+        "app_key": normalized_app_key,
         "role": role.strip(),
         "hashed_password": None,
         "auth_provider": "google",
@@ -220,6 +246,7 @@ async def create_user_from_google(*, email: str, full_name: str, tenant_id: str,
         "email": doc["email"],
         "full_name": doc["full_name"],
         "tenant_id": doc["tenant_id"],
+        "app_key": doc["app_key"],
         "role": doc["role"],
         "is_active": doc["is_active"],
         "auth_provider": doc["auth_provider"],
@@ -227,11 +254,19 @@ async def create_user_from_google(*, email: str, full_name: str, tenant_id: str,
     }
 
 
-async def create_user_from_mobile(*, mobile: str, full_name: str, tenant_id: str, role: str = "operator"):
+async def create_user_from_mobile(
+    *,
+    mobile: str,
+    full_name: str,
+    tenant_id: str,
+    role: str = "operator",
+    app_key: str | None = None,
+):
     await ensure_users_indexes()
 
     normalized_tenant_id = tenant_id.strip()
     normalized_mobile = mobile.strip()
+    normalized_app_key = resolve_app_key(app_key or get_app_key())
     await ensure_tenant_exists(normalized_tenant_id)
 
     users = get_collection(USERS_COLLECTION)
@@ -247,6 +282,7 @@ async def create_user_from_mobile(*, mobile: str, full_name: str, tenant_id: str
         "mobile": normalized_mobile,
         "full_name": full_name.strip(),
         "tenant_id": normalized_tenant_id,
+        "app_key": normalized_app_key,
         "role": role.strip(),
         "hashed_password": None,
         "auth_provider": "mobile_otp",
@@ -267,6 +303,7 @@ async def create_user_from_mobile(*, mobile: str, full_name: str, tenant_id: str
         "mobile": doc["mobile"],
         "full_name": doc["full_name"],
         "tenant_id": doc["tenant_id"],
+        "app_key": doc["app_key"],
         "role": doc["role"],
         "is_active": doc["is_active"],
         "auth_provider": doc["auth_provider"],
