@@ -74,8 +74,11 @@ async def _resolve_tenant_from_legacy_temple_header(x_temple_id: str | None) -> 
 class TenantContextMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         tenant_id = request.headers.get("X-Tenant-ID")
-        if not tenant_id:
-            tenant_id = await _resolve_tenant_from_legacy_temple_header(request.headers.get("X-Temple-Id"))
+        temple_tenant_id = await _resolve_tenant_from_legacy_temple_header(request.headers.get("X-Temple-Id"))
+        if temple_tenant_id:
+            tenant_id = temple_tenant_id
+        elif not tenant_id:
+            tenant_id = temple_tenant_id
 
         app_key = resolve_app_key(request.headers.get("X-App-Key"))
 

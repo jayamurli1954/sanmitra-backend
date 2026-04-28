@@ -5,7 +5,7 @@ import pytest
 
 from app.core.auth.dependencies import get_current_user
 from app.core.auth.security import create_access_token, create_refresh_token, decode_token
-from app.core.tenants.context import resolve_tenant_id
+from app.core.tenants.context import _resolve_tenant_from_legacy_temple_header, resolve_tenant_id
 
 
 def _base_payload(*, role: str = "tenant_admin", tenant_id: str | None = "t1", app_key: str = "mandirmitra") -> dict:
@@ -108,3 +108,21 @@ def test_resolve_tenant_id_requires_token_for_non_superadmin() -> None:
         resolve_tenant_id(_base_payload(role="tenant_admin", tenant_id=None), "t2")
 
     assert exc.value.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_legacy_temple_header_resolves_selected_temple_tenant(monkeypatch) -> None:
+    class FakeTemples:
+        async def find_one(self, query):
+            assert query == {"$or": [{"temple_id": 2}, {"id": 2}, {"id": "2"}]}
+            return {"tenant_id": "mandirmitra-temple-demo"}
+
+    def fake_get_collection(name: str):
+        assert name == "mandir_temples"
+        return FakeTemples()
+
+    monkeypatch.setattr("app.db.mongo.get_collection", fake_get_collection)
+
+    tenant_id = await _resolve_tenant_from_legacy_temple_header("2")
+
+    assert tenant_id == "mandirmitra-temple-demo"
