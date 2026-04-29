@@ -1340,6 +1340,13 @@ _KANNADA_TENS_WORDS = {
 }
 
 _SUPPORTED_LOCAL_LANGUAGES = {"kannada", "tamil", "telugu", "malayalam", "hindi"}
+_HTML_LANG_BY_LOCAL_LANGUAGE = {
+    "kannada": "kn",
+    "tamil": "ta",
+    "telugu": "te",
+    "malayalam": "ml",
+    "hindi": "hi",
+}
 
 _LOCAL_LABELS = {
     "kannada": {
@@ -2043,6 +2050,9 @@ def _build_receipt_pdf_bytes_weasy(
         font-size: 9px;
         line-height: 1.35;
         color: #111;
+        font-variant-ligatures: normal;
+        font-feature-settings: "kern" 1, "liga" 1, "clig" 1;
+        text-rendering: optimizeLegibility;
     }}
     .header {{ text-align: center; margin-bottom: 5px; }}
     .trust {{ font-weight: 700; font-size: 12px; }}
@@ -2061,9 +2071,10 @@ def _build_receipt_pdf_bytes_weasy(
     .powered {{ text-align: right; color: #555; font-size: 7px; margin-top: 4px; }}
     .latin {{ font-family: Arial, 'DejaVu Sans', sans-serif; }}
     """
+    html_lang = _HTML_LANG_BY_LOCAL_LANGUAGE.get(local_language, local_language)
     html = f"""
     <!doctype html>
-    <html lang="{_receipt_html_escape(local_language)}">
+    <html lang="{_receipt_html_escape(html_lang)}">
     <head><meta charset="utf-8"/><style>{css}</style></head>
     <body>
       <div class="header">{''.join(header_parts)}</div>
@@ -2119,7 +2130,8 @@ def _build_receipt_pdf_bytes(payload: dict[str, Any]) -> bytes:
                 use_local_labels=use_local_labels,
             )
         except Exception as exc:
-            logger.warning("Weasy bilingual receipt rendering failed; falling back to ReportLab: %s", exc)
+            logger.error("Weasy bilingual receipt rendering failed; refusing ReportLab fallback for %s receipt: %s", local_language, exc, exc_info=True)
+            raise RuntimeError(f"Bilingual {local_language} receipt rendering requires WeasyPrint with embedded Indic fonts") from exc
 
     buffer = BytesIO()
     doc = SimpleDocTemplate(
@@ -3535,11 +3547,14 @@ async def get_donation_receipt_pdf(
     except Exception:
         temple_profile = _build_temple_receipt_profile(None)
 
-    pdf_bytes = _generate_donation_receipt_pdf_bytes(
-        donation,
-        temple_name=temple_profile.get("temple_name", "Temple"),
-        temple_profile=temple_profile,
-    )
+    try:
+        pdf_bytes = _generate_donation_receipt_pdf_bytes(
+            donation,
+            temple_name=temple_profile.get("temple_name", "Temple"),
+            temple_profile=temple_profile,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     safe_receipt = "".join(ch for ch in str(receipt_number) if ch.isalnum() or ch in ("-", "_")) or donation_id_text[:8]
     filename = f"donation_receipt_{safe_receipt}.pdf"
 
@@ -7948,11 +7963,14 @@ async def get_seva_receipt_pdf(
     except Exception:
         temple_profile = _build_temple_receipt_profile(None)
 
-    pdf_bytes = _generate_seva_receipt_pdf_bytes(
-        booking,
-        temple_name=temple_profile.get("temple_name", "Temple"),
-        temple_profile=temple_profile,
-    )
+    try:
+        pdf_bytes = _generate_seva_receipt_pdf_bytes(
+            booking,
+            temple_name=temple_profile.get("temple_name", "Temple"),
+            temple_profile=temple_profile,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     safe_receipt = "".join(ch for ch in str(receipt_number) if ch.isalnum() or ch in ("-", "_")) or booking_id_text[:8]
     filename = f"seva_receipt_{safe_receipt}.pdf"
 
