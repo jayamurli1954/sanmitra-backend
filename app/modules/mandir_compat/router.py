@@ -1894,13 +1894,13 @@ def _receipt_html_mixed(value: Any, fallback: str = "-") -> str:
 
 def _receipt_weasy_font_css(local_language: str | None) -> str:
     candidates = []
-    nirmala = Path(r"C:\Windows\Fonts\Nirmala.ttc")
-    if nirmala.exists():
-        candidates.append(nirmala)
     for candidate in _font_candidate_paths(local_language):
         path = Path(candidate)
         if path.exists() and path.suffix.lower() in {".ttf", ".otf", ".ttc"}:
             candidates.append(path)
+    nirmala = Path(r"C:\Windows\Fonts\Nirmala.ttc")
+    if nirmala.exists():
+        candidates.append(nirmala)
 
     if not candidates:
         return ""
@@ -2037,7 +2037,7 @@ def _build_receipt_pdf_bytes_weasy(
     {_receipt_weasy_font_css(local_language)}
     @page {{ size: A5; margin: 8mm; }}
     body {{
-        font-family: Arial, 'DejaVu Sans', 'Nirmala UI', 'MandirReceiptLocal0', 'MandirReceiptLocal1', sans-serif;
+        font-family: 'MandirReceiptLocal0', 'MandirReceiptLocal1', 'Nirmala UI', Arial, sans-serif;
         font-size: 9px;
         line-height: 1.35;
         color: #111;
