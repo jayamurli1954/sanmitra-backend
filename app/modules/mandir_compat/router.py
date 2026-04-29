@@ -3986,7 +3986,7 @@ async def get_current_temple(
     col = get_collection("mandir_temples")
     doc = await col.find_one({"tenant_id": tenant_id, "app_key": app_key})
     if doc:
-        return doc
+        return _sanitize_mongo_doc(doc)
 
     now = datetime.now(timezone.utc).isoformat()
     transient_temple_id = temple_id if temple_id and temple_id > 0 else None
