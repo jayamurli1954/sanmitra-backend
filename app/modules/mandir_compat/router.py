@@ -1344,7 +1344,7 @@ _SUPPORTED_LOCAL_LANGUAGES = {"kannada", "tamil", "telugu", "malayalam", "hindi"
 _LOCAL_LABELS = {
     "kannada": {
         "receipt_title": "ರಸೀದಿ",
-        "receipt_number": "ರಸೀದಿ ಸಂಖ್ಯೆ",
+        "receipt_number": "ರಶೀದಿ ಸಂಖ್ಯೆ",
         "date": "ದಿನಾಂಕ",
         "party": "ಭಕ್ತ/ದಾನಿ",
         "address": "ವಿಳಾಸ",
@@ -1695,8 +1695,39 @@ def _resolve_font_name(script_hint: str | None) -> str:
 
 
 def _receipt_paragraph(text: str, style: ParagraphStyle) -> Paragraph:
-    safe_text = escape(_as_text(text, "-")).replace("\n", "<br/>")
-    return Paragraph(safe_text, style)
+    raw_text = _as_text(text, "-")
+    pieces: list[str] = []
+    buffer: list[str] = []
+    buffer_is_latin: bool | None = None
+
+    def flush_buffer() -> None:
+        nonlocal buffer, buffer_is_latin
+        if not buffer:
+            return
+        escaped_text = escape("".join(buffer))
+        if buffer_is_latin and style.fontName != "Helvetica":
+            pieces.append(f'<font name="Helvetica">{escaped_text}</font>')
+        else:
+            pieces.append(escaped_text)
+        buffer = []
+        buffer_is_latin = None
+
+    for char in raw_text:
+        if char == "\n":
+            flush_buffer()
+            pieces.append("<br/>")
+            continue
+
+        is_latin = ord(char) < 128
+        if buffer_is_latin is None:
+            buffer_is_latin = is_latin
+        elif buffer_is_latin != is_latin:
+            flush_buffer()
+            buffer_is_latin = is_latin
+        buffer.append(char)
+
+    flush_buffer()
+    return Paragraph("".join(pieces), style)
 
 
 
@@ -1825,6 +1856,42 @@ def _receipt_html_escape(value: Any, fallback: str = "-") -> str:
     return escape(_as_text(value, fallback), {'"': "&quot;", "'": "&#x27;"})
 
 
+def _receipt_html_mixed(value: Any, fallback: str = "-") -> str:
+    raw_text = _as_text(value, fallback)
+    pieces: list[str] = []
+    buffer: list[str] = []
+    buffer_is_latin: bool | None = None
+
+    def flush_buffer() -> None:
+        nonlocal buffer, buffer_is_latin
+        if not buffer:
+            return
+        escaped_text = escape("".join(buffer), {'"': "&quot;", "'": "&#x27;"})
+        if buffer_is_latin:
+            pieces.append(f'<span class="latin">{escaped_text}</span>')
+        else:
+            pieces.append(escaped_text)
+        buffer = []
+        buffer_is_latin = None
+
+    for char in raw_text:
+        if char == "\n":
+            flush_buffer()
+            pieces.append("<br/>")
+            continue
+
+        is_latin = ord(char) < 128
+        if buffer_is_latin is None:
+            buffer_is_latin = is_latin
+        elif buffer_is_latin != is_latin:
+            flush_buffer()
+            buffer_is_latin = is_latin
+        buffer.append(char)
+
+    flush_buffer()
+    return "".join(pieces)
+
+
 def _receipt_weasy_font_css(local_language: str | None) -> str:
     candidates = []
     nirmala = Path(r"C:\Windows\Fonts\Nirmala.ttc")
@@ -1905,36 +1972,36 @@ def _build_receipt_pdf_bytes_weasy(
 
     header_parts = []
     if header_local_line:
-        header_parts.append(f"<div class='local-header'>{_receipt_html_escape(header_local_line)}</div>")
-    header_parts.append(f"<div class='trust'>{_receipt_html_escape(primary_header)}</div>")
+        header_parts.append(f"<div class='local-header'>{_receipt_html_mixed(header_local_line)}</div>")
+    header_parts.append(f"<div class='trust'>{_receipt_html_mixed(primary_header)}</div>")
     if secondary_header:
-        header_parts.append(f"<div class='temple'>{_receipt_html_escape(secondary_header)}</div>")
+        header_parts.append(f"<div class='temple'>{_receipt_html_mixed(secondary_header)}</div>")
     if address_line:
-        header_parts.append(f"<div>{_receipt_html_escape(address_line)}</div>")
+        header_parts.append(f"<div>{_receipt_html_mixed(address_line)}</div>")
     if _as_text(payload.get("website")):
-        header_parts.append(f"<div>{_receipt_html_escape(payload.get('website'))}</div>")
+        header_parts.append(f"<div>{_receipt_html_mixed(payload.get('website'))}</div>")
     if _as_text(payload.get("email")):
-        header_parts.append(f"<div>{_receipt_html_escape(payload.get('email'))}</div>")
+        header_parts.append(f"<div>{_receipt_html_mixed(payload.get('email'))}</div>")
     if _as_text(payload.get("phone")):
-        header_parts.append(f"<div>Phone : {_receipt_html_escape(payload.get('phone'))}</div>")
+        header_parts.append(f"<div>{_receipt_html_mixed('Phone')}: {_receipt_html_mixed(payload.get('phone'))}</div>")
 
     rows_html = []
     for item in line_items:
         major, minor = _split_amount(item.get("amount"))
         rows_html.append(
             "<tr>"
-            f"<td class='desc'>{_receipt_html_escape(item.get('description'))}</td>"
-            f"<td class='amt'>{_receipt_html_escape(major)}</td>"
-            f"<td class='amt'>{_receipt_html_escape(minor)}</td>"
+            f"<td class='desc'>{_receipt_html_mixed(item.get('description'))}</td>"
+            f"<td class='amt'>{_receipt_html_mixed(major)}</td>"
+            f"<td class='amt'>{_receipt_html_mixed(minor)}</td>"
             "</tr>"
         )
 
     total_major, total_minor = _split_amount(total_amount)
     rows_html.append(
         "<tr>"
-        f"<td class='desc total'>{_receipt_html_escape(total_label)}</td>"
-        f"<td class='amt total'>{_receipt_html_escape(total_major)}</td>"
-        f"<td class='amt total'>{_receipt_html_escape(total_minor)}</td>"
+        f"<td class='desc total'>{_receipt_html_mixed(total_label)}</td>"
+        f"<td class='amt total'>{_receipt_html_mixed(total_major)}</td>"
+        f"<td class='amt total'>{_receipt_html_mixed(total_minor)}</td>"
         "</tr>"
     )
 
@@ -1942,15 +2009,15 @@ def _build_receipt_pdf_bytes_weasy(
         _as_text(payload.get("note_local"), labels.get("note_local", "")) if use_local_labels else "",
         _as_text(payload.get("note_english"), ""),
     ]
-    note_html = "<br/>".join(_receipt_html_escape(line) for line in note_lines if line)
+    note_html = "<br/>".join(_receipt_html_mixed(line) for line in note_lines if line)
 
     astro_html = ""
     if bool(payload.get("include_astro_row", True)):
         astro_html = (
             "<div class='meta-row'>"
-            f"{_receipt_html_escape(gotra_label)}: {_receipt_html_escape(payload.get('gotra'), '--')}"
-            f"&nbsp;&nbsp; {_receipt_html_escape(star_label)}: {_receipt_html_escape(payload.get('nakshatra'), '--')}"
-            f"&nbsp;&nbsp; {_receipt_html_escape(rashi_label)}: {_receipt_html_escape(payload.get('rashi'), '--')}"
+            f"{_receipt_html_mixed(gotra_label)}: {_receipt_html_mixed(payload.get('gotra'), '--')}"
+            f"&nbsp;&nbsp; {_receipt_html_mixed(star_label)}: {_receipt_html_mixed(payload.get('nakshatra'), '--')}"
+            f"&nbsp;&nbsp; {_receipt_html_mixed(rashi_label)}: {_receipt_html_mixed(payload.get('rashi'), '--')}"
             "</div>"
         )
 
@@ -1958,7 +2025,7 @@ def _build_receipt_pdf_bytes_weasy(
     if bool(payload.get("include_service_row", True)):
         service_html = (
             "<div class='meta-row'>"
-            f"{_receipt_html_escape(service_date_label)}: {_receipt_html_escape(payload.get('service_date'), '--')}"
+            f"{_receipt_html_mixed(service_date_label)}: {_receipt_html_mixed(payload.get('service_date'), '--')}"
             "</div>"
         )
 
@@ -1970,7 +2037,7 @@ def _build_receipt_pdf_bytes_weasy(
     {_receipt_weasy_font_css(local_language)}
     @page {{ size: A5; margin: 8mm; }}
     body {{
-        font-family: 'MandirReceiptLocal0', 'MandirReceiptLocal1', 'Nirmala UI', Arial, sans-serif;
+        font-family: Arial, 'DejaVu Sans', 'Nirmala UI', 'MandirReceiptLocal0', 'MandirReceiptLocal1', sans-serif;
         font-size: 9px;
         line-height: 1.35;
         color: #111;
@@ -1990,6 +2057,7 @@ def _build_receipt_pdf_bytes_weasy(
     .note {{ text-align: center; background: #f8f8f8; }}
     .meta-row {{ margin-top: 5px; font-size: 8px; }}
     .powered {{ text-align: right; color: #555; font-size: 7px; margin-top: 4px; }}
+    .latin {{ font-family: Arial, 'DejaVu Sans', sans-serif; }}
     """
     html = f"""
     <!doctype html>
@@ -1998,17 +2066,17 @@ def _build_receipt_pdf_bytes_weasy(
     <body>
       <div class="header">{''.join(header_parts)}</div>
       <table class="receipt">
-        <tr><td class="title" colspan="3">{_receipt_html_escape(receipt_title)}</td></tr>
+        <tr><td class="title" colspan="3">{_receipt_html_mixed(receipt_title)}</td></tr>
         <tr>
-          <td colspan="2">{_receipt_html_escape(receipt_no_label)}: {_receipt_html_escape(payload.get('receipt_number'), '-')}</td>
-          <td class="right">{_receipt_html_escape(date_label)}:<br/>{_receipt_html_escape(payload.get('receipt_date'), '-')}</td>
+          <td colspan="2">{_receipt_html_mixed(receipt_no_label)}: {_receipt_html_mixed(payload.get('receipt_number'), '-')}</td>
+          <td class="right">{_receipt_html_mixed(date_label)}:<br/>{_receipt_html_mixed(payload.get('receipt_date'), '-')}</td>
         </tr>
-        <tr><td colspan="3">{_receipt_html_escape(party_label)}: {_receipt_html_escape(payload.get('party_name'), '-')}</td></tr>
-        <tr><td colspan="3">{_receipt_html_escape(address_label)}: {_receipt_html_escape(payload.get('address_value'), '--')}</td></tr>
-        <tr><td colspan="3">{_receipt_html_escape(payload.get('amount_words_line'), 'Received with thanks')}</td></tr>
-        <tr><td colspan="3">{_receipt_html_escape(payload.get('payment_line'), 'Received with thanks.')}</td></tr>
+        <tr><td colspan="3">{_receipt_html_mixed(party_label)}: {_receipt_html_mixed(payload.get('party_name'), '-')}</td></tr>
+        <tr><td colspan="3">{_receipt_html_mixed(address_label)}: {_receipt_html_mixed(payload.get('address_value'), '--')}</td></tr>
+        <tr><td colspan="3">{_receipt_html_mixed(payload.get('amount_words_line'), 'Received with thanks')}</td></tr>
+        <tr><td colspan="3">{_receipt_html_mixed(payload.get('payment_line'), 'Received with thanks.')}</td></tr>
         <tr>
-          <td class="desc total">{_receipt_html_escape(line_item_header)}</td>
+          <td class="desc total">{_receipt_html_mixed(line_item_header)}</td>
           <td class="center total">Rs</td>
           <td class="center total">-</td>
         </tr>
@@ -2017,8 +2085,8 @@ def _build_receipt_pdf_bytes_weasy(
       </table>
       {astro_html}
       {service_html}
-      <div class="center">{_receipt_html_escape(system_line, '')}</div>
-      <div class="powered">{_receipt_html_escape(payload.get('powered_by_line'), '')}</div>
+      <div class="center">{_receipt_html_mixed(system_line, '')}</div>
+      <div class="powered">{_receipt_html_mixed(payload.get('powered_by_line'), '')}</div>
     </body>
     </html>
     """
@@ -2819,7 +2887,8 @@ def _seva_import_template_csv() -> str:
     return output.getvalue()
 
 def _normalize_phone(phone: str | None) -> str:
-    return "".join(ch for ch in str(phone or "") if ch.isdigit())[:10]
+    digits = "".join(ch for ch in str(phone or "") if ch.isdigit())
+    return digits[-10:] if len(digits) > 10 else digits
 
 
 def _parse_iso_datetime(value: Any) -> datetime | None:
@@ -2869,11 +2938,115 @@ async def _find_devotee_by_phone(tenant_id: str, app_key: str, phone: str) -> di
     if not normalized:
         return None
 
+    devotee_col = get_collection("mandir_devotees")
+    docs = await devotee_col.find({"tenant_id": tenant_id, "app_key": app_key, "phone": normalized}).limit(1).to_list(length=1)
+    if docs:
+        return _sanitize_mongo_doc(docs[0])
+
+    donation_col = get_collection("mandir_donations")
+    donation_docs = await (
+        donation_col.find({"tenant_id": tenant_id, "app_key": app_key, "devotee_phone": normalized})
+        .sort("created_at", -1)
+        .limit(1)
+        .to_list(length=1)
+    )
+    if donation_docs:
+        donation = _sanitize_mongo_doc(donation_docs[0])
+        snapshot = donation.get("devotee") if isinstance(donation.get("devotee"), dict) else {}
+        return {
+            "id": str(snapshot.get("id") or donation.get("devotee_id") or f"donation:{donation.get('donation_id') or donation.get('id')}"),
+            "tenant_id": tenant_id,
+            "app_key": app_key,
+            "name_prefix": donation.get("devotee_prefix") or snapshot.get("name_prefix"),
+            "name": donation.get("devotee_name") or snapshot.get("name") or "Devotee",
+            "first_name": donation.get("devotee_name") or snapshot.get("first_name") or snapshot.get("name") or "Devotee",
+            "last_name": snapshot.get("last_name") or "",
+            "phone": normalized,
+            "email": donation.get("devotee_email") or snapshot.get("email"),
+            "address": donation.get("devotee_address") or snapshot.get("address"),
+            "city": donation.get("devotee_city") or snapshot.get("city"),
+            "state": donation.get("devotee_state") or snapshot.get("state"),
+            "pincode": donation.get("devotee_pincode") or snapshot.get("pincode"),
+            "source": "donation",
+        }
+
+    seva_col = get_collection("mandir_seva_bookings")
+    seva_docs = await (
+        seva_col.find({"tenant_id": tenant_id, "app_key": app_key, "devotee_phone": normalized})
+        .sort("created_at", -1)
+        .limit(1)
+        .to_list(length=1)
+    )
+    if seva_docs:
+        seva = _sanitize_mongo_doc(seva_docs[0])
+        snapshot = seva.get("devotee") if isinstance(seva.get("devotee"), dict) else {}
+        return {
+            "id": str(snapshot.get("id") or seva.get("devotee_id") or f"seva:{seva.get('booking_id') or seva.get('id')}"),
+            "tenant_id": tenant_id,
+            "app_key": app_key,
+            "name_prefix": seva.get("devotee_prefix") or snapshot.get("name_prefix"),
+            "name": seva.get("devotee_name") or seva.get("devotee_names") or snapshot.get("name") or "Devotee",
+            "first_name": seva.get("devotee_name") or seva.get("devotee_names") or snapshot.get("first_name") or snapshot.get("name") or "Devotee",
+            "last_name": snapshot.get("last_name") or "",
+            "phone": normalized,
+            "email": seva.get("devotee_email") or snapshot.get("email"),
+            "address": seva.get("devotee_address") or seva.get("address") or snapshot.get("address"),
+            "city": seva.get("devotee_city") or seva.get("city") or snapshot.get("city"),
+            "state": seva.get("devotee_state") or seva.get("state") or snapshot.get("state"),
+            "pincode": seva.get("devotee_pincode") or seva.get("pincode") or snapshot.get("pincode"),
+            "source": "seva",
+        }
+
+    return None
+
+
+async def _upsert_devotee_from_contribution(
+    tenant_id: str,
+    app_key: str,
+    *,
+    phone: str | None,
+    name_prefix: str | None = None,
+    name: str | None = None,
+    email: str | None = None,
+    address: str | None = None,
+    city: str | None = None,
+    state: str | None = None,
+    pincode: str | None = None,
+) -> None:
+    normalized = _normalize_phone(phone)
+    if not normalized:
+        return
+
+    now = datetime.now(timezone.utc).isoformat()
+    devotee_patch: dict[str, Any] = {"updated_at": now}
+    for key, value in {
+        "name_prefix": name_prefix,
+        "name": name,
+        "first_name": name,
+        "email": email,
+        "address": address,
+        "city": city,
+        "state": state,
+        "pincode": pincode,
+    }.items():
+        if value not in (None, ""):
+            devotee_patch[key] = value
+
     col = get_collection("mandir_devotees")
-    docs = await col.find({"tenant_id": tenant_id, "app_key": app_key, "phone": normalized}).limit(1).to_list(length=1)
-    if not docs:
-        return None
-    return _sanitize_mongo_doc(docs[0])
+    await col.update_one(
+        {"tenant_id": tenant_id, "app_key": app_key, "phone": normalized},
+        {
+            "$setOnInsert": {
+                "id": str(uuid4()),
+                "tenant_id": tenant_id,
+                "app_key": app_key,
+                "phone": normalized,
+                "created_at": now,
+            },
+            "$set": devotee_patch,
+        },
+        upsert=True,
+    )
 
 
 def _build_upi_intent_uri(
@@ -3279,6 +3452,22 @@ async def create_donation(
             await col.delete_one({"donation_id": donation_id, "tenant_id": tenant_id, "app_key": app_key})
             raise HTTPException(status_code=500, detail=f"Failed to post donation journal: {exc}") from exc
 
+    try:
+        await _upsert_devotee_from_contribution(
+            tenant_id,
+            app_key,
+            phone=devotee_phone,
+            name_prefix=devotee_prefix,
+            name=devotee_name,
+            email=str(payload.get("email") or "") or None,
+            address=devotee_address,
+            city=devotee_city,
+            state=devotee_state,
+            pincode=devotee_pincode,
+        )
+    except Exception as exc:
+        logger.warning("Donation saved but devotee upsert failed for tenant=%s phone=%s: %s", tenant_id, devotee_phone, exc)
+
     return _mandir_donation_view(donation)
 
 
@@ -3638,7 +3827,10 @@ async def search_devotee_by_mobile(
     try:
         col = get_collection("mandir_devotees")
         docs = await col.find({"tenant_id": tenant_id, "app_key": app_key, "phone": normalized}).limit(5).to_list(length=5)
-        return [_sanitize_mongo_doc(doc) for doc in docs]
+        if docs:
+            return [_sanitize_mongo_doc(doc) for doc in docs]
+        fallback = await _find_devotee_by_phone(tenant_id, app_key, normalized)
+        return [fallback] if fallback else []
     except Exception as exc:
         logger.error("Failed to search devotees by mobile for tenant=%s: %s", tenant_id, exc, exc_info=True)
         return []
