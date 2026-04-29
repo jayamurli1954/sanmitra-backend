@@ -1235,6 +1235,13 @@ def _generate_seva_receipt_pdf_bytes(
     temple_profile = _build_temple_receipt_profile(temple_profile or {"temple_name": temple_name})
     amount = _safe_float(booking.get("amount_paid") or booking.get("amount"), 0.0)
     seva_name = str(booking.get("seva_name") or booking.get("seva") or "Seva Booking").strip() or "Seva Booking"
+    use_local_labels = bool(temple_profile.get("local_language"))
+    seva_name_local = _as_text(
+        booking.get("seva_name_local")
+        or booking.get("name_kannada")
+        or booking.get("seva_name_kannada"),
+        "",
+    )
     devotee = booking.get("devotee") if isinstance(booking.get("devotee"), dict) else {}
     party_source = {
         "devotee_name": booking.get("devotee_names") or booking.get("devotee_name"),
@@ -1252,7 +1259,12 @@ def _generate_seva_receipt_pdf_bytes(
     payment_mode = _format_payment_mode_for_receipt(booking.get("payment_mode") or booking.get("payment_method") or "Cash")
     receipt_number = _receipt_number_for_seva(booking)
     devotee_address = _compose_receipt_address_line(address_source, devotee, fallback="--")
-    line_items = _extract_seva_line_items(booking, fallback_name=seva_name, fallback_amount=amount)
+    line_items = _extract_seva_line_items(
+        booking,
+        fallback_name=_compose_receipt_line_description(seva_name, seva_name_local, use_local_labels=use_local_labels),
+        fallback_amount=amount,
+        use_local_labels=use_local_labels,
+    )
     total_amount = sum(_safe_float(item.get("amount"), 0.0) for item in line_items)
     if total_amount <= 0:
         total_amount = amount
@@ -1771,7 +1783,21 @@ def _format_payment_mode_for_receipt(value: Any) -> str:
 
 
 
-def _extract_seva_line_items(booking: dict[str, Any], *, fallback_name: str, fallback_amount: float) -> list[dict[str, Any]]:
+def _compose_receipt_line_description(name: Any, local_name: Any = None, *, use_local_labels: bool = False) -> str:
+    english = _as_text(name, "Seva").strip() or "Seva"
+    local = _as_text(local_name, "").strip()
+    if use_local_labels and local and local != english:
+        return f"{local} / {english}"
+    return english
+
+
+def _extract_seva_line_items(
+    booking: dict[str, Any],
+    *,
+    fallback_name: str,
+    fallback_amount: float,
+    use_local_labels: bool = False,
+) -> list[dict[str, Any]]:
     line_items: list[dict[str, Any]] = []
     candidate_lists = [booking.get("line_items"), booking.get("seva_items"), booking.get("sevas"), booking.get("booked_sevas")]
     for candidate in candidate_lists:
@@ -1781,10 +1807,20 @@ def _extract_seva_line_items(booking: dict[str, Any], *, fallback_name: str, fal
             if not isinstance(item, dict):
                 continue
             name = _as_text(item.get("description") or item.get("seva_name") or item.get("name"), "")
+            local_name = _as_text(
+                item.get("description_local")
+                or item.get("seva_name_local")
+                or item.get("name_kannada")
+                or item.get("local_name"),
+                "",
+            )
             amount = _safe_float(item.get("amount") or item.get("amount_paid") or item.get("fee"), 0.0)
             if not name and amount <= 0:
                 continue
-            line_items.append({"description": name or fallback_name, "amount": amount or fallback_amount})
+            line_items.append({
+                "description": _compose_receipt_line_description(name or fallback_name, local_name, use_local_labels=use_local_labels),
+                "amount": amount or fallback_amount,
+            })
 
     if not line_items:
         csv_names = _as_text(booking.get("seva_names"))
@@ -2000,8 +2036,8 @@ def _build_receipt_pdf_bytes_weasy(
         rows_html.append(
             "<tr>"
             f"<td class='desc'>{_receipt_html_mixed(item.get('description'))}</td>"
-            f"<td class='amt'>{_receipt_html_mixed(major)}</td>"
-            f"<td class='amt'>{_receipt_html_mixed(minor)}</td>"
+            f"<td class='amt amt-major'>{_receipt_html_mixed(major)}</td>"
+            f"<td class='amt amt-minor'>{_receipt_html_mixed(minor)}</td>"
             "</tr>"
         )
 
@@ -2009,8 +2045,8 @@ def _build_receipt_pdf_bytes_weasy(
     rows_html.append(
         "<tr>"
         f"<td class='desc total'>{_receipt_html_mixed(total_label)}</td>"
-        f"<td class='amt total'>{_receipt_html_mixed(total_major)}</td>"
-        f"<td class='amt total'>{_receipt_html_mixed(total_minor)}</td>"
+        f"<td class='amt amt-major total'>{_receipt_html_mixed(total_major)}</td>"
+        f"<td class='amt amt-minor total'>{_receipt_html_mixed(total_minor)}</td>"
         "</tr>"
     )
 
@@ -2062,9 +2098,11 @@ def _build_receipt_pdf_bytes_weasy(
     table.receipt td {{ border: 1px solid #aaa; padding: 4px 6px; vertical-align: middle; }}
     .title {{ text-align: center; font-weight: 700; background: #f2f2f2; font-size: 10px; }}
     .right {{ text-align: right; }}
+    .date-cell {{ text-align: right; white-space: nowrap; }}
     .center {{ text-align: center; }}
-    .desc {{ width: 72%; }}
-    .amt {{ width: 14%; text-align: right; }}
+    .desc {{ width: 78%; }}
+    .amt-major {{ width: 14%; text-align: right; }}
+    .amt-minor {{ width: 8%; text-align: center; }}
     .total {{ font-weight: 700; }}
     .note {{ text-align: center; background: #f8f8f8; }}
     .meta-row {{ margin-top: 5px; font-size: 8px; }}
@@ -2081,8 +2119,8 @@ def _build_receipt_pdf_bytes_weasy(
       <table class="receipt">
         <tr><td class="title" colspan="3">{_receipt_html_mixed(receipt_title)}</td></tr>
         <tr>
-          <td colspan="2">{_receipt_html_mixed(receipt_no_label)}: {_receipt_html_mixed(payload.get('receipt_number'), '-')}</td>
-          <td class="right">{_receipt_html_mixed(date_label)}:<br/>{_receipt_html_mixed(payload.get('receipt_date'), '-')}</td>
+          <td>{_receipt_html_mixed(receipt_no_label)}: {_receipt_html_mixed(payload.get('receipt_number'), '-')}</td>
+          <td class="date-cell" colspan="2">{_receipt_html_mixed(date_label)}: {_receipt_html_mixed(payload.get('receipt_date'), '-')}</td>
         </tr>
         <tr><td colspan="3">{_receipt_html_mixed(party_label)}: {_receipt_html_mixed(payload.get('party_name'), '-')}</td></tr>
         <tr><td colspan="3">{_receipt_html_mixed(address_label)}: {_receipt_html_mixed(payload.get('address_value'), '--')}</td></tr>
@@ -2090,8 +2128,8 @@ def _build_receipt_pdf_bytes_weasy(
         <tr><td colspan="3">{_receipt_html_mixed(payload.get('payment_line'), 'Received with thanks.')}</td></tr>
         <tr>
           <td class="desc total">{_receipt_html_mixed(line_item_header)}</td>
-          <td class="center total">Rs</td>
-          <td class="center total">-</td>
+          <td class="center total amt-major">Rs</td>
+          <td class="center total amt-minor"></td>
         </tr>
         {''.join(rows_html)}
         <tr><td class="note" colspan="3">{note_html or '-'}</td></tr>
@@ -7583,6 +7621,8 @@ async def create_seva_booking(
             seva_doc = await col_sevas.find_one({"id": str(seva_id), "tenant_id": tenant_id})
         if seva_doc and seva_doc.get("name"):
             seva_name = str(seva_doc["name"])
+        if seva_doc and seva_doc.get("name_kannada"):
+            payload["seva_name_local"] = str(seva_doc.get("name_kannada") or "").strip()
 
     booking_date = _parse_booking_date(payload.get("booking_date"))
     if booking_date is None:
@@ -7651,6 +7691,8 @@ async def create_seva_booking(
         "status": "confirmed",
     }
     booking["seva_name"] = seva_name
+    if payload.get("seva_name_local"):
+        booking["seva_name_local"] = str(payload.get("seva_name_local") or "").strip()
     booking["devotee_id"] = devotee_id or str(booking.get("devotee_id") or devotee_snapshot.get("id") or "").strip() or None
     booking["devotee_name"] = devotee_name
     booking["devotee_names"] = devotee_name
@@ -7846,14 +7888,17 @@ async def get_seva_receipt_pdf(
     booking["id"] = booking_id_text
 
     resolved_seva_name = str(booking.get("seva_name") or "").strip()
-    if not resolved_seva_name or resolved_seva_name.lower() in {"seva booking", "seva"}:
-        seva_id = booking.get("seva_id")
-        if seva_id:
-            seva_doc = await get_collection("mandir_sevas").find_one({"id": str(seva_id), "tenant_id": tenant_id, "app_key": app_key})
-            if not seva_doc:
-                seva_doc = await get_collection("mandir_sevas").find_one({"id": str(seva_id), "tenant_id": tenant_id})
-            if seva_doc and seva_doc.get("name"):
-                booking["seva_name"] = str(seva_doc.get("name")).strip()
+    seva_id = booking.get("seva_id")
+    seva_doc: dict[str, Any] | None = None
+    if seva_id:
+        seva_doc = await get_collection("mandir_sevas").find_one({"id": str(seva_id), "tenant_id": tenant_id, "app_key": app_key})
+        if not seva_doc:
+            seva_doc = await get_collection("mandir_sevas").find_one({"id": str(seva_id), "tenant_id": tenant_id})
+    if seva_doc:
+        if (not resolved_seva_name or resolved_seva_name.lower() in {"seva booking", "seva"}) and seva_doc.get("name"):
+            booking["seva_name"] = str(seva_doc.get("name")).strip()
+        if seva_doc.get("name_kannada"):
+            booking["seva_name_local"] = str(seva_doc.get("name_kannada") or "").strip()
 
     devotee_snapshot = booking.get("devotee") if isinstance(booking.get("devotee"), dict) else {}
     if not devotee_snapshot or not any([
@@ -7926,6 +7971,7 @@ async def get_seva_receipt_pdf(
                 "receipt_number": receipt_number,
                 "receipt_pdf_url": booking["receipt_pdf_url"],
                 "seva_name": booking.get("seva_name"),
+                "seva_name_local": booking.get("seva_name_local"),
                 "devotee_id": booking.get("devotee_id"),
                 "devotee_name": booking.get("devotee_name"),
                 "devotee_names": booking.get("devotee_names"),
