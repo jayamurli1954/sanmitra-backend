@@ -1707,6 +1707,8 @@ def _receipt_paragraph(text: str, style: ParagraphStyle) -> Paragraph:
         escaped_text = escape("".join(buffer))
         if buffer_is_latin and style.fontName != "Helvetica":
             pieces.append(f'<font name="Helvetica">{escaped_text}</font>')
+        elif not buffer_is_latin and style.fontName != "Helvetica":
+            pieces.append(f'<font name="{style.fontName}">{escaped_text}</font>')
         else:
             pieces.append(escaped_text)
         buffer = []
