@@ -1,7 +1,7 @@
 import asyncio
 import logging
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -50,6 +50,38 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.add_middleware(TenantContextMiddleware)
+
+
+_SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+}
+_API_CONTENT_SECURITY_POLICY = (
+    "default-src 'self'; "
+    "object-src 'none'; "
+    "base-uri 'self'; "
+    "frame-ancestors 'none'"
+)
+_CSP_EXEMPT_PATHS = {"/docs", "/redoc", "/openapi.json"}
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    for header, value in _SECURITY_HEADERS.items():
+        response.headers.setdefault(header, value)
+
+    if request.url.path not in _CSP_EXEMPT_PATHS:
+        response.headers.setdefault("Content-Security-Policy", _API_CONTENT_SECURITY_POLICY)
+
+    forwarded_proto = request.headers.get("x-forwarded-proto", "").lower()
+    if request.url.scheme == "https" or forwarded_proto == "https":
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+
+    return response
+
 
 app.include_router(legacy_alias_router)
 app.include_router(api_router)
