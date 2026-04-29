@@ -1350,6 +1350,27 @@ _KANNADA_TENS_WORDS = {
     80: "ಎಂಬತ್ತು",
     90: "ತೊಂಬತ್ತು",
 }
+_KANNADA_COMPOUND_TENS_STEMS = {
+    20: "\u0c87\u0caa\u0ccd\u0caa\u0ca4\u0ccd",
+    30: "\u0cae\u0cc2\u0cb5\u0ca4\u0ccd",
+    40: "\u0ca8\u0cb2\u0cb5\u0ca4\u0ccd",
+    50: "\u0c90\u0cb5\u0ca4\u0ccd",
+    60: "\u0c85\u0cb0\u0cb5\u0ca4\u0ccd",
+    70: "\u0c8e\u0caa\u0ccd\u0caa\u0ca4\u0ccd",
+    80: "\u0c8e\u0c82\u0cac\u0ca4\u0ccd",
+    90: "\u0ca4\u0cca\u0c82\u0cac\u0ca4\u0ccd",
+}
+_KANNADA_COMPOUND_SUFFIXES = {
+    1: "\u0ca4\u0cca\u0c82\u0ca6\u0cc1",
+    2: "\u0ca4\u0cc6\u0cb0\u0ca1\u0cc1",
+    3: "\u0ca4\u0cae\u0cc2\u0cb0\u0cc1",
+    4: "\u0ca8\u0cbe\u0cb2\u0ccd\u0c95\u0cc1",
+    5: "\u0ca4\u0cc8\u0ca6\u0cc1",
+    6: "\u0ca4\u0cbe\u0cb0\u0cc1",
+    7: "\u0ca4\u0cc7\u0cb3\u0cc1",
+    8: "\u0ca4\u0cc6\u0c82\u0c9f\u0cc1",
+    9: "\u0ca4\u0cca\u0c82\u0cac\u0ca4\u0ccd\u0ca4\u0cc1",
+}
 
 _SUPPORTED_LOCAL_LANGUAGES = {"kannada", "tamil", "telugu", "malayalam", "hindi"}
 _HTML_LANG_BY_LOCAL_LANGUAGE = {
@@ -1523,6 +1544,11 @@ def _integer_to_kannada_words(value: int) -> str:
         tens_value = (value // 10) * 10
         remainder = value % 10
         tens = _KANNADA_TENS_WORDS[tens_value]
+        if remainder:
+            stem = _KANNADA_COMPOUND_TENS_STEMS.get(tens_value)
+            suffix = _KANNADA_COMPOUND_SUFFIXES.get(remainder)
+            if stem and suffix:
+                return f"{stem}{suffix}"
         return f"{tens} {_KANNADA_ONES_WORDS[remainder]}".strip() if remainder else tens
     if value < 1000:
         hundreds = f"{_KANNADA_ONES_WORDS[value // 100]} ನೂರು"
