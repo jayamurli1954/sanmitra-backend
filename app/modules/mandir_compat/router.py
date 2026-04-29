@@ -6111,6 +6111,56 @@ async def _resolve_temple_target_tenant(
     return target_tenant_id
 
 
+_MANDIR_TEMPLE_PURGE_COLLECTIONS = [
+    "mandir_temples",
+    "mandir_donations",
+    "mandir_sevas",
+    "mandir_seva_bookings",
+    "mandir_devotees",
+    "mandir_bank_accounts",
+    "mandir_bank_statements",
+    "mandir_bank_statement_entries",
+    "mandir_bank_unmatched_entries",
+    "mandir_inventory_items",
+    "mandir_journal_entries",
+    "mandir_public_payments",
+    "mandir_upi_payments",
+    "mandir_role_permissions",
+    "mandir_panchang_settings",
+]
+
+_MANDIR_TEMPLE_BUSINESS_COLLECTIONS = [
+    name
+    for name in _MANDIR_TEMPLE_PURGE_COLLECTIONS
+    if name not in {"mandir_temples", "mandir_role_permissions", "mandir_panchang_settings"}
+]
+
+
+def _mandir_tenant_app_query(tenant_id: str, app_key: str) -> dict[str, Any]:
+    query: dict[str, Any] = {"tenant_id": tenant_id}
+    if app_key == "mandirmitra":
+        query["$or"] = [
+            {"app_key": app_key},
+            {"app_key": {"$exists": False}},
+            {"app_key": None},
+            {"app_key": ""},
+        ]
+    else:
+        query["app_key"] = app_key
+    return query
+
+
+async def _mandir_temple_collection_counts(tenant_id: str, app_key: str) -> dict[str, int]:
+    query = _mandir_tenant_app_query(tenant_id, app_key)
+    counts: dict[str, int] = {}
+    for name in _MANDIR_TEMPLE_PURGE_COLLECTIONS:
+        try:
+            counts[name] = int(await get_collection(name).count_documents(query))
+        except Exception:
+            counts[name] = 0
+    return counts
+
+
 @router.post("/temples/{temple_id}/activate")
 async def mandir_activate_temple(
     temple_id: int,
@@ -6149,6 +6199,30 @@ async def mandir_deactivate_temple(
     return {"status": "deactivated", "temple_id": temple_id, "temple": _sanitize_mongo_doc(doc)}
 
 
+@router.get("/temples/{temple_id}/remove-preview")
+async def mandir_remove_temple_preview(
+    temple_id: int,
+    current_user: dict = Depends(get_current_user),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
+):
+    if not _is_platform_super_admin(current_user):
+        raise HTTPException(status_code=403, detail="Only platform administrators can preview temple removal")
+
+    app_key = resolve_app_key((x_app_key or current_user.get("app_key") or "mandirmitra").strip())
+    target_tenant_id = await _resolve_temple_target_tenant(temple_id, current_user=current_user, x_tenant_id=x_tenant_id, app_key=app_key)
+    counts = await _mandir_temple_collection_counts(target_tenant_id, app_key)
+    business_counts = {name: count for name, count in counts.items() if name in _MANDIR_TEMPLE_BUSINESS_COLLECTIONS and count > 0}
+    return {
+        "temple_id": temple_id,
+        "tenant_id": target_tenant_id,
+        "counts": counts,
+        "has_business_data": bool(business_counts),
+        "business_counts": business_counts,
+        "can_remove_placeholder_safely": not business_counts,
+    }
+
+
 @router.delete("/temples/{temple_id}/remove")
 async def mandir_remove_temple(
     temple_id: int,
@@ -6167,23 +6241,24 @@ async def mandir_remove_temple(
     if confirm_text != expected:
         raise HTTPException(status_code=400, detail=f"Confirmation text mismatch. Expected: {expected}")
 
-    collections_to_purge = [
-        "mandir_temples",
-        "mandir_donations",
-        "mandir_sevas",
-        "mandir_seva_bookings",
-        "mandir_bank_accounts",
-        "mandir_bank_statements",
-        "mandir_bank_statement_entries",
-        "mandir_bank_unmatched_entries",
-        "mandir_inventory_items",
-        "mandir_role_permissions",
-        "mandir_panchang_settings",
-    ]
+    counts = await _mandir_temple_collection_counts(target_tenant_id, app_key)
+    business_counts = {name: count for name, count in counts.items() if name in _MANDIR_TEMPLE_BUSINESS_COLLECTIONS and count > 0}
+    allow_data_delete = bool((payload or {}).get("allow_data_delete"))
+    if business_counts and not allow_data_delete:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Temple has business data. Review remove-preview before deleting.",
+                "tenant_id": target_tenant_id,
+                "business_counts": business_counts,
+            },
+        )
+
+    delete_query = _mandir_tenant_app_query(target_tenant_id, app_key)
     deleted_counts: dict[str, int] = {}
-    for name in collections_to_purge:
+    for name in _MANDIR_TEMPLE_PURGE_COLLECTIONS:
         try:
-            result = await get_collection(name).delete_many({"tenant_id": target_tenant_id})
+            result = await get_collection(name).delete_many(delete_query)
             deleted_counts[name] = int(getattr(result, "deleted_count", 0) or 0)
         except Exception:
             deleted_counts[name] = 0
