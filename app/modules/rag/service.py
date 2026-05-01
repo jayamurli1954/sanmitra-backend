@@ -8,6 +8,7 @@ from app.core.audit.service import log_audit_event
 from app.db.mongo import get_collection
 from app.modules.rag.providers import get_embedding_provider, get_embedding_strategy_name
 from app.modules.rag.schemas import RagIngestRequest, RagQueryRequest
+from app.core.decorators import limit_concurrency
 
 RAG_DOCUMENTS_COLLECTION = "rag_documents"
 RAG_CHUNKS_COLLECTION = "rag_chunks"
@@ -272,6 +273,7 @@ def _build_reference_label(index: int, item: dict[str, Any]) -> str:
     return " | ".join(parts)
 
 
+@limit_concurrency(limit=5)
 async def ingest_document(*, tenant_id: str, app_key: str, created_by: str, payload: RagIngestRequest):
     documents = get_collection(RAG_DOCUMENTS_COLLECTION)
     chunks_collection = get_collection(RAG_CHUNKS_COLLECTION)
@@ -422,6 +424,7 @@ async def list_documents(*, tenant_id: str, app_key: str, limit: int = 50):
     return items
 
 
+@limit_concurrency(limit=10)
 async def query_knowledge(*, tenant_id: str, app_key: str, payload: RagQueryRequest):
     chunks_collection = get_collection(RAG_CHUNKS_COLLECTION)
 
