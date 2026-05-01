@@ -1,11 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.core.auth.dependencies import get_current_user
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from app.core.auth.security import decode_token
-from app.core.tenants.context import resolve_app_key, get_app_key
-
-bearer_scheme = HTTPBearer(auto_error=False)
 from app.core.onboarding.schemas import (
     OnboardingApproveRequest,
     OnboardingApproveResponse,
@@ -24,6 +21,8 @@ from app.core.onboarding.service import (
     reject_onboarding_request,
     resend_onboarding_credentials,
 )
+
+bearer_scheme = HTTPBearer(auto_error=False)
 
 router = APIRouter(prefix="/onboarding-requests", tags=["onboarding"])
 
