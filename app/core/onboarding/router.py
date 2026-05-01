@@ -1,8 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.core.auth.dependencies import get_current_user
-from app.core.auth.security import decode_token
 from app.core.onboarding.schemas import (
     OnboardingApproveRequest,
     OnboardingApproveResponse,
@@ -22,27 +20,7 @@ from app.core.onboarding.service import (
     resend_onboarding_credentials,
 )
 
-bearer_scheme = HTTPBearer(auto_error=False)
-
 router = APIRouter(prefix="/onboarding-requests", tags=["onboarding"])
-
-
-async def _get_optional_user(
-    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
-) -> dict | None:
-    """Optional auth - returns user data if valid token provided, None otherwise"""
-    if not credentials:
-        return None
-    try:
-        payload = decode_token(credentials.credentials)
-        token_type = payload.get("type")
-        if token_type == "refresh" or token_type not in (None, "access"):
-            return None
-        if not payload.get("sub"):
-            return None
-        return payload
-    except Exception:
-        return None
 
 
 def _require_super_admin(current_user: dict) -> None:
@@ -60,15 +38,12 @@ async def register_onboarding_request(payload: OnboardingRequestCreate):
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
-@router.get("", response_model=list[OnboardingRequestItem])
+@router.get("")
 async def list_onboarding_requests_endpoint(
     status: str | None = Query(default=None),
     limit: int = Query(default=200, ge=1, le=500),
-    current_user: dict | None = Depends(_get_optional_user),
 ):
-    # Allow public access to list onboarding requests for demo/platform operations
-    # Auth is optional for this endpoint - unauthenticated requests get current_user=None
-    # This endpoint returns all pending requests for platform admins/demo users to review
+    """Public endpoint - list all onboarding requests for demo/platform operations"""
     try:
         rows = await list_onboarding_requests(status=status, limit=limit)
     except RuntimeError as exc:
@@ -80,11 +55,8 @@ async def list_onboarding_requests_endpoint(
 
 
 @router.get("/{request_id}", response_model=OnboardingRequestItem)
-async def get_onboarding_request_endpoint(request_id: str, current_user: dict | None = Depends(_get_optional_user)):
-    # Optional auth for demo/development - in production this could be restricted
-    # if current_user:
-    #     _require_super_admin(current_user)
-
+async def get_onboarding_request_endpoint(request_id: str):
+    """Public endpoint - get a single onboarding request"""
     try:
         row = await get_onboarding_request(request_id)
     except RuntimeError as exc:
