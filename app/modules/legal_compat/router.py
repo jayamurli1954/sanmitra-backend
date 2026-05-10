@@ -834,6 +834,15 @@ async def major_cases(
     return {"cases": cases}
 
 
+@router.get("/public-major-cases")
+async def public_major_cases():
+    cases = await _fetch_web_major_cases(limit=10)
+    if len(cases) < 3:
+        cases = _merge_case_items(cases, _static_case_items(), limit=10)
+    cases = _deduplicate_items_by_title(cases, similarity_threshold=0.55)
+    return {"cases": cases[:10]}
+
+
 @router.get("/legal-news")
 async def legal_news(
     force_web: bool = Query(default=False),
@@ -914,6 +923,15 @@ async def legal_news(
     news = news[:10]  # Limit to 10 after deduplication
 
     return {"news": news}
+
+
+@router.get("/public-legal-news")
+async def public_legal_news():
+    news = await _fetch_web_legal_news(limit=10)
+    if len(news) < 3:
+        news = _merge_news_items(news, _static_news_items(), limit=10)
+    news = _deduplicate_items_by_title(news, similarity_threshold=0.55)
+    return {"news": news[:10]}
 
 
 @router.post("/legal-research")

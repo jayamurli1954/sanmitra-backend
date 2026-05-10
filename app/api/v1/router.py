@@ -1,4 +1,5 @@
 from fastapi import APIRouter
+from app.modules.blog.router import router as blog_router
 
 from app.accounting.router import router as accounting_router
 from app.core.auth.router import router as auth_router
@@ -30,4 +31,5 @@ api_router.include_router(mandir_compat_router)
 api_router.include_router(mitrabooks_compat_router)
 api_router.include_router(investment_router)
 api_router.include_router(rag_router)
+api_router.include_router(blog_router)
 
