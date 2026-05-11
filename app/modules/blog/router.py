@@ -1,5 +1,6 @@
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Header
+from app.core.config import get_settings
 from app.core.permissions.rbac import Role, require_roles
 from app.modules.blog.schemas import BlogPostCreate, BlogPostResponse, BlogPostUpdate
 from app.modules.blog.service import (
@@ -9,22 +10,30 @@ from app.modules.blog.service import (
 
 router = APIRouter(prefix="/blog", tags=["Blog"])
 
+
+def _resolve_public_app_key(app_key: str | None) -> str:
+    if app_key and app_key.strip():
+        return app_key.strip()
+    settings = get_settings()
+    default_app_key = getattr(settings, "default_app_key", None) or getattr(settings, "DEFAULT_APP_KEY", None)
+    return str(default_app_key or "legalmitra")
+
 @router.get("/posts", response_model=List[BlogPostResponse])
 async def list_posts(
-    app_key: str = Header(..., alias="X-App-Key"),
+    app_key: str | None = Header(default=None, alias="X-App-Key"),
     limit: int = Query(10, ge=1, le=50),
     skip: int = Query(0, ge=0),
 ):
     """List blog posts for the current app."""
-    return await get_blog_posts(app_key, only_published=True, limit=limit, skip=skip)
+    return await get_blog_posts(_resolve_public_app_key(app_key), only_published=True, limit=limit, skip=skip)
 
 @router.get("/posts/{slug}", response_model=BlogPostResponse)
 async def get_post(
     slug: str,
-    app_key: str = Header(..., alias="X-App-Key")
+    app_key: str | None = Header(default=None, alias="X-App-Key")
 ):
     """Get a specific blog post by its slug."""
-    post = await get_blog_post_by_slug(app_key, slug, only_published=True)
+    post = await get_blog_post_by_slug(_resolve_public_app_key(app_key), slug, only_published=True)
     if not post:
         raise HTTPException(status_code=404, detail="Blog post not found")
     return post
