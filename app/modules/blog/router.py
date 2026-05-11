@@ -1,6 +1,6 @@
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Header
-from app.core.config import get_settings
+from app.config import get_settings
 from app.core.permissions.rbac import Role, require_roles
 from app.modules.blog.schemas import BlogPostCreate, BlogPostResponse, BlogPostUpdate
 from app.modules.blog.service import (
