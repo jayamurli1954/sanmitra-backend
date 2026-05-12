@@ -15,9 +15,12 @@ sys.path.append(os.getcwd())
 from app.db.mongo import close_mongo, get_collection, init_mongo
 from app.modules.rag.providers import get_embedding_provider, get_embedding_strategy_name
 from app.modules.rag.service import _chunk_text, _tokenize, ensure_rag_indexes
-from scripts.ingest_legal_act_pdfs import ACTS, APP_KEY, CREATED_BY, PDF_DIR, TENANT_ID, ActManifestEntry
 
 
+TENANT_ID = "seed-tenant-1"
+APP_KEY = "legalmitra"
+CREATED_BY = "manual-structured-statute-ingest"
+PDF_DIR = Path("data/legal_acts")
 LEGAL_STATUTE_SECTIONS_COLLECTION = "legal_statute_sections"
 RAG_DOCUMENTS_COLLECTION = "rag_documents"
 RAG_CHUNKS_COLLECTION = "rag_chunks"
@@ -30,6 +33,50 @@ _SPLIT_SECTION_HEADING_RE = re.compile(
 )
 _SECTION_ONE_RE = re.compile(r"(?m)^\s*(?:\d+\[)?1\.\s+")
 _TOC_MARKERS = ("ARRANGEMENT OF SECTIONS",)
+
+
+@dataclass(frozen=True)
+class ActManifestEntry:
+    key: str
+    title: str
+    pdf_filename: str
+    external_id: str
+    doc_date: str
+    effective_date: str | None
+
+
+ACTS: tuple[ActManifestEntry, ...] = (
+    ActManifestEntry("constitution", "Constitution of India", "constitution_of_india.pdf", "official-constitution-of-india", "1949-11-26", "1950-01-26"),
+    ActManifestEntry("bns", "Bharatiya Nyaya Sanhita, 2023", "bns_2023.pdf", "official-bharatiya-nyaya-sanhita-2023", "2023-12-25", "2024-07-01"),
+    ActManifestEntry("bnss", "Bharatiya Nagarik Suraksha Sanhita, 2023", "bnss_2023.pdf", "official-bharatiya-nagarik-suraksha-sanhita-2023", "2023-12-25", "2024-07-01"),
+    ActManifestEntry("bsa", "Bharatiya Sakshya Adhiniyam, 2023", "bsa_2023.pdf", "official-bharatiya-sakshya-adhiniyam-2023", "2023-12-25", "2024-07-01"),
+    ActManifestEntry("cpc", "Code of Civil Procedure, 1908", "cpc_1908.pdf", "official-code-of-civil-procedure-1908", "1908-03-21", "1909-01-01"),
+    ActManifestEntry("contract", "Indian Contract Act, 1872", "contract_act_1872.pdf", "official-indian-contract-act-1872", "1872-04-18", "1872-09-01"),
+    ActManifestEntry("evidence", "Indian Evidence Act, 1872", "indian_evidence_act_1872.pdf", "official-indian-evidence-act-1872", "1872-07-17", "1872-09-01"),
+    ActManifestEntry("companies", "Companies Act, 2013", "companies_act_2013.pdf", "official-companies-act-2013", "2013-03-29", "2013-04-01"),
+    ActManifestEntry("llp", "The Limited Liability Partnership Act, 2008", "limited_liability_partnership_act_2008.pdf", "official-limited-liability-partnership-act-2008", "2009-01-07", "2009-03-31"),
+    ActManifestEntry("negotiable", "Negotiable Instruments Act, 1881", "negotiable_instruments_act_1881.pdf", "official-negotiable-instruments-act-1881", "1881-12-09", "1882-03-01"),
+    ActManifestEntry("ipc", "Indian Penal Code, 1860", "ipc_1860.pdf", "official-indian-penal-code-1860", "1860-10-06", "1862-01-01"),
+    ActManifestEntry("crpc", "Code of Criminal Procedure, 1973", "crpc_1973.pdf", "official-code-of-criminal-procedure-1973", "1973-12-25", "1974-04-01"),
+    ActManifestEntry("transfer", "Transfer of Property Act, 1882", "transfer_of_property_act_1882.pdf", "official-transfer-of-property-act-1882", "1882-12-09", "1883-07-01"),
+    ActManifestEntry("succession", "Indian Succession Act, 1925", "indian_succession_act_1925.pdf", "official-indian-succession-act-1925", "1925-01-20", "1925-07-01"),
+    ActManifestEntry("registration", "Registration Act, 1908", "registration_act_1908.pdf", "official-registration-act-1908", "1908-03-21", "1909-01-01"),
+    ActManifestEntry("limitation", "Limitation Act, 1963", "limitation_act_1963.pdf", "official-limitation-act-1963", "1963-12-25", "1964-01-01"),
+    ActManifestEntry("relief", "Specific Relief Act, 1963", "specific_relief_act_1963.pdf", "official-specific-relief-act-1963", "1963-12-25", "1964-01-01"),
+    ActManifestEntry("motor_vehicles", "Motor Vehicles Act, 1988", "motor_vehicles_act_1988.pdf", "official-motor-vehicles-act-1988", "1988-12-30", "1989-06-12"),
+    ActManifestEntry("hindu_marriage", "Hindu Marriage Act, 1955", "hindu_marriage_act_1955.pdf", "official-hindu-marriage-act-1955", "1955-05-18", "1956-01-01"),
+    ActManifestEntry("information_technology", "Information Technology Act, 2000", "information_technology_act_2000.pdf", "official-information-technology-act-2000", "2000-10-09", "2000-10-17"),
+    ActManifestEntry("consumer_protection", "Consumer Protection Act, 2019", "consumer_protection_act_2019.pdf", "official-consumer-protection-act-2019", "2019-08-08", "2020-07-20"),
+    ActManifestEntry("income_tax_amended", "Income Tax Act, 2025 (as amended by FA Act 2026)", "income_tax_act_2025_amended.pdf", "official-income-tax-act-2025-amended", "2025-02-01", "2026-04-01"),
+    ActManifestEntry("cgst", "Central Goods and Services Tax Act, 2017", "cgst_act_2017.pdf", "official-cgst-act-2017", "2017-03-29", "2017-07-01"),
+    ActManifestEntry("arbitration", "Arbitration and Conciliation Act, 1996", "arbitration_and_conciliation_act_1996.pdf", "official-arbitration-and-conciliation-act-1996", "1996-01-25", "1996-07-16"),
+    ActManifestEntry("copyright", "Copyright Act, 1957", "copyright_act_1957.pdf", "official-copyright-act-1957", "1957-04-30", "1958-01-21"),
+    ActManifestEntry("insolvency", "Insolvency and Bankruptcy Code, 2016", "insolvency_and_bankruptcy_code_2016.pdf", "official-insolvency-and-bankruptcy-code-2016", "2016-05-28", "2016-12-28"),
+    ActManifestEntry("patents", "Patents Act, 1970", "patents_act_1970.pdf", "official-patents-act-1970", "1970-09-19", "1972-04-20"),
+    ActManifestEntry("special_marriage", "Special Marriage Act, 1954", "special_marriage_act_1954.pdf", "official-special-marriage-act-1954", "1954-10-25", "1955-06-01"),
+    ActManifestEntry("environment", "Environment Protection Act, 1986", "environment_protection_act_1986.pdf", "official-environment-protection-act-1986", "1986-05-23", "1986-11-19"),
+    ActManifestEntry("industrial_disputes", "Industrial Disputes Act, 1947", "industrial_disputes_act_1947.pdf", "official-industrial-disputes-act-1947", "1947-03-01", "1947-08-01"),
+)
 
 
 @dataclass(frozen=True)
