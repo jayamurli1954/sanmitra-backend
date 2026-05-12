@@ -51,13 +51,36 @@ def extract_current_legal_query(query: str) -> str:
     if quoted_questions:
         return " ".join(quoted_questions[-1].split())
 
-    current_question_match = re.search(
-        r"(?:current|latest|user(?:'s)?)\s+(?:question|query)\s*(?:is|:)\s*(.+?\?)",
-        value,
-        flags=re.IGNORECASE | re.DOTALL,
-    )
-    if current_question_match:
-        return " ".join(current_question_match.group(1).split())
+    # Avoid unbounded regex over chat-history-sized input. CodeQL flags lazy
+    # dot-star patterns on uncontrolled text, so use bounded marker scanning.
+    marker_scan = value[:4000]
+    marker_scan_lower = marker_scan.lower()
+    for marker in (
+        "current question",
+        "current query",
+        "latest question",
+        "latest query",
+        "user question",
+        "user query",
+        "user's question",
+        "user's query",
+    ):
+        marker_at = marker_scan_lower.rfind(marker)
+        if marker_at < 0:
+            continue
+
+        tail = marker_scan[marker_at + len(marker) :]
+        tail_stripped = tail.lstrip()
+        if tail_stripped.startswith(":"):
+            candidate = tail_stripped[1:]
+        elif tail_stripped.lower().startswith("is"):
+            candidate = tail_stripped[2:]
+        else:
+            continue
+
+        question_end = candidate.find("?")
+        if question_end >= 0:
+            return " ".join(candidate[: question_end + 1].split())
 
     question_lines = [
         line.strip()
