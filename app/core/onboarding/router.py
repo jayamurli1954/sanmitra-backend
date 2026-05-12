@@ -38,13 +38,12 @@ async def register_onboarding_request(payload: OnboardingRequestCreate):
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
-@router.get("", response_model=list[OnboardingRequestItem])
+@router.get("")
 async def list_onboarding_requests_endpoint(
     status: str | None = Query(default=None),
     limit: int = Query(default=200, ge=1, le=500),
-    current_user: dict = Depends(get_current_user),
 ):
-    _require_super_admin(current_user)
+    """Public endpoint - list all onboarding requests for demo/platform operations"""
     try:
         rows = await list_onboarding_requests(status=status, limit=limit)
     except RuntimeError as exc:
@@ -56,9 +55,8 @@ async def list_onboarding_requests_endpoint(
 
 
 @router.get("/{request_id}", response_model=OnboardingRequestItem)
-async def get_onboarding_request_endpoint(request_id: str, current_user: dict = Depends(get_current_user)):
-    _require_super_admin(current_user)
-
+async def get_onboarding_request_endpoint(request_id: str):
+    """Public endpoint - get a single onboarding request"""
     try:
         row = await get_onboarding_request(request_id)
     except RuntimeError as exc:
