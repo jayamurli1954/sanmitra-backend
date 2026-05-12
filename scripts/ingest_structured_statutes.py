@@ -9,8 +9,6 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-import fitz  # PyMuPDF
-
 
 sys.path.append(os.getcwd())
 
@@ -43,6 +41,11 @@ class ParsedSection:
 
 
 def _extract_pdf_text(path: Path) -> str:
+    try:
+        import fitz  # PyMuPDF
+    except ModuleNotFoundError as exc:
+        raise RuntimeError("PyMuPDF is required for PDF ingestion. Install the `pymupdf` package.") from exc
+
     with fitz.open(path) as pdf:
         return "\n".join(page.get_text("text") for page in pdf).strip()
 
