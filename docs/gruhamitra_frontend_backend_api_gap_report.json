@@ -1,0 +1,10 @@
+{
+  "generated_for": "GruhaMitra web frontend vs sanmitra-backend FastAPI app",
+  "frontend_call_count": 120,
+  "frontend_unique_endpoint_count": 107,
+  "backend_route_count": 432,
+  "covered_call_sites": 120,
+  "missing_call_sites": 0,
+  "missing_unique_endpoint_count": 0,
+  "missing_endpoints": []
+}

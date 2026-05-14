@@ -44,7 +44,7 @@ async def ensure_onboarding_indexes() -> None:
 
     requests = get_collection(ONBOARDING_REQUESTS_COLLECTION)
     await requests.create_index("request_id", unique=True)
-    await requests.create_index([("status", 1), ("submitted_at", -1)])
+    await requests.create_index([("app_key", 1), ("status", 1), ("submitted_at", -1)])
     await requests.create_index([("admin_email", 1), ("status", 1)])
     await requests.create_index([("tenant_name", 1), ("status", 1)])
     _ONBOARDING_INDEXES_READY = True
@@ -371,7 +371,7 @@ async def create_onboarding_request(payload: OnboardingRequestCreate) -> dict:
     }
 
 
-async def list_onboarding_requests(*, status: str | None = None, limit: int = 200) -> list[dict]:
+async def list_onboarding_requests(*, status: str | None = None, app_key: str | None = None, limit: int = 200) -> list[dict]:
     await ensure_onboarding_indexes()
     requests = get_collection(ONBOARDING_REQUESTS_COLLECTION)
 
@@ -381,6 +381,9 @@ async def list_onboarding_requests(*, status: str | None = None, limit: int = 20
         if normalized_status not in ONBOARDING_STATUSES:
             raise ValueError("Invalid onboarding status")
         filters["status"] = normalized_status
+
+    if app_key:
+        filters["app_key"] = app_key.strip().lower()
 
     safe_limit = max(1, min(limit, 500))
     docs = await requests.find(filters).sort("submitted_at", -1).limit(safe_limit).to_list(length=safe_limit)

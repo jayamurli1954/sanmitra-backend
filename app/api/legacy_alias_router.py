@@ -66,6 +66,7 @@ async def legacy_auth_me(current_user: dict = Depends(get_current_user)):
 
 
 @router.get("/dashboard/summary")
+@router.get("/v1/dashboard/summary")
 async def legacy_dashboard_summary(
     current_user: dict = Depends(get_current_user),
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),

@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.core.auth.dependencies import get_current_user
+from app.core.tenants.context import get_app_key
 from app.core.onboarding.schemas import (
     OnboardingApproveRequest,
     OnboardingApproveResponse,
@@ -39,13 +40,14 @@ async def register_onboarding_request(payload: OnboardingRequestCreate):
 
 
 @router.get("")
+@router.get("/")
 async def list_onboarding_requests_endpoint(
     status: str | None = Query(default=None),
     limit: int = Query(default=200, ge=1, le=500),
 ):
     """Public endpoint - list all onboarding requests for demo/platform operations"""
     try:
-        rows = await list_onboarding_requests(status=status, limit=limit)
+        rows = await list_onboarding_requests(status=status, app_key=get_app_key(), limit=limit)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:

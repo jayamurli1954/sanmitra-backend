@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.accounting.service import AccountingNotFoundError, AccountingValidationError
 from app.core.auth.dependencies import get_current_user
-from app.core.tenants.context import resolve_tenant_id
+from app.core.tenants.app_resolvers import resolve_gruha_tenant
 from app.db.postgres import get_async_session
 from app.modules.housing.schemas import MaintenanceCollectionCreateRequest, MaintenanceCollectionCreateResponse
 from app.modules.housing.service import record_maintenance_collection
@@ -17,13 +17,20 @@ async def create_maintenance_collection(
     session: AsyncSession = Depends(get_async_session),
     current_user: dict = Depends(get_current_user),
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    x_app_key: str | None = Header(default=None, alias="X-App-Key"),
 ):
-    tenant_id = resolve_tenant_id(current_user, x_tenant_id)
+    context = resolve_gruha_tenant(
+        current_user=current_user,
+        x_tenant_id=x_tenant_id,
+        x_app_key=x_app_key,
+        operation="write",
+    )
 
     try:
         collection = await record_maintenance_collection(
             session,
-            tenant_id=tenant_id,
+            tenant_id=context.tenant_id,
+            app_key=context.app_key,
             created_by=current_user.get("sub", "system"),
             payload=payload,
         )

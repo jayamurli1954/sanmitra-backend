@@ -3,6 +3,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
 
 from sqlalchemy import Select, and_, func, select
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.accounting.models import Account, CoaMapping, CoaSourceAccount, JournalEntry, JournalLine
@@ -1303,3 +1304,52 @@ async def get_accounts_payable(
         )
 
     return lines, _q(total_balance)
+
+
+async def list_journal_entries(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    app_key: str = "mandirmitra",
+    accounting_entity_id: str = "primary",
+    from_date: date | None = None,
+    to_date: date | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> list[JournalEntry]:
+    stmt = select(JournalEntry).where(
+        *_accounting_scope(JournalEntry, app_key=app_key, tenant_id=tenant_id, accounting_entity_id=accounting_entity_id)
+    )
+    if from_date:
+        stmt = stmt.where(JournalEntry.entry_date >= from_date)
+    if to_date:
+        stmt = stmt.where(JournalEntry.entry_date <= to_date)
+
+    stmt = stmt.order_by(JournalEntry.entry_date.desc(), JournalEntry.id.desc()).limit(limit).offset(offset)
+    stmt = stmt.options(selectinload(JournalEntry.lines))
+
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def get_journal_entry_detail(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    journal_id: int,
+    app_key: str = "mandirmitra",
+    accounting_entity_id: str = "primary",
+) -> JournalEntry:
+    stmt = (
+        select(JournalEntry)
+        .where(
+            JournalEntry.id == journal_id,
+            *_accounting_scope(JournalEntry, app_key=app_key, tenant_id=tenant_id, accounting_entity_id=accounting_entity_id),
+        )
+        .options(selectinload(JournalEntry.lines))
+    )
+    result = await session.execute(stmt)
+    entry = result.scalar_one_or_none()
+    if not entry:
+        raise AccountingNotFoundError(f"Journal entry {journal_id} not found")
+    return entry

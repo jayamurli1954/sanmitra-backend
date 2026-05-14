@@ -31,6 +31,12 @@ def resolve_app_key(value: Optional[str]) -> str:
     settings = get_settings()
     default_key = str(settings.DEFAULT_APP_KEY or "mandirmitra").strip().lower() or "mandirmitra"
     raw = str(value or "").strip().lower()
+    app_key_aliases = {
+        "gharmitra": "gruhamitra",
+        "ghar-mitra": "gruhamitra",
+        "gruha-mitra": "gruhamitra",
+    }
+    raw = app_key_aliases.get(raw, raw)
     if not raw:
         return default_key
 

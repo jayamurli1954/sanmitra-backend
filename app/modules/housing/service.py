@@ -14,14 +14,15 @@ MAINTENANCE_COLLECTIONS = "housing_maintenance_collections"
 
 async def ensure_maintenance_indexes() -> None:
     collections = get_collection(MAINTENANCE_COLLECTIONS)
-    await collections.create_index([("tenant_id", 1), ("collected_on", -1)])
-    await collections.create_index("collection_id", unique=True)
+    await collections.create_index([("tenant_id", 1), ("app_key", 1), ("collected_on", -1)])
+    await collections.create_index([("tenant_id", 1), ("app_key", 1), ("collection_id", 1)], unique=True)
 
 
 async def record_maintenance_collection(
     session: AsyncSession,
     *,
     tenant_id: str,
+    app_key: str,
     created_by: str,
     payload: MaintenanceCollectionCreateRequest,
 ):
@@ -31,6 +32,7 @@ async def record_maintenance_collection(
     doc = {
         "collection_id": collection_id,
         "tenant_id": tenant_id,
+        "app_key": app_key,
         "amount": float(payload.amount),
         "flat_number": payload.flat_number,
         "resident_name": payload.resident_name,

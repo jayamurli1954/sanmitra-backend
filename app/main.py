@@ -12,6 +12,7 @@ _startup_logger = logging.getLogger(__name__)
 from app.accounting.models.base import Base
 from app.api.legacy_alias_router import router as legacy_alias_router
 from app.api.v1.router import api_router
+from app.api.gruhamitra_compat_router import router as gruhamitra_compat_router
 from app.config import get_settings
 from app.core.audit.service import ensure_audit_indexes
 from app.core.onboarding.service import ensure_onboarding_indexes
@@ -21,6 +22,7 @@ from app.core.users.service import ensure_seed_user, ensure_super_admin_user
 from app.db.mongo import close_mongo, init_mongo, ping_mongo
 from app.db.postgres import close_postgres, create_postgres_tables, init_postgres, ping_postgres
 from app.modules.housing.service import ensure_maintenance_indexes
+from app.modules.housing_compat.service import ensure_housing_compat_indexes
 from app.modules.investment.service import ensure_investment_indexes
 from app.modules.legal.service import ensure_legal_indexes
 from app.modules.legal_compat.service import ensure_legal_compat_indexes
@@ -85,6 +87,7 @@ async def add_security_headers(request: Request, call_next):
 
 app.include_router(legacy_alias_router)
 app.include_router(api_router)
+app.include_router(gruhamitra_compat_router, prefix="/api", tags=["gruhamitra-frontend-compat"])
 
 
 @app.on_event("startup")
@@ -110,6 +113,7 @@ async def on_startup() -> None:
         await ensure_audit_indexes()
         await ensure_donations_indexes()
         await ensure_maintenance_indexes()
+        await ensure_housing_compat_indexes()
         await ensure_legal_indexes()
         await ensure_legal_compat_indexes()
         await ensure_investment_indexes()
