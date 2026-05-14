@@ -32,6 +32,12 @@ class AccountResponse(BaseModel):
     is_payable: bool
 
 
+class ChartOfAccountsInitializeResponse(BaseModel):
+    accounts_created: int
+    accounts_existing: int
+    total_accounts: int
+
+
 class JournalLineIn(BaseModel):
     account_id: int
     debit: Decimal = Decimal("0")

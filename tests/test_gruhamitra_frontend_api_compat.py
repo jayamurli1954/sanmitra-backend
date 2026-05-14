@@ -15,6 +15,7 @@ def test_gruhamitra_dashboard_and_flat_aliases_are_registered():
 
     assert ("GET", "/api/v1/dashboard/summary") in routes
     assert ("GET", "/api/v1/flats") in routes
+    assert ("POST", "/api/v1/accounting/initialize-chart-of-accounts") in routes
 
 
 def test_gruhamitra_frontend_aliases_are_registered():

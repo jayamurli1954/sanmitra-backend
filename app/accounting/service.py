@@ -25,6 +25,80 @@ class AccountingNotFoundError(ValueError):
     pass
 
 
+def _default_account(
+    code: str,
+    name: str,
+    account_type: str,
+    classification: str,
+    *,
+    is_cash_bank: bool = False,
+    is_receivable: bool = False,
+    is_payable: bool = False,
+) -> dict:
+    return {
+        "code": code,
+        "name": name,
+        "account_type": account_type,
+        "classification": classification,
+        "is_cash_bank": is_cash_bank,
+        "is_receivable": is_receivable,
+        "is_payable": is_payable,
+    }
+
+
+DEFAULT_HOUSING_CHART_OF_ACCOUNTS = [
+    _default_account("1000", "Cash in Hand", "asset", "real", is_cash_bank=True),
+    _default_account("1010", "Bank Account", "asset", "real", is_cash_bank=True),
+    _default_account("1020", "Savings Bank Account", "asset", "real", is_cash_bank=True),
+    _default_account("1030", "Fixed Deposits", "asset", "real"),
+    _default_account("1040", "Accrued Interest Receivable", "asset", "personal", is_receivable=True),
+    _default_account("1100", "Member Dues Receivable", "asset", "personal", is_receivable=True),
+    _default_account("1110", "Late Fee Receivable", "asset", "personal", is_receivable=True),
+    _default_account("1120", "Other Receivables", "asset", "personal", is_receivable=True),
+    _default_account("1200", "Members' Advance", "asset", "personal"),
+    _default_account("1210", "Advance to Vendors", "asset", "personal"),
+    _default_account("1220", "Prepaid Expenses", "asset", "real"),
+    _default_account("1230", "Security Deposits Paid", "asset", "real"),
+    _default_account("1300", "Furniture and Fixtures", "asset", "real"),
+    _default_account("1310", "Office Equipment", "asset", "real"),
+    _default_account("1320", "Common Area Equipment", "asset", "real"),
+    _default_account("2000", "Maintenance Fund", "liability", "personal"),
+    _default_account("2010", "Advance from Members", "liability", "personal"),
+    _default_account("2020", "Security Deposits Received", "liability", "personal"),
+    _default_account("2100", "Accounts Payable", "liability", "personal", is_payable=True),
+    _default_account("2110", "Expense Payable", "liability", "personal", is_payable=True),
+    _default_account("2120", "Statutory Dues Payable", "liability", "personal", is_payable=True),
+    _default_account("2130", "TDS Payable", "liability", "personal", is_payable=True),
+    _default_account("3000", "Corpus Fund", "equity", "nominal"),
+    _default_account("3010", "Sinking Fund", "equity", "nominal"),
+    _default_account("3020", "Reserve Fund", "equity", "nominal"),
+    _default_account("3030", "Repair and Replacement Fund", "equity", "nominal"),
+    _default_account("3040", "Building Fund", "equity", "nominal"),
+    _default_account("3050", "Opening Balance Equity", "equity", "nominal"),
+    _default_account("4000", "Member Dues Income", "income", "nominal"),
+    _default_account("4010", "Late Fee Income", "income", "nominal"),
+    _default_account("4020", "Parking Charges Income", "income", "nominal"),
+    _default_account("4030", "Facility Booking Income", "income", "nominal"),
+    _default_account("4040", "Interest Income", "income", "nominal"),
+    _default_account("4050", "Water Charges Income", "income", "nominal"),
+    _default_account("4060", "Transfer Fee Income", "income", "nominal"),
+    _default_account("4070", "Miscellaneous Income", "income", "nominal"),
+    _default_account("5000", "Repairs and Maintenance Expense", "expense", "nominal"),
+    _default_account("5010", "Utilities Expense", "expense", "nominal"),
+    _default_account("5020", "Security Expense", "expense", "nominal"),
+    _default_account("5030", "Housekeeping Expense", "expense", "nominal"),
+    _default_account("5040", "Lift Maintenance Expense", "expense", "nominal"),
+    _default_account("5050", "Common Area Electricity Expense", "expense", "nominal"),
+    _default_account("5060", "Water Supply Expense", "expense", "nominal"),
+    _default_account("5070", "Insurance Expense", "expense", "nominal"),
+    _default_account("5080", "Administrative Expense", "expense", "nominal"),
+    _default_account("5090", "Bank Charges", "expense", "nominal"),
+    _default_account("5100", "Legal and Professional Fees", "expense", "nominal"),
+    _default_account("5110", "Garden Maintenance Expense", "expense", "nominal"),
+    _default_account("5120", "Pest Control Expense", "expense", "nominal"),
+]
+
+
 def _q(value: Decimal) -> Decimal:
     return value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
@@ -250,6 +324,53 @@ async def list_accounts(
     )
     rows = await session.execute(stmt)
     return list(rows.scalars().all())
+
+
+async def initialize_default_chart_of_accounts(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    app_key: str,
+    accounting_entity_id: str = "primary",
+) -> dict:
+    existing_stmt = select(Account.code).where(
+        *_accounting_scope(Account, app_key=app_key, tenant_id=tenant_id, accounting_entity_id=accounting_entity_id),
+        Account.code.is_not(None),
+    )
+    existing_codes = set((await session.execute(existing_stmt)).scalars().all())
+
+    created = 0
+    for item in DEFAULT_HOUSING_CHART_OF_ACCOUNTS:
+        if item["code"] in existing_codes:
+            continue
+        session.add(
+            Account(
+                app_key=app_key,
+                tenant_id=tenant_id,
+                accounting_entity_id=accounting_entity_id,
+                code=item["code"],
+                name=item["name"],
+                type=item["account_type"],
+                classification=item["classification"],
+                is_cash_bank=item["is_cash_bank"],
+                is_receivable=item["is_receivable"],
+                is_payable=item["is_payable"],
+            )
+        )
+        created += 1
+
+    if created:
+        await session.commit()
+
+    total_stmt = select(func.count()).select_from(Account).where(
+        *_accounting_scope(Account, app_key=app_key, tenant_id=tenant_id, accounting_entity_id=accounting_entity_id)
+    )
+    total = int((await session.execute(total_stmt)).scalar_one())
+    return {
+        "accounts_created": created,
+        "accounts_existing": len(existing_codes),
+        "total_accounts": total,
+    }
 
 
 async def post_journal_entry(

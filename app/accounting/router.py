@@ -10,6 +10,7 @@ from app.accounting.schemas import (
     AccountCreateRequest,
     AccountResponse,
     BalanceSheetResponse,
+    ChartOfAccountsInitializeResponse,
     CoaMappingApproveRequest,
     CoaMappingApproveResponse,
     CoaMappingBulkUpsertRequest,
@@ -43,6 +44,7 @@ from app.accounting.service import (
     get_profit_loss,
     get_receipts_payments,
     get_trial_balance,
+    initialize_default_chart_of_accounts,
     list_accounts,
     list_coa_mappings,
     list_source_accounts,
@@ -135,6 +137,23 @@ async def list_accounts_endpoint(
         )
         for a in accounts
     ]
+
+
+@router.post("/initialize-chart-of-accounts", response_model=ChartOfAccountsInitializeResponse)
+async def initialize_chart_of_accounts_endpoint(
+    session: AsyncSession = Depends(get_async_session),
+    accounting_context: AccountingContext = Depends(enforce_accounting_route_tenant),
+):
+    try:
+        return await initialize_default_chart_of_accounts(
+            session,
+            app_key=accounting_context.app_key,
+            tenant_id=accounting_context.tenant_id,
+            accounting_entity_id=accounting_context.accounting_entity_id,
+        )
+    except IntegrityError:
+        await session.rollback()
+        raise HTTPException(status_code=409, detail="Chart of accounts was initialized by another request. Please refresh.")
 
 
 
