@@ -326,6 +326,29 @@ async def list_accounts(
     return list(rows.scalars().all())
 
 
+async def update_account_name(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    app_key: str,
+    accounting_entity_id: str = "primary",
+    code: str,
+    name: str,
+) -> Account:
+    stmt = select(Account).where(
+        *_accounting_scope(Account, app_key=app_key, tenant_id=tenant_id, accounting_entity_id=accounting_entity_id),
+        Account.code == code,
+    )
+    account = (await session.execute(stmt)).scalar_one_or_none()
+    if account is None:
+        raise AccountingNotFoundError("Account code not found for tenant")
+
+    account.name = name.strip()
+    await session.commit()
+    await session.refresh(account)
+    return account
+
+
 async def initialize_default_chart_of_accounts(
     session: AsyncSession,
     *,

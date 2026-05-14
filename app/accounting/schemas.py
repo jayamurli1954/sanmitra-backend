@@ -21,6 +21,18 @@ class AccountCreateRequest(BaseModel):
     is_payable: bool = False
 
 
+class AccountUpdateRequest(BaseModel):
+    name: str = Field(min_length=2, max_length=200)
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        stripped = value.strip()
+        if len(stripped) < 2:
+            raise ValueError("Account name must contain at least 2 characters")
+        return stripped
+
+
 class AccountResponse(BaseModel):
     id: int
     code: str | None
